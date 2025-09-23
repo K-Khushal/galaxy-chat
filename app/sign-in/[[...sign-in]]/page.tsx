@@ -1,0 +1,12 @@
+"use client";
+import { SignIn } from "@clerk/nextjs";
+
+export default function SignInPage() {
+    return (
+        <div className="min-h-[80vh] w-full flex items-center justify-center p-4">
+            <SignIn signUpUrl="/sign-up" />
+        </div>
+    );
+}
+
+
