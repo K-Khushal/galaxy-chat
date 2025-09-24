@@ -1,0 +1,86 @@
+---
+alwaysApply: true
+---
+- Use async/await for handling API calls to ensure clean and readable code.
+- Implement error handling for API responses to manage rate limits and unexpected errors.
+- Cache responses where appropriate to reduce API calls and improve performance.
+
+---
+name: clerk-nextjs-best-practices.mdc
+description: Best practices for integrating Clerk with Next.js
+globs: **/*.{ts,tsx}
+---
+
+- Use Clerk's built-in hooks for authentication state management.
+- Ensure proper session handling and token storage for security.
+- Implement role-based access control for different user types.
+
+---
+name: radix-ui-best-practices.mdc
+description: Best practices for using Radix UI components
+globs: **/*.{ts,tsx}
+---
+
+- Use Radix components for accessibility and composability.
+- Customize components using the `class-variance-authority` for consistent styling.
+- Ensure all interactive components are keyboard navigable.
+
+---
+name: mongoose-best-practices.mdc
+description: Best practices for using Mongoose with MongoDB
+globs: **/*.{ts,tsx}
+---
+
+- Define schemas with validation to ensure data integrity.
+- Use middleware for pre/post hooks to handle complex logic.
+- Implement proper indexing for performance optimization on frequently queried fields.
+
+---
+name: next-best-practices.mdc
+description: Best practices for Next.js applications
+globs: **/*.{ts,tsx}
+---
+
+- Use the App Router for better performance and organization.
+- Optimize images and assets using Next.js built-in features.
+- Implement static site generation (SSG) and server-side rendering (SSR) where appropriate.
+
+---
+name: react-best-practices.mdc
+description: Best practices for React development
+globs: **/*.{ts,tsx}
+---
+
+- Use functional components and hooks for state management.
+- Keep components small and focused on a single responsibility.
+- Use React's context API for global state management when necessary.
+
+---
+name: tailwindcss-best-practices.mdc
+description: Best practices for using Tailwind CSS
+globs: **/*.{ts,tsx,css}
+---
+
+- Use utility-first classes for rapid UI development.
+- Leverage `tailwind-merge` to handle conditional class names effectively.
+- Ensure responsive design by using Tailwind's responsive utilities.
+
+---
+name: zod-best-practices.mdc
+description: Best practices for using Zod for schema validation
+globs: **/*.{ts,tsx}
+---
+
+- Define schemas for all data inputs to ensure type safety.
+- Use Zod's built-in methods for custom validation logic.
+- Integrate Zod with form libraries for seamless validation feedback.
+
+---
+name: ai-best-practices.mdc
+description: Best practices for using AI SDKs in applications
+globs: **/*.{ts,tsx}
+---
+
+- Use AI SDKs for enhancing user experience with intelligent features.
+- Implement fallback mechanisms for when AI services are unavailable.
+- Monitor and log AI interactions for performance and debugging purposes.
