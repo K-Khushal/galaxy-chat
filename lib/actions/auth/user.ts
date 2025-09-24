@@ -10,17 +10,26 @@ export async function getOrCreateUserProfile(params: {
     imageUrl?: string;
 }): Promise<UserProfile> {
     await ensureDb();
-    const existing = await UserProfileModel.findOne({ userId: params.userId }).lean<UserProfile>().exec();
-    if (existing) return existing;
 
-    const created = await UserProfileModel.create({
-        userId: params.userId,
-        email: params.email,
-        name: params.name,
-        imageUrl: params.imageUrl,
-        preferences: {},
-    });
-    return created.toObject();
+    const result = await UserProfileModel.findOneAndUpdate(
+        { userId: params.userId },
+        {
+            $setOnInsert: {
+                userId: params.userId,
+                email: params.email,
+                name: params.name,
+                imageUrl: params.imageUrl,
+                preferences: {}
+            }
+        },
+        {
+            upsert: true,
+            new: true,
+            returnDocument: 'after'
+        }
+    ).lean<UserProfile>().exec();
+
+    return result!;
 }
 
 export async function updateUserPreferences(userId: string, preferences: Record<string, unknown>) {

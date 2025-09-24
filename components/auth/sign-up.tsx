@@ -59,9 +59,8 @@ export default function SignUpForm() {
                 strategy: "email_code"
             });
 
-            // Store sign-up data for session recovery
+            // Store email for session recovery (non-sensitive identifier only)
             localStorage.setItem('clerk-signup-email', data.email);
-            localStorage.setItem('clerk-signup-password', data.password);
 
             setUserEmail(data.email);
             setPendingVerification(true);

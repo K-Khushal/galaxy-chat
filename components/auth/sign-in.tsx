@@ -30,7 +30,7 @@ export default function SignInForm() {
             if (result.status === "complete") {
                 await setActive?.({ session: result.createdSessionId });
                 toast({ variant: "success", title: "Signed in", description: "Welcome back!" });
-                router.replace("/dashboard");
+                router.replace("/chat");
             } else {
                 const msg = "Additional steps required. Please try again.";
                 setError(msg);

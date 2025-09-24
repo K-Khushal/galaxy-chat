@@ -1,4 +1,7 @@
 ---
+name: app-best-practices.mdc
+description: General application best practices for API handling and performance
+globs: **/*.{ts,tsx}
 alwaysApply: true
 ---
 - Use async/await for handling API calls to ensure clean and readable code.

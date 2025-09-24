@@ -33,9 +33,8 @@ export default function VerifyEmail({ email, onSuccess, onStartOver }: VerifyEma
 
     async function retrySignUp(): Promise<boolean> {
         const storedEmail = localStorage.getItem('clerk-signup-email');
-        const storedPassword = localStorage.getItem('clerk-signup-password');
 
-        if (!storedEmail || !storedPassword) {
+        if (!storedEmail) {
             toast.error("Session expired", {
                 description: "Please start the sign-up process again."
             });
@@ -44,12 +43,12 @@ export default function VerifyEmail({ email, onSuccess, onStartOver }: VerifyEma
 
         try {
             if (!signUp) throw new Error("SignUp not available");
-            await signUp.create({ emailAddress: storedEmail, password: storedPassword });
-            await signUp.prepareEmailAddressVerification({ strategy: "email_code" });
-            toast.success("Session restored", {
-                description: "Please try entering the verification code again."
+            // Note: We cannot restore the sign-up session without the password
+            // This is a security feature - users must restart the sign-up process
+            toast.error("Session cannot be restored", {
+                description: "Please start the sign-up process again for security reasons."
             });
-            return true;
+            return false;
         } catch (err: any) {
             toast.error("Failed to restore session", {
                 description: "Please start the sign-up process again."
@@ -61,7 +60,6 @@ export default function VerifyEmail({ email, onSuccess, onStartOver }: VerifyEma
     function handleStartOver() {
         // Clear stored data
         localStorage.removeItem('clerk-signup-email');
-        localStorage.removeItem('clerk-signup-password');
 
         toast.info("Starting over", {
             description: "Returning to sign-up form..."
@@ -94,7 +92,6 @@ export default function VerifyEmail({ email, onSuccess, onStartOver }: VerifyEma
             if (result.status === "complete") {
                 // Clear stored data on success
                 localStorage.removeItem('clerk-signup-email');
-                localStorage.removeItem('clerk-signup-password');
 
                 await setActive?.({ session: result.createdSessionId });
 
