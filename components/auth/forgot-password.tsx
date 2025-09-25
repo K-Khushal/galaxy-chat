@@ -4,7 +4,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 import { PasswordInput } from "@/components/ui/input-password";
 import { forgotPasswordSchema, verifySchema, type ForgotPasswordInput, type VerifyInput } from "@/lib/schema/auth/forgot-password";
 import { useSignIn } from "@clerk/nextjs";
@@ -17,6 +16,7 @@ import { toast } from "sonner";
 
 
 export default function ForgotPasswordForm() {
+
     const router = useRouter();
     const { isLoaded, signIn } = useSignIn();
     const [stage, setStage] = useState<"request" | "verify">("request");
@@ -30,7 +30,7 @@ export default function ForgotPasswordForm() {
     const verifyForm = useForm<VerifyInput>({
         resolver: zodResolver(verifySchema),
         mode: "onChange",
-        defaultValues: { code: "", password: "" },
+        defaultValues: { otp: "", password: "" },
     });
 
     async function onRequest(data: ForgotPasswordInput) {
@@ -74,7 +74,7 @@ export default function ForgotPasswordForm() {
             // 1) Attempt first factor with the email code
             const attempt = await signIn.attemptFirstFactor({
                 strategy: "reset_password_email_code",
-                code: data.code,
+                code: data.otp,
             });
 
             // 2) If Clerk requires a new password, provide it
@@ -150,29 +150,28 @@ export default function ForgotPasswordForm() {
                         </Form>
                     ) : (
                         <Form {...verifyForm}>
-                            <form onSubmit={verifyForm.handleSubmit(onVerify)} className="space-y-4">
+                            <form onSubmit={verifyForm.handleSubmit(onVerify)} autoComplete="off" className="space-y-4">
                                 <FormField
                                     control={verifyForm.control}
-                                    name="code"
+                                    name="otp"
                                     render={({ field }) => (
                                         <FormItem>
                                             <FormLabel>Verification code</FormLabel>
                                             <FormControl>
-                                                <InputOTP maxLength={6} {...field}>
-                                                    <InputOTPGroup>
-                                                        <InputOTPSlot index={0} />
-                                                        <InputOTPSlot index={1} />
-                                                        <InputOTPSlot index={2} />
-                                                        <InputOTPSlot index={3} />
-                                                        <InputOTPSlot index={4} />
-                                                        <InputOTPSlot index={5} />
-                                                    </InputOTPGroup>
-                                                </InputOTP>
+                                                <Input
+                                                    type="text"
+                                                    inputMode="numeric"
+                                                    autoComplete="one-time-code"
+                                                    maxLength={6}
+                                                    placeholder="123456"
+                                                    {...field}
+                                                />
                                             </FormControl>
                                             <FormMessage />
                                         </FormItem>
                                     )}
                                 />
+
 
                                 <FormField
                                     control={verifyForm.control}
@@ -181,7 +180,7 @@ export default function ForgotPasswordForm() {
                                         <FormItem>
                                             <FormLabel>New password</FormLabel>
                                             <FormControl>
-                                                <PasswordInput placeholder="••••••••" autoComplete="new-password" {...field} />
+                                                <PasswordInput placeholder="••••••••" {...field} />
                                             </FormControl>
                                             <FormMessage />
                                         </FormItem>
@@ -218,5 +217,3 @@ export default function ForgotPasswordForm() {
         </div>
     );
 }
-
-
