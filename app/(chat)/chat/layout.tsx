@@ -14,9 +14,14 @@ export default async function ChatLayout({ children }: { children: React.ReactNo
     const clerkUser = await currentUser();
     const profileInput = toUserProfileInput(clerkUser);
     if (profileInput) {
-        // Fire-and-forget to avoid blocking first paint
-        // eslint-disable-next-line @typescript-eslint/no-floating-promises
-        getOrCreateUserProfile(profileInput);
+        // Fire-and-forget to avoid blocking first paint, but ensure errors are logged
+        void getOrCreateUserProfile(profileInput).catch((error) => {
+            console.error("getOrCreateUserProfile failed", {
+                context: "ChatLayout",
+                userId: profileInput.userId,
+                error,
+            });
+        });
     }
 
     const sidebarUser = toSidebarUser(clerkUser);
@@ -29,7 +34,7 @@ export default async function ChatLayout({ children }: { children: React.ReactNo
                 <header className="flex h-16 shrink-0 items-center gap-2 px-4">
                     <SidebarTrigger className="-ml-1" />
                 </header>
-                <ChatUserProvider user={sidebarUser}>
+                <ChatUserProvider user={sidebarUser ?? null}>
                     {children}
                 </ChatUserProvider>
             </SidebarInset>
