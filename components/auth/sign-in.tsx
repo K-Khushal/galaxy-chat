@@ -73,6 +73,12 @@ export default function SignInForm() {
             const clerkError = err?.errors?.[0];
             const message = clerkError?.longMessage ?? "Unable to sign in";
 
+            if (typeof message === "string" && message.toLowerCase().includes("already signed in")) {
+                toast.success("Already signed in", { description: "Redirecting to chat..." });
+                router.replace("/chat");
+                return;
+            }
+
             toast.error("Sign in failed", { description: message });
         }
     }

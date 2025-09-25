@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 import { PasswordInput } from "@/components/ui/input-password";
 import { forgotPasswordSchema, verifySchema, type ForgotPasswordInput, type VerifyInput } from "@/lib/schema/auth/forgot-password";
-import { useSignIn } from "@clerk/nextjs";
+import { useClerk, useSignIn } from "@clerk/nextjs";
 import { zodResolver } from "@hookform/resolvers/zod";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -18,6 +18,7 @@ import { toast } from "sonner";
 export default function ForgotPasswordForm() {
     const router = useRouter();
     const { isLoaded, signIn } = useSignIn();
+    const { signOut } = useClerk();
     const [stage, setStage] = useState<"request" | "verify">("request");
 
     const requestForm = useForm<ForgotPasswordInput>({
@@ -78,7 +79,13 @@ export default function ForgotPasswordForm() {
             // 2) If Clerk requires a new password, provide it
             if (attempt.status === "needs_new_password") {
                 await signIn.resetPassword({ password: data.password });
-                toast.success("Password reset", { description: "You can now sign in with your new password." });
+
+                // Ensure no active session persists after reset so user can sign in again
+                try {
+                    await signOut();
+                } catch { }
+
+                toast.success("Password reset", { description: "Please sign in with your new password." });
                 router.replace("/sign-in");
                 return;
             }

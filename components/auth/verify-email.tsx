@@ -99,8 +99,11 @@ export default function VerifyEmail({ email, onSuccess, onStartOver }: VerifyEma
                     description: "Welcome to Galaxy Chat! Redirecting..."
                 });
 
-                onSuccess?.();
-                router.replace("/chat");
+                if (onSuccess) {
+                    onSuccess();
+                } else {
+                    router.replace("/chat");
+                }
             } else {
                 toast.error("Verification incomplete", {
                     description: "Please try again or contact support."
