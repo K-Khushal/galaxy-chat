@@ -51,9 +51,9 @@ export function SidebarHistory({
                   align={isMobile ? "end" : "start"}
                   className="min-w-56 rounded-lg"
                 >
-                  {item.items.map((item) => (
-                    <DropdownMenuItem asChild key={item.title}>
-                      <a href={item.url}>{item.title}</a>
+                  {item.items.map((child) => (
+                    <DropdownMenuItem asChild key={child.title}>
+                      <a href={child.url}>{child.title}</a>
                     </DropdownMenuItem>
                   ))}
                 </DropdownMenuContent>

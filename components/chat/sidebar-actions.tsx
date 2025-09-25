@@ -16,7 +16,6 @@ export function SidebarActions() {
         <SidebarMenu>
             <SidebarMenuItem>
                 <SidebarMenuButton onClick={() => {
-                    console.log("New Chat")
                     router.push("/chat");
                     router.refresh();
                 }}>
