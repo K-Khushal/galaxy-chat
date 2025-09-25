@@ -43,7 +43,7 @@ export function AppSidebar({ user, ...props }: React.ComponentProps<typeof Sideb
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" asChild>
-              <Link href="#" aria-label="Go to home" className="flex items-center gap-2 self-center font-medium">
+              <Link href="#" aria-label="Go to home" className="flex items-center gap-2 self-center font-medium cursor-default">
                 <div className="bg-primary text-primary-foreground flex size-6 items-center justify-center rounded-md">
                   <Sparkles className="size-4" />
                 </div>

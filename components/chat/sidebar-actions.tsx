@@ -17,8 +17,9 @@ export function SidebarActions() {
             <SidebarMenuItem>
                 <SidebarMenuButton onClick={() => {
                     router.push("/chat");
-                    router.refresh();
-                }}>
+                }}
+                    className="cursor-pointer"
+                >
                     <SquarePen />
                     <span>New Chat</span>
                 </SidebarMenuButton>

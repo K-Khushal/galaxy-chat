@@ -14,7 +14,9 @@ export default async function ChatLayout({ children }: { children: React.ReactNo
     const clerkUser = await currentUser();
     const profileInput = toUserProfileInput(clerkUser);
     if (profileInput) {
-        await getOrCreateUserProfile(profileInput);
+        // Fire-and-forget to avoid blocking first paint
+        // eslint-disable-next-line @typescript-eslint/no-floating-promises
+        getOrCreateUserProfile(profileInput);
     }
 
     const sidebarUser = toSidebarUser(clerkUser);
