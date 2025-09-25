@@ -1,13 +1,7 @@
 import { StartConversationButton } from "@/components/chat/start-conversation-button";
-import { auth } from "@clerk/nextjs/server";
-import { redirect } from "next/navigation";
+// Auth redirect is already enforced by middleware and layout
 
 export default async function ChatHomePage() {
-    const { userId } = await auth();
-    if (!userId) {
-        redirect("/sign-in");
-    }
-
     return (
         <main className="max-w-2xl mx-auto p-6 space-y-6">
             <h1 className="text-2xl font-semibold">Chat</h1>

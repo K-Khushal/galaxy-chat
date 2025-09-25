@@ -25,10 +25,10 @@ import {
     SidebarMenuItem,
     useSidebar,
 } from "@/components/ui/sidebar"
-import type { SidebarUser } from "@/lib/types"
+import type { TypeSidebarUser } from "@/lib/types"
 import SignOut from "../sign-out"
 
-export function NavUser({ user }: { user: SidebarUser }) {
+export function SidebarUser({ user }: { user: TypeSidebarUser }) {
     const { isMobile } = useSidebar()
 
     return (

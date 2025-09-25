@@ -1,4 +1,4 @@
-export type SidebarUser = {
+export type TypeSidebarUser = {
     id: string,
     name?: string,
     email?: string,

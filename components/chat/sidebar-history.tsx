@@ -10,13 +10,14 @@ import {
 } from "@/components/ui/dropdown-menu"
 import {
   SidebarGroup,
+  SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar"
 
-export function NavMain({
+export function SidebarHistory({
   items,
 }: {
   items: {
@@ -34,6 +35,7 @@ export function NavMain({
 
   return (
     <SidebarGroup>
+      <SidebarGroupLabel>Chats</SidebarGroupLabel>
       <SidebarMenu>
         {items.map((item) => (
           <DropdownMenu key={item.title}>

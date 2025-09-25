@@ -1,5 +1,6 @@
-import { NavMain } from "@/components/chat/nav-main"
-import { NavUser } from "@/components/chat/nav-user"
+import { SidebarActions } from "@/components/chat/sidebar-actions"
+import { SidebarHistory } from "@/components/chat/sidebar-history"
+import { SidebarUser } from "@/components/chat/sidebar-user"
 import {
   Sidebar,
   SidebarContent,
@@ -10,7 +11,7 @@ import {
   SidebarMenuItem,
   SidebarRail,
 } from "@/components/ui/sidebar"
-import type { SidebarUser } from "@/lib/types"
+import type { TypeSidebarUser } from "@/lib/types"
 import { Sparkles } from "lucide-react"
 import Link from "next/link"
 import * as React from "react"
@@ -35,7 +36,7 @@ const data = {
   ],
 }
 
-export function AppSidebar({ user, ...props }: React.ComponentProps<typeof Sidebar> & { user?: SidebarUser }) {
+export function AppSidebar({ user, ...props }: React.ComponentProps<typeof Sidebar> & { user?: TypeSidebarUser }) {
   return (
     <Sidebar {...props}>
       <SidebarHeader>
@@ -51,13 +52,14 @@ export function AppSidebar({ user, ...props }: React.ComponentProps<typeof Sideb
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
+        <SidebarActions />
       </SidebarHeader>
       <SidebarContent>
-        <NavMain items={data.navMain} />
+        <SidebarHistory items={data.navMain} />
       </SidebarContent>
       <SidebarFooter>
         <div className="pb-2">
-          {user ? <NavUser user={user} /> : null}
+          {user ? <SidebarUser user={user} /> : null}
         </div>
       </SidebarFooter>
       <SidebarRail />
