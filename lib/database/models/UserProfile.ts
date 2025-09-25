@@ -13,7 +13,7 @@ export interface IUserProfile {
 const UserProfileSchema = new Schema<IUserProfile>(
     {
         userId: { type: String, required: true, unique: true, index: true },
-        email: { type: String },
+        email: { type: String, required: true, unique: true },
         name: { type: String },
         imageUrl: { type: String },
         preferences: { type: Schema.Types.Mixed, default: {} },

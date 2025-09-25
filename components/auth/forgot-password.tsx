@@ -1,68 +1,220 @@
 "use client";
+
 import { Button } from "@/components/ui/button";
-import { toast } from "@/components/ui/toaster";
-import { forgotPasswordSchema, type ForgotPasswordInput } from "@/lib/schema/auth/forgot-password";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
+import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
+import { PasswordInput } from "@/components/ui/input-password";
+import { forgotPasswordSchema, verifySchema, type ForgotPasswordInput, type VerifyInput } from "@/lib/schema/auth/forgot-password";
 import { useSignIn } from "@clerk/nextjs";
+import { zodResolver } from "@hookform/resolvers/zod";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { useForm } from "react-hook-form";
+import { toast } from "sonner";
+
 
 export default function ForgotPasswordForm() {
     const router = useRouter();
     const { isLoaded, signIn } = useSignIn();
+    const [stage, setStage] = useState<"request" | "verify">("request");
 
-    const [form, setForm] = useState<ForgotPasswordInput>({ email: "" });
-    const [error, setError] = useState<string>("");
-    const [loading, setLoading] = useState(false);
-    const [sent, setSent] = useState(false);
+    const requestForm = useForm<ForgotPasswordInput>({
+        resolver: zodResolver(forgotPasswordSchema),
+        mode: "onChange",
+        defaultValues: { email: "" },
+    });
 
-    async function handleSubmit(e: React.FormEvent) {
-        e.preventDefault();
-        setError("");
-        const parsed = forgotPasswordSchema.safeParse(form);
-        if (!parsed.success) {
-            setError(parsed.error.issues[0]?.message ?? "Invalid input");
+    const verifyForm = useForm<VerifyInput>({
+        resolver: zodResolver(verifySchema),
+        mode: "onChange",
+        defaultValues: { code: "", password: "" },
+    });
+
+    async function onRequest(data: ForgotPasswordInput) {
+        if (!isLoaded || !signIn) {
+            toast.error("System not ready", { description: "Please wait a moment and try again." });
             return;
         }
-        if (!isLoaded) return;
+
+        const identifier = data.email.trim().toLowerCase();
+        const validation = forgotPasswordSchema.safeParse({ email: identifier });
+        if (!validation.success) {
+            toast.error("Validation failed", { description: "Please enter a valid email." });
+            return;
+        }
+
         try {
-            setLoading(true);
-            await signIn.create({ strategy: "reset_password_email_code", identifier: form.email });
-            setSent(true);
-            toast({ variant: "success", title: "Reset email sent", description: "If the email exists, you'll receive a code." });
+            await signIn.create({ strategy: "reset_password_email_code", identifier });
+            toast.success("Reset email sent", { description: "Check your inbox for the code." });
+            setStage("verify");
         } catch (err: any) {
-            const msg = err?.errors?.[0]?.longMessage ?? "Unable to send reset code";
-            setError(msg);
-            toast({ variant: "destructive", title: "Request failed", description: msg });
-        } finally {
-            setLoading(false);
+            const clerkError = err?.errors?.[0];
+            const message = clerkError?.longMessage ?? "Unable to send reset code";
+
+            toast.error("Request failed", { description: message });
+        }
+    }
+
+    async function onVerify(data: VerifyInput) {
+        if (!isLoaded || !signIn) {
+            toast.error("System not ready", { description: "Please wait a moment and try again." });
+            return;
+        }
+
+        const parsed = verifySchema.safeParse(data);
+        if (!parsed.success) {
+            toast.error("Validation failed", { description: "Please check your inputs and try again." });
+            return;
+        }
+
+        try {
+            // 1) Attempt first factor with the email code
+            const attempt = await signIn.attemptFirstFactor({
+                strategy: "reset_password_email_code",
+                code: data.code,
+            });
+
+            // 2) If Clerk requires a new password, provide it
+            if (attempt.status === "needs_new_password") {
+                await signIn.resetPassword({ password: data.password });
+                toast.success("Password reset", { description: "You can now sign in with your new password." });
+                router.replace("/sign-in");
+                return;
+            }
+
+            // Handle unexpected statuses
+            toast.info("Additional steps required", { description: "Please retry the flow." });
+            verifyForm.setError("root", { message: "Unexpected state. Please try again." });
+        } catch (err: any) {
+            const clerkError = err?.errors?.[0];
+            const message = clerkError?.longMessage ?? "Unable to reset password";
+
+            toast.error("Reset failed", { description: message });
         }
     }
 
     return (
-        <div className="w-full max-w-sm mx-auto">
-            <h1 className="text-2xl font-semibold mb-4">Reset password</h1>
-            {sent ? (
-                <div className="space-y-3">
-                    <p className="text-sm text-gray-700">We’ve sent a reset code to your email if it exists in our system.</p>
-                    <Button onClick={() => router.push("/sign-in")} className="w-full">Back to sign in</Button>
-                </div>
-            ) : (
-                <form onSubmit={handleSubmit} className="space-y-3">
-                    <input
-                        type="email"
-                        placeholder="Email"
-                        className="w-full border rounded px-3 py-2"
-                        value={form.email}
-                        onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
-                        autoComplete="email"
-                        required
-                    />
-                    {error ? <p className="text-red-600 text-sm">{error}</p> : null}
-                    <Button type="submit" disabled={loading} className="w-full">
-                        {loading ? "Sending…" : "Send reset email"}
-                    </Button>
-                </form>
-            )}
+        <div className="w-full max-w-md mx-auto">
+            <Card>
+                <CardHeader className="text-center">
+                    <CardTitle className="text-xl">Reset password</CardTitle>
+                    <CardDescription>
+                        {stage === "request" ? "Enter your email to receive a reset code." : "Enter the code and a new password."}
+                    </CardDescription>
+                </CardHeader>
+                <CardContent>
+                    {stage === "request" ? (
+                        <Form {...requestForm}>
+                            <form onSubmit={requestForm.handleSubmit(onRequest)} className="space-y-4">
+                                <FormField
+                                    control={requestForm.control}
+                                    name="email"
+                                    render={({ field }) => (
+                                        <FormItem>
+                                            <FormLabel>Email</FormLabel>
+                                            <FormControl>
+                                                <Input type="email" placeholder="m@example.com" autoComplete="email" {...field} />
+                                            </FormControl>
+                                            <FormMessage />
+                                        </FormItem>
+                                    )}
+                                />
+
+                                {requestForm.formState.errors.root && (
+                                    <p className="text-center text-sm text-red-600">{requestForm.formState.errors.root.message}</p>
+                                )}
+
+                                {/* Clerk CAPTCHA element */}
+                                <div id="clerk-captcha" />
+
+                                <Button
+                                    type="submit"
+                                    disabled={requestForm.formState.isSubmitting || !requestForm.formState.isValid}
+                                    className="w-full cursor-pointer"
+                                >
+                                    {requestForm.formState.isSubmitting ? "Sending..." : "Send reset email"}
+                                </Button>
+
+                                <div className="text-center text-sm">
+                                    <Link
+                                        href="/sign-in"
+                                        className="underline underline-offset-4 cursor-pointer text-muted-foreground"
+                                    >
+                                        Back to sign in
+                                    </Link>
+                                </div>
+                            </form>
+                        </Form>
+                    ) : (
+                        <Form {...verifyForm}>
+                            <form onSubmit={verifyForm.handleSubmit(onVerify)} className="space-y-4">
+                                <FormField
+                                    control={verifyForm.control}
+                                    name="code"
+                                    render={({ field }) => (
+                                        <FormItem>
+                                            <FormLabel>Verification code</FormLabel>
+                                            <FormControl>
+                                                <InputOTP maxLength={6} {...field}>
+                                                    <InputOTPGroup>
+                                                        <InputOTPSlot index={0} />
+                                                        <InputOTPSlot index={1} />
+                                                        <InputOTPSlot index={2} />
+                                                        <InputOTPSlot index={3} />
+                                                        <InputOTPSlot index={4} />
+                                                        <InputOTPSlot index={5} />
+                                                    </InputOTPGroup>
+                                                </InputOTP>
+                                            </FormControl>
+                                            <FormMessage />
+                                        </FormItem>
+                                    )}
+                                />
+
+                                <FormField
+                                    control={verifyForm.control}
+                                    name="password"
+                                    render={({ field }) => (
+                                        <FormItem>
+                                            <FormLabel>New password</FormLabel>
+                                            <FormControl>
+                                                <PasswordInput placeholder="••••••••" autoComplete="new-password" {...field} />
+                                            </FormControl>
+                                            <FormMessage />
+                                        </FormItem>
+                                    )}
+                                />
+
+                                {verifyForm.formState.errors.root && (
+                                    <p className="text-center text-sm text-red-600">{verifyForm.formState.errors.root.message}</p>
+                                )}
+
+                                <Button
+                                    type="submit"
+                                    disabled={verifyForm.formState.isSubmitting || !verifyForm.formState.isValid}
+                                    className="w-full cursor-pointer"
+                                >
+                                    {verifyForm.formState.isSubmitting ? "Resetting..." : "Reset password"}
+                                </Button>
+
+                                <div className="text-center text-sm">
+                                    <Button
+                                        type="button"
+                                        variant="link"
+                                        onClick={() => setStage("request")}
+                                        className="underline underline-offset-4 cursor-pointer text-muted-foreground"
+                                    >
+                                        Use a different email
+                                    </Button>
+                                </div>
+                            </form>
+                        </Form>
+                    )}
+                </CardContent>
+            </Card>
         </div>
     );
 }

@@ -1,9 +1,7 @@
 "use client";
-import { useRouter } from "next/navigation";
-
+import Link from "next/link";
 
 export function HeroSection() {
-    const router = useRouter();
     return (
         <section className="pt-16 sm:pt-20 md:pt-24 lg:pt-[216px] pb-8 sm:pb-12 md:pb-16 flex flex-col justify-start items-center px-2 sm:px-4 md:px-8 lg:px-0 w-full sm:pl-0 sm:pr-0 pl-0 pr-0">
 
@@ -22,9 +20,9 @@ export function HeroSection() {
 
             <div className="w-full max-w-[497px] lg:w-[497px] flex flex-col justify-center items-center gap-6 sm:gap-8 md:gap-10 lg:gap-12 relative z-10 mt-6 sm:mt-8 md:mt-10 lg:mt-12">
                 <div className="backdrop-blur-[8.25px] flex justify-start items-center gap-4">
-                    <button onClick={() => router.push('/chat')} className="h-10 sm:h-11 md:h-12 px-6 sm:px-8 md:px-10 lg:px-12 py-2 sm:py-[6px] relative bg-[#37322f] hover:bg-[#37322f]/90 shadow-[0px_0px_0px_2.5px_rgba(255,255,255,0.08)_inset] overflow-hidden rounded-full flex justify-center items-center text-white text-sm sm:text-base md:text-[15px] font-medium leading-5 font-sans cursor-pointer">
+                    <Link href="/chat" className="h-10 sm:h-11 md:h-12 px-6 sm:px-8 md:px-10 lg:px-12 py-2 sm:py-[6px] relative bg-[#37322f] hover:bg-[#37322f]/90 shadow-[0px_0px_0px_2.5px_rgba(255,255,255,0.08)_inset] overflow-hidden rounded-full flex justify-center items-center text-white text-sm sm:text-base md:text-[15px] font-medium leading-5 font-sans cursor-pointer">
                         Start for free
-                    </button>
+                    </Link>
                 </div>
             </div>
         </section>

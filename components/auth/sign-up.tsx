@@ -9,6 +9,7 @@ import { signUpSchema, type SignUpInput } from "@/lib/schema/auth/sign-up";
 import { useSignUp } from "@clerk/nextjs";
 import { zodResolver } from "@hookform/resolvers/zod";
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
@@ -194,14 +195,12 @@ export default function SignUpForm() {
                                     </Button>
 
                                     <div className="text-center text-sm">
-                                        <Button
-                                            type="button"
-                                            variant="link"
-                                            onClick={() => router.push("/sign-in")}
+                                        <Link
+                                            href="/sign-in"
                                             className="underline underline-offset-4 cursor-pointer text-muted-foreground"
                                         >
                                             Already have an account? Sign in
-                                        </Button>
+                                        </Link>
                                     </div>
                                 </form>
                             </Form>
