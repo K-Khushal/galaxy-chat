@@ -2,11 +2,7 @@
 
 import {
     BadgeCheck,
-    Bell,
-    ChevronsUpDown,
-    CreditCard,
-    LogOut,
-    Sparkles,
+    ChevronsUpDown
 } from "lucide-react"
 
 import {
@@ -30,6 +26,7 @@ import {
     useSidebar,
 } from "@/components/ui/sidebar"
 import type { SidebarUser } from "@/lib/types"
+import SignOut from "../sign-out"
 
 export function NavUser({ user }: { user: SidebarUser }) {
     const { isMobile } = useSidebar()
@@ -75,30 +72,11 @@ export function NavUser({ user }: { user: SidebarUser }) {
                         <DropdownMenuSeparator />
                         <DropdownMenuGroup>
                             <DropdownMenuItem>
-                                <Sparkles />
-                                Upgrade to Pro
-                            </DropdownMenuItem>
-                        </DropdownMenuGroup>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuGroup>
-                            <DropdownMenuItem>
                                 <BadgeCheck />
                                 Account
                             </DropdownMenuItem>
-                            <DropdownMenuItem>
-                                <CreditCard />
-                                Billing
-                            </DropdownMenuItem>
-                            <DropdownMenuItem>
-                                <Bell />
-                                Notifications
-                            </DropdownMenuItem>
+                            <SignOut />
                         </DropdownMenuGroup>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem>
-                            <LogOut />
-                            Log out
-                        </DropdownMenuItem>
                     </DropdownMenuContent>
                 </DropdownMenu>
             </SidebarMenuItem>
