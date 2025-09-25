@@ -3,14 +3,14 @@
 import {
     Action,
     Actions
-} from '@/components/ai-elements/actions';
+} from '@/components/elements/actions';
 import {
     Conversation,
     ConversationContent,
     ConversationScrollButton,
-} from '@/components/ai-elements/conversation';
-import { Loader } from '@/components/ai-elements/loader';
-import { Message, MessageContent } from '@/components/ai-elements/message';
+} from '@/components/elements/conversation';
+import { Loader } from '@/components/elements/loader';
+import { Message, MessageContent } from '@/components/elements/message';
 import {
     PromptInput,
     PromptInputActionAddAttachments,
@@ -31,32 +31,41 @@ import {
     PromptInputTextarea,
     PromptInputToolbar,
     PromptInputTools,
-} from '@/components/ai-elements/prompt-input';
+} from '@/components/elements/prompt-input';
 import {
     Reasoning,
     ReasoningContent,
     ReasoningTrigger,
-} from '@/components/ai-elements/reasoning';
-import { Response } from '@/components/ai-elements/response';
+} from '@/components/elements/reasoning';
+import { Response } from '@/components/elements/response';
 import {
     Source,
     Sources,
     SourcesContent,
     SourcesTrigger,
-} from '@/components/ai-elements/sources';
+} from '@/components/elements/sources';
 import { useChat } from '@ai-sdk/react';
 import { CopyIcon, GlobeIcon, RefreshCcwIcon } from 'lucide-react';
 import { Fragment, useState } from 'react';
 
 const models = [
     {
-        name: 'GPT 4o',
-        value: 'openai/gpt-4o',
+        name: 'Grok 4 Fast',
+        value: 'x-ai/grok-4-fast:free',
     },
     {
         name: 'Deepseek R1',
-        value: 'deepseek/deepseek-r1',
+        value: 'deepseek/deepseek-r1:free',
     },
+    {
+        name: 'GPT OSS 120B',
+        value: 'openai/gpt-oss-120b:free',
+    },
+    {
+        name: 'Gemini 2.0 Flash Exp',
+        value: 'google/gemini-2.0-flash-exp:free',
+    },
+
 ];
 
 const ChatBotDemo = () => {
@@ -99,7 +108,7 @@ const ChatBotDemo = () => {
     };
 
     return (
-        <div className="max-w-4xl mx-auto p-6 relative size-full h-full">
+        <div className="max-w-4xl mx-auto p-6 relative size-full h-full overscroll-none">
             <div className="flex flex-col h-full">
                 <Conversation className="h-full">
                     <ConversationContent>
@@ -178,8 +187,9 @@ const ChatBotDemo = () => {
                     </ConversationContent>
                     <ConversationScrollButton />
                 </Conversation>
-
-                <PromptInput onSubmit={handleSubmit} className="mt-4" globalDrop multiple>
+            </div>
+            <div className="sticky bottom-0 pb-4 bg-background">
+                <PromptInput onSubmit={handleSubmit} globalDrop multiple>
                     <PromptInputBody>
                         <PromptInputAttachments>
                             {(attachment) => <PromptInputAttachment data={attachment} />}

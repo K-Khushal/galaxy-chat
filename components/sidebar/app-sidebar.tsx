@@ -1,6 +1,6 @@
-import { SidebarActions } from "@/components/chat/sidebar-actions"
-import { SidebarHistory } from "@/components/chat/sidebar-history"
-import { SidebarUser } from "@/components/chat/sidebar-user"
+import { SidebarActions } from "@/components/sidebar/sidebar-actions"
+import { SidebarHistory } from "@/components/sidebar/sidebar-history"
+import { SidebarUser } from "@/components/sidebar/sidebar-user"
 import {
   Sidebar,
   SidebarContent,

@@ -1,4 +1,4 @@
-import { AppSidebar } from "@/components/chat/app-sidebar";
+import { AppSidebar } from "@/components/sidebar/app-sidebar";
 import {
     SidebarInset,
     SidebarProvider,
@@ -31,7 +31,7 @@ export default async function ChatLayout({ children }: { children: React.ReactNo
         <SidebarProvider>
             <AppSidebar user={sidebarUser} />
             <SidebarInset>
-                <header className="flex h-16 shrink-0 items-center gap-2 px-4">
+                <header className="fixed flex h-16 shrink-0 items-center gap-2 px-4">
                     <SidebarTrigger className="-ml-1" />
                 </header>
                 <ChatUserProvider user={sidebarUser ?? null}>

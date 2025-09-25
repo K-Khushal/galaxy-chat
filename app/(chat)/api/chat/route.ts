@@ -1,3 +1,4 @@
+import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { convertToModelMessages, streamText, UIMessage } from 'ai';
 
 // Allow streaming responses up to 30 seconds
@@ -14,8 +15,12 @@ export async function POST(req: Request) {
         webSearch: boolean;
     } = await req.json();
 
+    const openrouter = createOpenRouter({
+        apiKey: process.env.OPENROUTER_API_KEY,
+    });
+
     const result = streamText({
-        model: webSearch ? 'perplexity/sonar' : model,
+        model: openrouter.chat(model),
         messages: convertToModelMessages(messages),
         system:
             'You are a helpful assistant that can answer questions and help with tasks',
