@@ -45,7 +45,7 @@ import {
     SourcesTrigger,
 } from '@/components/elements/sources';
 import { useChat } from '@ai-sdk/react';
-import { CopyIcon, GlobeIcon, RefreshCcwIcon } from 'lucide-react';
+import { CopyIcon, RefreshCcwIcon } from 'lucide-react';
 import { Fragment, useState } from 'react';
 
 const models = [
@@ -207,13 +207,14 @@ const ChatBotDemo = () => {
                                     <PromptInputActionAddAttachments />
                                 </PromptInputActionMenuContent>
                             </PromptInputActionMenu>
-                            <PromptInputButton
+                            {/* Web search disabled for now */}
+                            {/* <PromptInputButton
                                 variant={webSearch ? 'default' : 'ghost'}
                                 onClick={() => setWebSearch(!webSearch)}
                             >
                                 <GlobeIcon size={16} />
                                 <span>Search</span>
-                            </PromptInputButton>
+                            </PromptInputButton> */}
                             <PromptInputModelSelect
                                 onValueChange={(value) => {
                                     setModel(value);
