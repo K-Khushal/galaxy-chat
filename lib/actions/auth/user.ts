@@ -1,5 +1,5 @@
 import { ensureDb } from "../../database/db";
-import { UserProfileModel, type IUserProfile } from "../../database/models/UserProfile";
+import { UserProfileModel, type IUserProfile } from "../../database/models/user-profile";
 
 export type UserProfile = IUserProfile;
 
