@@ -4,6 +4,7 @@
 - Node 18+
 - Clerk account
 - MongoDB Atlas database
+- Openrouter 
 
 ### Environment Variables (.env.local)
 Create `.env.local` in the project root:
@@ -14,8 +15,11 @@ NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_...
 CLERK_SECRET_KEY=sk_test_...
 
 # MongoDB
-MONGODB_URI=mongodb+srv://<user>:<pass>@cluster0.mongodb.net/?retryWrites=true&w=majority
+MONGODB_URI=mongodb+srv://<user>:<pass>@cluster0.mongodb.net/
 MONGODB_DB=galaxy_chat
+
+# Openrouter
+OPENROUTER_API_KEY=sk...
 ```
 
 ### Install
@@ -34,15 +38,12 @@ Visit `http://localhost:3000`.
 - Protected route: `/dashboard` (middleware enforces auth)
 
 ### Files of Interest
-- `app/sign-in/[[...sign-in]]/page.tsx`
-- `app/sign-up/[[...sign-up]]/page.tsx`
-- `app/forgot-password/[[...forgot-password]]/page.tsx`
-- `app/dashboard/page.tsx`
-- `lib/mongodb.ts` – shared MongoDB connection
-- `lib/user.ts` – user profile helpers
-- `middleware.ts` – route protection
-- `app/layout.tsx` – Navbar + ClerkProvider
-
-### Notes
-- `UserButton` includes sign-out with `afterSignOutUrl="/"`.
-- Dashboard demonstrates mixing Clerk user data with MongoDB profile.
+- `app/(auth)/sign-in/[[...sign-in]]/page.tsx` - Clerk sign-in page
+- `app/(auth)/sign-up/[[...sign-up]]/page.tsx` - Clerk sign-up page
+- `app/(chat)/page.tsx` - Main chat interface
+- `lib/database/db.ts` - MongoDB connection management
+- `lib/database/models/user-profile.ts` - User profile schema
+- `lib/actions/auth/user.ts` - User profile CRUD operations
+- `lib/mappers/user.ts` - User data transformation utilities
+- `middleware.ts` - Auth middleware and route protection
+- `app/layout.tsx` - Root layout with ClerkProvider
