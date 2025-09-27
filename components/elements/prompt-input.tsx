@@ -50,7 +50,7 @@ import {
 } from "react";
 
 type AttachmentsContext = {
-  files: (FileUIPart & { id: string; uploadStatus?: 'uploading' | 'completed' | 'error'; uploadProgress?: number })[];
+  files: (FileUIPart & { id: string; uploadStatus?: 'uploading' | 'completed' | 'error'; uploadProgress?: number; uploadError?: string })[];
   add: (files: File[] | FileList) => void;
   remove: (id: string) => void;
   clear: () => void;
@@ -74,7 +74,7 @@ export const usePromptInputAttachments = () => {
 };
 
 export type PromptInputAttachmentProps = HTMLAttributes<HTMLDivElement> & {
-  data: FileUIPart & { id: string; uploadStatus?: 'uploading' | 'completed' | 'error'; uploadProgress?: number };
+  data: FileUIPart & { id: string; uploadStatus?: 'uploading' | 'completed' | 'error'; uploadProgress?: number; uploadError?: string };
   className?: string;
 };
 
@@ -139,7 +139,7 @@ export type PromptInputAttachmentsProps = Omit<
   HTMLAttributes<HTMLDivElement>,
   "children"
 > & {
-  children: (attachment: FileUIPart & { id: string }) => React.ReactNode;
+  children: (attachment: FileUIPart & { id: string; uploadStatus?: 'uploading' | 'completed' | 'error'; uploadProgress?: number; uploadError?: string }) => React.ReactNode;
 };
 
 export function PromptInputAttachments({
@@ -248,7 +248,7 @@ export const PromptInput = ({
   onSubmit,
   ...props
 }: PromptInputProps) => {
-  const [items, setItems] = useState<(FileUIPart & { id: string; uploadStatus?: 'uploading' | 'completed' | 'error'; uploadProgress?: number })[]>([]);
+  const [items, setItems] = useState<(FileUIPart & { id: string; uploadStatus?: 'uploading' | 'completed' | 'error'; uploadProgress?: number; uploadError?: string })[]>([]);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const anchorRef = useRef<HTMLSpanElement>(null);
   const formRef = useRef<HTMLFormElement | null>(null);
@@ -279,9 +279,12 @@ export const PromptInput = ({
       });
     },
     onError: (error) => {
+      const { fileId, error: message } = error || {};
+      if (!fileId) return; // Defensive check - don't update anything if fileId is missing
+
       setItems(prev => prev.map(item =>
-        item.id === error
-          ? { ...item, uploadStatus: 'error' }
+        item.id === fileId
+          ? { ...item, uploadStatus: 'error', uploadError: message }
           : item
       ));
     }
@@ -349,7 +352,7 @@ export const PromptInput = ({
             message: "Too many files. Some were not added.",
           });
         }
-        const next: (FileUIPart & { id: string; uploadStatus?: 'uploading' | 'completed' | 'error'; uploadProgress?: number })[] = [];
+        const next: (FileUIPart & { id: string; uploadStatus?: 'uploading' | 'completed' | 'error'; uploadProgress?: number; uploadError?: string })[] = [];
         for (const file of capped) {
           const fileId = nanoid();
           fileIds.push(fileId);

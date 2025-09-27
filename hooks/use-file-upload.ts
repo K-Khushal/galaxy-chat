@@ -32,7 +32,7 @@ export interface UseFileUploadOptions {
     service?: 'cloudinary' | 'uploadcare';
     onProgress?: (progress: UploadProgress) => void;
     onComplete?: (result: UploadResult) => void;
-    onError?: (error: string) => void;
+    onError?: (error: { fileId: string; error: string }) => void;
 }
 
 /**
@@ -138,7 +138,7 @@ export const useFileUpload = (options: UseFileUploadOptions = {}) => {
             };
 
             setUploads(prev => new Map(prev.set(fileId, errorProgress)));
-            onError?.(errorMessage);
+            onError?.({ fileId, error: errorMessage });
             return null;
         } finally {
             setIsUploading(false);
