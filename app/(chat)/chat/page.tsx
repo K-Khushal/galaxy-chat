@@ -20,7 +20,6 @@ import {
     PromptInputAttachment,
     PromptInputAttachments,
     PromptInputBody,
-    PromptInputButton,
     type PromptInputMessage,
     PromptInputModelSelect,
     PromptInputModelSelectContent,
@@ -30,7 +29,7 @@ import {
     PromptInputSubmit,
     PromptInputTextarea,
     PromptInputToolbar,
-    PromptInputTools,
+    PromptInputTools
 } from '@/components/elements/prompt-input';
 import {
     Reasoning,
@@ -76,15 +75,19 @@ const ChatBotDemo = () => {
 
     const retryLast = () => {
         const lastUser = [...messages].reverse().find((m) => m.role === 'user');
-        const text = lastUser?.parts?.filter((p) => p.type === 'text').map((p: any) => p.text).join('\n') || '';
-        if (!text) return;
+        if (!lastUser) return;
+
+        // Extract text and files from the last user message
+        const text = lastUser.parts?.find(p => p.type === 'text')?.text || '';
+        const files = lastUser.parts?.filter(p => p.type === 'file') || [];
+
         sendMessage(
-            { text },
+            { text, files },
             { body: { model, webSearch } }
         );
     };
 
-    const handleSubmit = (message: PromptInputMessage) => {
+    const handleSubmit = async (message: PromptInputMessage) => {
         const hasText = Boolean(message.text);
         const hasAttachments = Boolean(message.files?.length);
 
@@ -92,10 +95,19 @@ const ChatBotDemo = () => {
             return;
         }
 
+        // Filter out files that are still uploading or failed to upload
+        const validFiles = message.files?.filter(file =>
+            file.url && !file.url.startsWith('blob:') &&
+            (file as any).uploadStatus === 'completed'
+        ) || [];
+
+        console.log('Valid files to send:', validFiles);
+
+        // Use AI SDK v5 pattern - send files directly
         sendMessage(
             {
-                text: message.text || 'Sent with attachments',
-                files: message.files
+                text: message.text || '',
+                files: validFiles
             },
             {
                 body: {
