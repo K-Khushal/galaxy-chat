@@ -1,8 +1,5 @@
 "use client";
 
-import { useChat } from "@ai-sdk/react";
-import { CopyIcon, RefreshCcwIcon } from "lucide-react";
-import { Fragment, useState } from "react";
 import { Action, Actions } from "@/components/elements/actions";
 import {
   Conversation,
@@ -43,6 +40,9 @@ import {
   SourcesContent,
   SourcesTrigger,
 } from "@/components/elements/sources";
+import { useChat } from "@ai-sdk/react";
+import { CopyIcon, RefreshCcwIcon } from "lucide-react";
+import { Fragment, useState } from "react";
 
 const models = [
   {
@@ -60,6 +60,10 @@ const models = [
   {
     name: "Gemini 2.0 Flash Exp",
     value: "google/gemini-2.0-flash-exp:free",
+  },
+  {
+    name: "Z AI GLM 4.5 Air",
+    value: "z-ai/glm-4.5-air:free",
   },
 ];
 
@@ -160,7 +164,8 @@ const ChatBotDemo = () => {
                             </MessageContent>
                           </Message>
                           {message.role === "assistant" &&
-                            i === messages.length - 1 && (
+                            message.id === messages.at(-1)?.id &&
+                            i === message.parts.length - 1 && (
                               <Actions className="mt-2">
                                 <Action onClick={retryLast} label="Retry">
                                   <RefreshCcwIcon className="size-3" />
