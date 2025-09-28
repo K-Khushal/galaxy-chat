@@ -41,8 +41,11 @@ import {
   SourcesTrigger,
 } from "@/components/elements/sources";
 import { useChat } from "@ai-sdk/react";
-import { CopyIcon, RefreshCcwIcon } from "lucide-react";
+import type { FileUIPart } from "ai";
+import { CopyIcon, PaperclipIcon, RefreshCcwIcon } from "lucide-react";
+import Image from "next/image";
 import { Fragment, useState } from "react";
+import { toast } from "sonner";
 
 const models = [
   {
@@ -65,15 +68,69 @@ const models = [
     name: "Z AI GLM 4.5 Air",
     value: "z-ai/glm-4.5-air:free",
   },
+  {
+    name: "Mistral Small",
+    value: "mistralai/mistral-small-3.2-24b-instruct:free",
+  },
 ];
 
 const ChatBotDemo = () => {
   const [input, setInput] = useState("");
   const [model, setModel] = useState<string>(models[0].value);
   const [webSearch] = useState(false);
-  const { messages, sendMessage, status } = useChat();
+  const { messages, sendMessage, status } = useChat({
+    onError: (error) => {
+      console.error("Chat API error:", error);
 
-  const filterValidFiles = (files: any[]) => {
+      // Handle specific error types based on OpenRouter error patterns
+      let errorMessage =
+        "An error occurred while processing your request. Please try again.";
+
+      if (
+        error.message.includes("No endpoints found that support image input")
+      ) {
+        errorMessage =
+          "The selected model doesn't support image input. Please try a different model or remove the image.";
+      } else if (
+        error.message.includes("model is too busy") ||
+        error.message.includes("rate limit") ||
+        error.message.includes("busy")
+      ) {
+        errorMessage =
+          "The model is currently busy. Please try again in a moment.";
+      } else if (
+        error.message.includes("API key") ||
+        error.message.includes("unauthorized")
+      ) {
+        errorMessage = "API configuration error. Please contact support.";
+      } else if (
+        error.message.includes("network") ||
+        error.message.includes("fetch") ||
+        error.message.includes("timeout")
+      ) {
+        errorMessage =
+          "Network error. Please check your connection and try again.";
+      } else if (
+        error.message.includes("quota") ||
+        error.message.includes("limit")
+      ) {
+        errorMessage = "Usage limit reached. Please try again later.";
+      } else if (
+        error.message.includes("invalid") ||
+        error.message.includes("malformed")
+      ) {
+        errorMessage =
+          "Invalid request. Please check your input and try again.";
+      }
+
+      toast.error("Failed to send message", {
+        description: errorMessage,
+        closeButton: true,
+      });
+    },
+  });
+
+  const filterValidFiles = (files: FileUIPart[]) => {
     return files.filter((file) => {
       // Check if file has a valid URL (not a blob URL)
       const hasValidUrl = file.url && !file.url.startsWith("blob:");
@@ -124,6 +181,8 @@ const ChatBotDemo = () => {
     );
     setInput("");
   };
+
+  console.log(messages);
 
   return (
     <div className="max-w-4xl mx-auto p-6 relative size-full h-full overscroll-none">
@@ -184,6 +243,25 @@ const ChatBotDemo = () => {
                               </Actions>
                             )}
                         </Fragment>
+                      );
+                    case "file":
+                      return (
+                        <Message from={message.role} key={`${message.id}-${i}`}>
+                          {part.mediaType?.startsWith("image/") && part.url ? (
+                            <Image
+                              alt={part.filename || "attachment"}
+                              className="size-full rounded-md object-cover h-14 w-14 border"
+                              height={56}
+                              src={part.url}
+                              width={56}
+                              unoptimized={part.url.startsWith("blob:")}
+                            />
+                          ) : (
+                            <div className="flex size-full items-center justify-center text-muted-foreground">
+                              <PaperclipIcon className="size-4" />
+                            </div>
+                          )}
+                        </Message>
                       );
                     case "reasoning":
                       return (

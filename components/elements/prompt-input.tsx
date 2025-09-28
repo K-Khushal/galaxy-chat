@@ -118,9 +118,7 @@ export function PromptInputAttachment({
       {/* Upload progress overlay - only show when uploading */}
       {data.uploadStatus === "uploading" && (
         <div className="absolute inset-0 bg-black/50 rounded-md flex items-center justify-center">
-          <div className="text-white text-xs font-medium">
-            {data.uploadProgress || 0}%
-          </div>
+          <Loader2Icon className="h-4 w-4 text-white animate-spin" />
         </div>
       )}
 
@@ -241,7 +239,7 @@ export type PromptInputProps = Omit<
   onSubmit: (
     message: PromptInputMessage,
     event: FormEvent<HTMLFormElement>,
-  ) => void;
+  ) => Promise<void> | void;
 };
 
 export const PromptInput = ({
@@ -518,7 +516,7 @@ export const PromptInput = ({
     }
   };
 
-  const handleSubmit: FormEventHandler<HTMLFormElement> = (event) => {
+  const handleSubmit: FormEventHandler<HTMLFormElement> = async (event) => {
     event.preventDefault();
 
     // Don't submit if files are still uploading
@@ -530,10 +528,15 @@ export const PromptInput = ({
       ...item,
     }));
 
-    onSubmit({ text: event.currentTarget.message.value, files }, event);
-
-    // Clear attachments from UI after successful submission (but keep them in Cloudinary)
-    clearLocal();
+    try {
+      await onSubmit({ text: event.currentTarget.message.value, files }, event);
+      // Clear attachments from UI after successful submission (but keep them in Cloudinary)
+      clearLocal();
+    } catch (error) {
+      // Preserve attachments on failure - don't clear them
+      // Re-throw the error so the caller can handle it
+      throw error;
+    }
   };
 
   const ctx = useMemo<AttachmentsContext>(
