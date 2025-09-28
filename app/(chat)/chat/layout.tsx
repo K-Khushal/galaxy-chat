@@ -1,12 +1,8 @@
-import { currentUser } from "@clerk/nextjs/server";
 import { AppSidebar } from "@/components/sidebar/app-sidebar";
-import {
-  SidebarInset,
-  SidebarProvider,
-  SidebarTrigger,
-} from "@/components/ui/sidebar";
+import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { getOrCreateUserProfile } from "@/lib/actions/auth/user";
 import { toSidebarUser, toUserProfileInput } from "@/lib/mappers/user";
+import { currentUser } from "@clerk/nextjs/server";
 import { ChatUserProvider } from "./user-provider";
 
 export default async function ChatLayout({
@@ -33,9 +29,6 @@ export default async function ChatLayout({
     <SidebarProvider>
       <AppSidebar user={sidebarUser} />
       <SidebarInset>
-        <header className="fixed flex h-16 shrink-0 items-center gap-2 px-4">
-          <SidebarTrigger className="-ml-1" />
-        </header>
         <ChatUserProvider user={sidebarUser ?? null}>
           {children}
         </ChatUserProvider>

@@ -1,11 +1,5 @@
 "use client";
 
-import { useSignIn } from "@clerk/nextjs";
-import { zodResolver } from "@hookform/resolvers/zod";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useForm } from "react-hook-form";
-import { toast } from "sonner";
 import GoogleIcon from "@/components/svg/google-icon";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,6 +20,12 @@ import {
 import { Input } from "@/components/ui/input";
 import { PasswordInput } from "@/components/ui/input-password";
 import { type SignInInput, signInSchema } from "@/lib/schema/auth/sign-in";
+import { useSignIn } from "@clerk/nextjs";
+import { zodResolver } from "@hookform/resolvers/zod";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useForm } from "react-hook-form";
+import { toast } from "sonner";
 
 export default function SignInForm() {
   const router = useRouter();
@@ -69,7 +69,10 @@ export default function SignInForm() {
 
       if (result.status === "complete") {
         await setActive?.({ session: result.createdSessionId });
-        toast.success("Signed in", { description: "Welcome back!" });
+        toast.success("Signed in", {
+          description: "Welcome back!",
+          closeButton: true,
+        });
         router.replace("/chat");
         return;
       }

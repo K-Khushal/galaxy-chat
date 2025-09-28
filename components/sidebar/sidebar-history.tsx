@@ -34,7 +34,7 @@ export function SidebarHistory({
   const { isMobile } = useSidebar();
 
   return (
-    <SidebarGroup>
+    <SidebarGroup className="group-data-[collapsible=icon]:hidden">
       <SidebarGroupLabel>Chats</SidebarGroupLabel>
       <SidebarMenu>
         {items.map((item) => (

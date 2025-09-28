@@ -1,6 +1,3 @@
-import { Sparkles } from "lucide-react";
-import Link from "next/link";
-import type * as React from "react";
 import { SidebarActions } from "@/components/sidebar/sidebar-actions";
 import { SidebarHistory } from "@/components/sidebar/sidebar-history";
 import { SidebarUser } from "@/components/sidebar/sidebar-user";
@@ -9,12 +6,10 @@ import {
   SidebarContent,
   SidebarFooter,
   SidebarHeader,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
   SidebarRail,
 } from "@/components/ui/sidebar";
 import type { TypeSidebarUser } from "@/lib/types";
+import type * as React from "react";
 
 // This is sample data.
 const data = {
@@ -41,24 +36,8 @@ export function AppSidebar({
   ...props
 }: React.ComponentProps<typeof Sidebar> & { user?: TypeSidebarUser }) {
   return (
-    <Sidebar {...props}>
+    <Sidebar {...props} collapsible="icon">
       <SidebarHeader>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton size="lg" asChild>
-              <Link
-                href="#"
-                aria-label="Go to home"
-                className="flex items-center gap-2 self-center font-medium cursor-default"
-              >
-                <div className="bg-primary text-primary-foreground flex size-6 items-center justify-center rounded-md">
-                  <Sparkles className="size-4" />
-                </div>
-                Galaxy Chat
-              </Link>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
         <SidebarActions />
       </SidebarHeader>
       <SidebarContent>

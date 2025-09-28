@@ -1,9 +1,4 @@
 "use client";
-import { useSignUp } from "@clerk/nextjs";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { useRouter } from "next/navigation";
-import { useForm } from "react-hook-form";
-import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -30,6 +25,11 @@ import {
   type VerifyEmailInput,
   VerifyEmailSchema,
 } from "@/lib/schema/auth/verify-email";
+import { useSignUp } from "@clerk/nextjs";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useRouter } from "next/navigation";
+import { useForm } from "react-hook-form";
+import { toast } from "sonner";
 
 type FormData = Pick<VerifyEmailInput, "otp">;
 
@@ -124,6 +124,7 @@ export default function VerifyEmail({
 
         toast.success("Email verified successfully!", {
           description: "Welcome to Galaxy Chat! Redirecting...",
+          closeButton: true,
         });
 
         if (onSuccess) {
