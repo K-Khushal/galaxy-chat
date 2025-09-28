@@ -42,8 +42,6 @@
     "@radix-ui/react-toggle-group": "^1.1.11",
     "@radix-ui/react-tooltip": "^1.2.8",
     "@radix-ui/react-use-controllable-state": "^1.2.2",
-    "@uploadcare/react-uploader": "^1.10.2",
-    "@uploadcare/upload-client": "^6.18.0",
     "ai": "^5.0.52",
     "class-variance-authority": "^0.7.1",
     "cloudinary": "^2.7.0",

@@ -24,7 +24,6 @@ All submissions **must** use the following stack:
 - **Database:** MongoDB  
 - **Auth:** Clerk (authentication & authorization)  
 - **File Storage:** Cloudinary  
-- **File Uploads:** Uploadcare  
 - **Editor:** Cursor IDE (AI-powered coding)  
 - **Deployment:** Vercel  
 
@@ -53,7 +52,7 @@ All submissions **must** use the following stack:
 ## ⚙️ Backend Requirements  
 - **Framework:** Next.js  
 - **Database:** MongoDB  
-- **File Storage:** Cloudinary or Uploadcare  
+- **File Storage:** Cloudinary  
 - **Token Management:** Respect model-specific context windows (e.g., GPT-4-turbo).  
 - **Webhooks:** Support for background processing callbacks (file transformations, async jobs).  
 

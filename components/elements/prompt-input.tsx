@@ -1,5 +1,36 @@
 "use client";
 
+import type { ChatStatus, FileUIPart } from "ai";
+import {
+  ImageIcon,
+  Loader2Icon,
+  PaperclipIcon,
+  PlusIcon,
+  SendIcon,
+  SquareIcon,
+  XIcon,
+} from "lucide-react";
+import { nanoid } from "nanoid";
+import {
+  type ChangeEventHandler,
+  Children,
+  type ClipboardEventHandler,
+  type ComponentProps,
+  createContext,
+  type FormEvent,
+  type FormEventHandler,
+  Fragment,
+  type HTMLAttributes,
+  type KeyboardEventHandler,
+  type RefObject,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -17,40 +48,14 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { useFileUpload } from "@/hooks/use-file-upload";
 import { cn } from "@/lib/utils";
-import type { ChatStatus, FileUIPart } from "ai";
-import {
-  ImageIcon,
-  Loader2Icon,
-  PaperclipIcon,
-  PlusIcon,
-  SendIcon,
-  SquareIcon,
-  XIcon,
-} from "lucide-react";
-import { nanoid } from "nanoid";
-import {
-  type ChangeEventHandler,
-  Children,
-  ClipboardEventHandler,
-  type ComponentProps,
-  createContext,
-  type FormEvent,
-  type FormEventHandler,
-  Fragment,
-  type HTMLAttributes,
-  type KeyboardEventHandler,
-  type RefObject,
-  useCallback,
-  useContext,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
 
 type AttachmentsContext = {
-  files: (FileUIPart & { id: string; uploadStatus?: 'uploading' | 'completed' | 'error'; uploadProgress?: number; uploadError?: string })[];
+  files: (FileUIPart & {
+    id: string;
+    uploadStatus?: "uploading" | "completed" | "error";
+    uploadProgress?: number;
+    uploadError?: string;
+  })[];
   add: (files: File[] | FileList) => void;
   remove: (id: string) => void;
   clear: () => void;
@@ -66,7 +71,7 @@ export const usePromptInputAttachments = () => {
 
   if (!context) {
     throw new Error(
-      "usePromptInputAttachments must be used within a PromptInput"
+      "usePromptInputAttachments must be used within a PromptInput",
     );
   }
 
@@ -74,7 +79,12 @@ export const usePromptInputAttachments = () => {
 };
 
 export type PromptInputAttachmentProps = HTMLAttributes<HTMLDivElement> & {
-  data: FileUIPart & { id: string; uploadStatus?: 'uploading' | 'completed' | 'error'; uploadProgress?: number; uploadError?: string };
+  data: FileUIPart & {
+    id: string;
+    uploadStatus?: "uploading" | "completed" | "error";
+    uploadProgress?: number;
+    uploadError?: string;
+  };
   className?: string;
 };
 
@@ -106,16 +116,18 @@ export function PromptInputAttachment({
       )}
 
       {/* Upload progress overlay - only show when uploading */}
-      {data.uploadStatus === 'uploading' && data.uploadProgress !== undefined && data.uploadProgress < 100 && (
-        <div className="absolute inset-0 bg-black/50 rounded-md flex items-center justify-center">
-          <div className="text-white text-xs font-medium">
-            {data.uploadProgress}%
+      {data.uploadStatus === "uploading" &&
+        data.uploadProgress !== undefined &&
+        data.uploadProgress < 100 && (
+          <div className="absolute inset-0 bg-black/50 rounded-md flex items-center justify-center">
+            <div className="text-white text-xs font-medium">
+              {data.uploadProgress}%
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
       {/* Error overlay */}
-      {data.uploadStatus === 'error' && (
+      {data.uploadStatus === "error" && (
         <div className="absolute inset-0 bg-red-500/50 rounded-md flex items-center justify-center">
           <XIcon className="h-4 w-4 text-white" />
         </div>
@@ -139,7 +151,14 @@ export type PromptInputAttachmentsProps = Omit<
   HTMLAttributes<HTMLDivElement>,
   "children"
 > & {
-  children: (attachment: FileUIPart & { id: string; uploadStatus?: 'uploading' | 'completed' | 'error'; uploadProgress?: number; uploadError?: string }) => React.ReactNode;
+  children: (
+    attachment: FileUIPart & {
+      id: string;
+      uploadStatus?: "uploading" | "completed" | "error";
+      uploadProgress?: number;
+      uploadError?: string;
+    },
+  ) => React.ReactNode;
 };
 
 export function PromptInputAttachments({
@@ -169,7 +188,7 @@ export function PromptInputAttachments({
       aria-live="polite"
       className={cn(
         "overflow-hidden transition-[height] duration-200 ease-out",
-        className
+        className,
       )}
       style={{ height: attachments.files.length ? height : 0 }}
       {...props}
@@ -221,8 +240,6 @@ export type PromptInputProps = Omit<
   multiple?: boolean;
   // When true, accepts drops anywhere on document. Default false (opt-in).
   globalDrop?: boolean;
-  // Render a hidden input with given name and keep it in sync for native form posts. Default false.
-  syncHiddenInput?: boolean;
   // Minimal constraints
   maxFiles?: number;
   maxFileSize?: number; // bytes
@@ -232,7 +249,7 @@ export type PromptInputProps = Omit<
   }) => void;
   onSubmit: (
     message: PromptInputMessage,
-    event: FormEvent<HTMLFormElement>
+    event: FormEvent<HTMLFormElement>,
   ) => void;
 };
 
@@ -241,36 +258,48 @@ export const PromptInput = ({
   accept,
   multiple,
   globalDrop,
-  syncHiddenInput,
   maxFiles,
   maxFileSize,
   onError,
   onSubmit,
   ...props
 }: PromptInputProps) => {
-  const [items, setItems] = useState<(FileUIPart & { id: string; uploadStatus?: 'uploading' | 'completed' | 'error'; uploadProgress?: number; uploadError?: string })[]>([]);
+  const [items, setItems] = useState<
+    (FileUIPart & {
+      id: string;
+      uploadStatus?: "uploading" | "completed" | "error";
+      uploadProgress?: number;
+      uploadError?: string;
+    })[]
+  >([]);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const anchorRef = useRef<HTMLSpanElement>(null);
   const formRef = useRef<HTMLFormElement | null>(null);
 
   const { uploadFiles, isUploading } = useFileUpload({
-    service: 'cloudinary', // Default to Cloudinary
+    service: "cloudinary", // Default to Cloudinary
     onProgress: (progress) => {
-      setItems(prev => prev.map(item =>
-        item.id === progress.fileId
-          ? { ...item, uploadStatus: progress.status, uploadProgress: progress.progress }
-          : item
-      ));
+      setItems((prev) =>
+        prev.map((item) =>
+          item.id === progress.fileId
+            ? {
+                ...item,
+                uploadStatus: progress.status,
+                uploadProgress: progress.progress,
+              }
+            : item,
+        ),
+      );
     },
     onComplete: (result) => {
-      setItems(prev => {
-        const updated = prev.map(item => {
+      setItems((prev) => {
+        const updated = prev.map((item) => {
           if (item.id === result.fileId) {
             return {
               ...item,
               url: result.url,
-              uploadStatus: 'completed' as 'completed',
-              uploadProgress: 100
+              uploadStatus: "completed" as "completed",
+              uploadProgress: 100,
             };
           }
           return item;
@@ -282,12 +311,14 @@ export const PromptInput = ({
       const { fileId, error: message } = error || {};
       if (!fileId) return; // Defensive check - don't update anything if fileId is missing
 
-      setItems(prev => prev.map(item =>
-        item.id === fileId
-          ? { ...item, uploadStatus: 'error', uploadError: message }
-          : item
-      ));
-    }
+      setItems((prev) =>
+        prev.map((item) =>
+          item.id === fileId
+            ? { ...item, uploadStatus: "error", uploadError: message }
+            : item,
+        ),
+      );
+    },
   });
 
   // Find nearest form to scope drag & drop
@@ -313,7 +344,7 @@ export const PromptInput = ({
       }
       return true;
     },
-    [accept]
+    [accept],
   );
 
   const add = useCallback(
@@ -352,7 +383,12 @@ export const PromptInput = ({
             message: "Too many files. Some were not added.",
           });
         }
-        const next: (FileUIPart & { id: string; uploadStatus?: 'uploading' | 'completed' | 'error'; uploadProgress?: number; uploadError?: string })[] = [];
+        const next: (FileUIPart & {
+          id: string;
+          uploadStatus?: "uploading" | "completed" | "error";
+          uploadProgress?: number;
+          uploadError?: string;
+        })[] = [];
         for (const file of capped) {
           const fileId = nanoid();
           fileIds.push(fileId);
@@ -362,7 +398,7 @@ export const PromptInput = ({
             url: URL.createObjectURL(file), // Temporary blob URL
             mediaType: file.type,
             filename: file.name,
-            uploadStatus: 'uploading',
+            uploadStatus: "uploading",
             uploadProgress: 0,
           });
         }
@@ -371,16 +407,22 @@ export const PromptInput = ({
 
       // Start uploading files with the correct file IDs
       try {
-        await uploadFiles(sized, fileIds);
+        const results = await uploadFiles(sized, fileIds);
+
+        // Check if any uploads failed
+        const failedUploads = results.filter((result) => !result.success);
+        if (failedUploads.length > 0) {
+          console.warn("Some uploads failed:", failedUploads);
+        }
       } catch (error) {
-        console.error('Upload failed:', error);
+        console.error("Upload failed:", error);
         onError?.({
           code: "max_file_size",
           message: "Upload failed. Please try again.",
         });
       }
     },
-    [matchesAccept, maxFiles, maxFileSize, onError, uploadFiles]
+    [matchesAccept, maxFiles, maxFileSize, onError, uploadFiles],
   );
 
   const remove = useCallback((id: string) => {
@@ -403,17 +445,6 @@ export const PromptInput = ({
       return [];
     });
   }, []);
-
-  // Note: File input cannot be programmatically set for security reasons
-  // The syncHiddenInput prop is no longer functional
-  useEffect(() => {
-    if (syncHiddenInput && inputRef.current) {
-      // Clear the input when items are cleared
-      if (items.length === 0) {
-        inputRef.current.value = "";
-      }
-    }
-  }, [items, syncHiddenInput]);
 
   // Attach drop handlers on nearest form and document (opt-in)
   useEffect(() => {
@@ -493,7 +524,7 @@ export const PromptInput = ({
       fileInputRef: inputRef,
       isUploading,
     }),
-    [items, add, remove, clear, openFileDialog, isUploading]
+    [items, add, remove, clear, openFileDialog, isUploading],
   );
 
   return (
@@ -510,7 +541,7 @@ export const PromptInput = ({
       <form
         className={cn(
           "w-full divide-y overflow-hidden rounded-xl border bg-background shadow-sm",
-          className
+          className,
         )}
         onSubmit={handleSubmit}
         {...props}
@@ -590,7 +621,7 @@ export const PromptInputTextarea = ({
         "field-sizing-content bg-transparent dark:bg-transparent",
         "max-h-48 min-h-16",
         "focus-visible:ring-0",
-        className
+        className,
       )}
       name="message"
       onChange={(e) => {
@@ -626,7 +657,7 @@ export const PromptInputTools = ({
     className={cn(
       "flex items-center gap-1",
       "[&_button:first-child]:rounded-bl-xl",
-      className
+      className,
     )}
     {...props}
   />
@@ -649,7 +680,7 @@ export const PromptInputButton = ({
         "shrink-0 gap-1.5 rounded-lg",
         variant === "ghost" && "text-muted-foreground",
         newSize === "default" && "px-3",
-        className
+        className,
       )}
       size={newSize}
       type="button"
@@ -757,7 +788,7 @@ export const PromptInputModelSelectTrigger = ({
     className={cn(
       "border-none bg-transparent font-medium text-muted-foreground shadow-none transition-colors",
       'hover:bg-accent hover:text-foreground [&[aria-expanded="true"]]:bg-accent [&[aria-expanded="true"]]:text-foreground',
-      className
+      className,
     )}
     {...props}
   />
