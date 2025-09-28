@@ -144,7 +144,6 @@ export async function DELETE(request: NextRequest) {
     // Delete from Cloudinary
     const deleteResult = await cloudinary.uploader.destroy(publicId, {
       resource_type: "image",
-      timeout: 30000, // 30 seconds timeout
     });
 
     // Cloudinary returns "ok" for successful deletion or "not found" if already deleted

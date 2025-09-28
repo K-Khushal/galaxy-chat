@@ -73,6 +73,19 @@ const ChatBotDemo = () => {
   const [webSearch] = useState(false);
   const { messages, sendMessage, status } = useChat();
 
+  const filterValidFiles = (files: any[]) => {
+    return files.filter((file) => {
+      // Check if file has a valid URL (not a blob URL)
+      const hasValidUrl = file.url && !file.url.startsWith("blob:");
+
+      // Check upload status if available
+      const uploadStatus = (file as { uploadStatus?: string }).uploadStatus;
+      const isUploaded = !uploadStatus || uploadStatus === "completed";
+
+      return hasValidUrl && isUploaded;
+    });
+  };
+
   const retryLast = () => {
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
     if (!lastUser) return;
@@ -94,17 +107,7 @@ const ChatBotDemo = () => {
 
     // Filter out files that are still uploading or failed to upload
     // Only include files that have been successfully uploaded to Cloudinary
-    const validFiles =
-      message.files?.filter((file) => {
-        // Check if file has a valid URL (not a blob URL)
-        const hasValidUrl = file.url && !file.url.startsWith("blob:");
-
-        // Check upload status if available
-        const uploadStatus = (file as { uploadStatus?: string }).uploadStatus;
-        const isUploaded = !uploadStatus || uploadStatus === "completed";
-
-        return hasValidUrl && isUploaded;
-      }) || [];
+    const validFiles = filterValidFiles(message.files || []);
 
     // Use AI SDK v5 pattern - send files directly
     sendMessage(
@@ -227,14 +230,6 @@ const ChatBotDemo = () => {
                   <PromptInputActionAddAttachments />
                 </PromptInputActionMenuContent>
               </PromptInputActionMenu>
-              {/* Web search disabled for now */}
-              {/* <PromptInputButton
-                                variant={webSearch ? 'default' : 'ghost'}
-                                onClick={() => setWebSearch(!webSearch)}
-                            >
-                                <GlobeIcon size={16} />
-                                <span>Search</span>
-                            </PromptInputButton> */}
               <PromptInputModelSelect
                 onValueChange={(value) => {
                   setModel(value);

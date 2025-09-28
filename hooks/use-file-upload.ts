@@ -200,18 +200,6 @@ export const useFileUpload = (options: UseFileUploadOptions = {}) => {
     [uploads],
   );
 
-  const clearUpload = useCallback((fileId: string) => {
-    setUploads((prev) => {
-      const newMap = new Map(prev);
-      newMap.delete(fileId);
-      return newMap;
-    });
-  }, []);
-
-  const clearAllUploads = useCallback(() => {
-    setUploads(new Map());
-  }, []);
-
   const deleteFile = useCallback(
     async (publicId: string): Promise<DeleteResult | null> => {
       const { onDeleteComplete, onDeleteError } = options;
@@ -254,8 +242,6 @@ export const useFileUpload = (options: UseFileUploadOptions = {}) => {
     uploadFiles,
     deleteFile,
     getUploadProgress,
-    clearUpload,
-    clearAllUploads,
     isUploading,
     uploads: Array.from(uploads.values()),
   };

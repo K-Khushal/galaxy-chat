@@ -50,14 +50,16 @@ import {
   useState,
 } from "react";
 
+type AttachmentFile = FileUIPart & {
+  id: string;
+  uploadStatus?: "uploading" | "completed" | "error";
+  uploadProgress?: number;
+  uploadError?: string;
+  publicId?: string;
+};
+
 type AttachmentsContext = {
-  files: (FileUIPart & {
-    id: string;
-    uploadStatus?: "uploading" | "completed" | "error";
-    uploadProgress?: number;
-    uploadError?: string;
-    publicId?: string;
-  })[];
+  files: AttachmentFile[];
   add: (files: File[] | FileList) => void;
   remove: (id: string) => void;
   clear: () => void;
@@ -81,13 +83,7 @@ export const usePromptInputAttachments = () => {
 };
 
 export type PromptInputAttachmentProps = HTMLAttributes<HTMLDivElement> & {
-  data: FileUIPart & {
-    id: string;
-    uploadStatus?: "uploading" | "completed" | "error";
-    uploadProgress?: number;
-    uploadError?: string;
-    publicId?: string;
-  };
+  data: AttachmentFile;
   className?: string;
 };
 
@@ -153,15 +149,7 @@ export type PromptInputAttachmentsProps = Omit<
   HTMLAttributes<HTMLDivElement>,
   "children"
 > & {
-  children: (
-    attachment: FileUIPart & {
-      id: string;
-      uploadStatus?: "uploading" | "completed" | "error";
-      uploadProgress?: number;
-      uploadError?: string;
-      publicId?: string;
-    },
-  ) => React.ReactNode;
+  children: (attachment: AttachmentFile) => React.ReactNode;
 };
 
 export function PromptInputAttachments({
@@ -267,15 +255,7 @@ export const PromptInput = ({
   onSubmit,
   ...props
 }: PromptInputProps) => {
-  const [items, setItems] = useState<
-    (FileUIPart & {
-      id: string;
-      uploadStatus?: "uploading" | "completed" | "error";
-      uploadProgress?: number;
-      uploadError?: string;
-      publicId?: string;
-    })[]
-  >([]);
+  const [items, setItems] = useState<AttachmentFile[]>([]);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const anchorRef = useRef<HTMLSpanElement>(null);
   const formRef = useRef<HTMLFormElement | null>(null);
@@ -302,7 +282,7 @@ export const PromptInput = ({
             return {
               ...item,
               url: result.url,
-              uploadStatus: "completed" as "completed",
+              uploadStatus: "completed" as const,
               uploadProgress: 100,
               publicId: result.publicId,
             };
@@ -469,6 +449,17 @@ export const PromptInput = ({
     });
   }, [deleteFile]);
 
+  const clearLocal = useCallback(() => {
+    setItems((prev) => {
+      for (const file of prev) {
+        if (file.url) {
+          URL.revokeObjectURL(file.url);
+        }
+      }
+      return [];
+    });
+  }, []);
+
   // Attach drop handlers on nearest form and document (opt-in)
   useEffect(() => {
     const form = formRef.current;
@@ -540,11 +531,14 @@ export const PromptInput = ({
     }));
 
     onSubmit({ text: event.currentTarget.message.value, files }, event);
+
+    // Clear attachments from UI after successful submission (but keep them in Cloudinary)
+    clearLocal();
   };
 
   const ctx = useMemo<AttachmentsContext>(
     () => ({
-      files: items.map((item) => ({ ...item, id: item.id })),
+      files: items,
       add,
       remove,
       clear,
