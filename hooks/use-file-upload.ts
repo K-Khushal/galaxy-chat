@@ -26,6 +26,15 @@ export interface UploadResult {
 }
 
 /**
+ * Represents the result of a successful file deletion
+ */
+export interface DeleteResult {
+  success: boolean;
+  message: string;
+  publicId: string;
+}
+
+/**
  * Options for the useFileUpload hook
  */
 export interface UseFileUploadOptions {
@@ -33,6 +42,8 @@ export interface UseFileUploadOptions {
   onProgress?: (progress: UploadProgress) => void;
   onComplete?: (result: UploadResult) => void;
   onError?: (error: { fileId: string; error: string }) => void;
+  onDeleteComplete?: (result: DeleteResult) => void;
+  onDeleteError?: (error: { publicId: string; error: string }) => void;
 }
 
 /**
@@ -50,12 +61,7 @@ export const useFileUpload = (options: UseFileUploadOptions = {}) => {
 
   const uploadFile = useCallback(
     async (file: File, fileId: string): Promise<UploadResult | null> => {
-      const {
-        service = "cloudinary",
-        onProgress,
-        onComplete,
-        onError,
-      } = options;
+      const { onProgress, onComplete, onError } = options;
 
       // Initialize upload progress
       const initialProgress: UploadProgress = {
@@ -114,7 +120,7 @@ export const useFileUpload = (options: UseFileUploadOptions = {}) => {
                 );
                 onComplete?.({ ...result, fileId });
                 resolve(result);
-              } catch (error) {
+              } catch {
                 reject(new Error("Failed to parse response"));
               }
             } else {
@@ -206,9 +212,47 @@ export const useFileUpload = (options: UseFileUploadOptions = {}) => {
     setUploads(new Map());
   }, []);
 
+  const deleteFile = useCallback(
+    async (publicId: string): Promise<DeleteResult | null> => {
+      const { onDeleteComplete, onDeleteError } = options;
+
+      try {
+        const response = await fetch("/api/upload", {
+          method: "DELETE",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ publicId }),
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || "Delete failed");
+        }
+
+        const result: DeleteResult = await response.json();
+
+        if (!result.success) {
+          throw new Error("Delete failed: Invalid response");
+        }
+
+        onDeleteComplete?.(result);
+        return result;
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : "Delete failed";
+
+        onDeleteError?.({ publicId, error: errorMessage });
+        return null;
+      }
+    },
+    [options],
+  );
+
   return {
     uploadFile,
     uploadFiles,
+    deleteFile,
     getUploadProgress,
     clearUpload,
     clearAllUploads,

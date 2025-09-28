@@ -1,5 +1,22 @@
 "use client";
 
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { useFileUpload } from "@/hooks/use-file-upload";
+import { cn } from "@/lib/utils";
 import type { ChatStatus, FileUIPart } from "ai";
 import {
   ImageIcon,
@@ -11,6 +28,7 @@ import {
   XIcon,
 } from "lucide-react";
 import { nanoid } from "nanoid";
+import Image from "next/image";
 import {
   type ChangeEventHandler,
   Children,
@@ -31,23 +49,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
-import { useFileUpload } from "@/hooks/use-file-upload";
-import { cn } from "@/lib/utils";
 
 type AttachmentsContext = {
   files: (FileUIPart & {
@@ -55,6 +56,7 @@ type AttachmentsContext = {
     uploadStatus?: "uploading" | "completed" | "error";
     uploadProgress?: number;
     uploadError?: string;
+    publicId?: string;
   })[];
   add: (files: File[] | FileList) => void;
   remove: (id: string) => void;
@@ -84,6 +86,7 @@ export type PromptInputAttachmentProps = HTMLAttributes<HTMLDivElement> & {
     uploadStatus?: "uploading" | "completed" | "error";
     uploadProgress?: number;
     uploadError?: string;
+    publicId?: string;
   };
   className?: string;
 };
@@ -102,12 +105,13 @@ export function PromptInputAttachment({
       {...props}
     >
       {data.mediaType?.startsWith("image/") && data.url ? (
-        <img
+        <Image
           alt={data.filename || "attachment"}
           className="size-full rounded-md object-cover"
           height={56}
           src={data.url}
           width={56}
+          unoptimized={data.url.startsWith("blob:")}
         />
       ) : (
         <div className="flex size-full items-center justify-center text-muted-foreground">
@@ -116,15 +120,13 @@ export function PromptInputAttachment({
       )}
 
       {/* Upload progress overlay - only show when uploading */}
-      {data.uploadStatus === "uploading" &&
-        data.uploadProgress !== undefined &&
-        data.uploadProgress < 100 && (
-          <div className="absolute inset-0 bg-black/50 rounded-md flex items-center justify-center">
-            <div className="text-white text-xs font-medium">
-              {data.uploadProgress}%
-            </div>
+      {data.uploadStatus === "uploading" && (
+        <div className="absolute inset-0 bg-black/50 rounded-md flex items-center justify-center">
+          <div className="text-white text-xs font-medium">
+            {data.uploadProgress || 0}%
           </div>
-        )}
+        </div>
+      )}
 
       {/* Error overlay */}
       {data.uploadStatus === "error" && (
@@ -157,6 +159,7 @@ export type PromptInputAttachmentsProps = Omit<
       uploadStatus?: "uploading" | "completed" | "error";
       uploadProgress?: number;
       uploadError?: string;
+      publicId?: string;
     },
   ) => React.ReactNode;
 };
@@ -270,13 +273,14 @@ export const PromptInput = ({
       uploadStatus?: "uploading" | "completed" | "error";
       uploadProgress?: number;
       uploadError?: string;
+      publicId?: string;
     })[]
   >([]);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const anchorRef = useRef<HTMLSpanElement>(null);
   const formRef = useRef<HTMLFormElement | null>(null);
 
-  const { uploadFiles, isUploading } = useFileUpload({
+  const { uploadFiles, deleteFile, isUploading } = useFileUpload({
     service: "cloudinary", // Default to Cloudinary
     onProgress: (progress) => {
       setItems((prev) =>
@@ -300,6 +304,7 @@ export const PromptInput = ({
               url: result.url,
               uploadStatus: "completed" as "completed",
               uploadProgress: 100,
+              publicId: result.publicId,
             };
           }
           return item;
@@ -425,15 +430,26 @@ export const PromptInput = ({
     [matchesAccept, maxFiles, maxFileSize, onError, uploadFiles],
   );
 
-  const remove = useCallback((id: string) => {
-    setItems((prev) => {
-      const found = prev.find((file) => file.id === id);
-      if (found?.url) {
-        URL.revokeObjectURL(found.url);
-      }
-      return prev.filter((file) => file.id !== id);
-    });
-  }, []);
+  const remove = useCallback(
+    (id: string) => {
+      setItems((prev) => {
+        const found = prev.find((file) => file.id === id);
+        if (found?.url) {
+          URL.revokeObjectURL(found.url);
+        }
+
+        // If the file has a publicId and was successfully uploaded, delete it from Cloudinary
+        if (found?.publicId && found.uploadStatus === "completed") {
+          deleteFile(found.publicId).catch((error) => {
+            console.error("Failed to delete file from Cloudinary:", error);
+          });
+        }
+
+        return prev.filter((file) => file.id !== id);
+      });
+    },
+    [deleteFile],
+  );
 
   const clear = useCallback(() => {
     setItems((prev) => {
@@ -441,10 +457,17 @@ export const PromptInput = ({
         if (file.url) {
           URL.revokeObjectURL(file.url);
         }
+
+        // If the file has a publicId and was successfully uploaded, delete it from Cloudinary
+        if (file.publicId && file.uploadStatus === "completed") {
+          deleteFile(file.publicId).catch((error) => {
+            console.error("Failed to delete file from Cloudinary:", error);
+          });
+        }
       }
       return [];
     });
-  }, []);
+  }, [deleteFile]);
 
   // Attach drop handlers on nearest form and document (opt-in)
   useEffect(() => {
@@ -506,6 +529,11 @@ export const PromptInput = ({
 
   const handleSubmit: FormEventHandler<HTMLFormElement> = (event) => {
     event.preventDefault();
+
+    // Don't submit if files are still uploading
+    if (isUploading) {
+      return;
+    }
 
     const files: FileUIPart[] = items.map(({ ...item }) => ({
       ...item,

@@ -70,7 +70,7 @@ const models = [
 const ChatBotDemo = () => {
   const [input, setInput] = useState("");
   const [model, setModel] = useState<string>(models[0].value);
-  const [webSearch, setWebSearch] = useState(false);
+  const [webSearch] = useState(false);
   const { messages, sendMessage, status } = useChat();
 
   const retryLast = () => {
@@ -100,7 +100,7 @@ const ChatBotDemo = () => {
         const hasValidUrl = file.url && !file.url.startsWith("blob:");
 
         // Check upload status if available
-        const uploadStatus = (file as any).uploadStatus;
+        const uploadStatus = (file as { uploadStatus?: string }).uploadStatus;
         const isUploaded = !uploadStatus || uploadStatus === "completed";
 
         return hasValidUrl && isUploaded;

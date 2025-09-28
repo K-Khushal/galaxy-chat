@@ -109,3 +109,67 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+/**
+ * API route for deleting files from Cloudinary
+ *
+ * @param request - NextRequest containing publicId in the body
+ * @returns NextResponse with deletion result or error
+ */
+export async function DELETE(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { publicId } = body;
+
+    // Validate publicId exists
+    if (!publicId || typeof publicId !== "string") {
+      return NextResponse.json(
+        { error: "Public ID is required" },
+        { status: 400 },
+      );
+    }
+
+    // Validate Cloudinary configuration
+    if (
+      !process.env.CLOUDINARY_CLOUD_NAME ||
+      !process.env.CLOUDINARY_API_KEY ||
+      !process.env.CLOUDINARY_API_SECRET
+    ) {
+      return NextResponse.json(
+        { error: "Cloudinary configuration missing" },
+        { status: 500 },
+      );
+    }
+
+    // Delete from Cloudinary
+    const deleteResult = await cloudinary.uploader.destroy(publicId, {
+      resource_type: "image",
+      timeout: 30000, // 30 seconds timeout
+    });
+
+    // Cloudinary returns "ok" for successful deletion or "not found" if already deleted
+    if (deleteResult.result !== "ok" && deleteResult.result !== "not found") {
+      throw new Error(`Delete failed: ${deleteResult.result}`);
+    }
+
+    return NextResponse.json({
+      success: true,
+      message:
+        deleteResult.result === "ok"
+          ? "File deleted successfully"
+          : "File was already deleted",
+      publicId,
+    });
+  } catch (error) {
+    console.error("Delete error:", error);
+
+    // Provide more specific error messages
+    const errorMessage =
+      error instanceof Error ? error.message : "Delete failed";
+
+    return NextResponse.json(
+      { error: `Delete failed: ${errorMessage}` },
+      { status: 500 },
+    );
+  }
+}
