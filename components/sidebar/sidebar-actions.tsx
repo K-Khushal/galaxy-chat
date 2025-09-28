@@ -1,5 +1,6 @@
 "use client";
 
+import GalaxyChat from "@/components/svg/galaxy-chat";
 import {
   SidebarMenu,
   SidebarMenuButton,
@@ -7,45 +8,40 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { Sparkles, SquarePen } from "lucide-react";
+import { Image, SquarePen } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 export function SidebarActions() {
   const router = useRouter();
-  const { state, toggleSidebar } = useSidebar();
+  const { state } = useSidebar();
 
   return (
     <SidebarMenu>
       {/* Logo and Toggle Section */}
-      <SidebarMenuItem>
-        {state === "collapsed" ? (
-          <div className="relative">
-            <SidebarMenuButton
-              onClick={toggleSidebar}
-              className="cursor-pointer justify-center group"
-              size="lg"
-            >
-              <div
-                className="bg-primary text-primary-foreground flex w-6 h-6 items-center justify-center rounded-md
-              opacity-100 group-hover:opacity-0 transition-opacity duration-100 ease-in-out pointer-events-none"
-              >
-                <Sparkles className="w-4 h-4" />
-              </div>
-            </SidebarMenuButton>
-            <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-100 ease-in-out pointer-events-none">
-              <SidebarTrigger className="px-1 py-1 pointer-events-auto" />
-            </div>
-          </div>
-        ) : (
-          <div className="flex items-center justify-between px-2 py-2 w-full">
-            <div className="flex items-center gap-2">
-              <div className="bg-primary text-primary-foreground flex w-6 h-6 items-center justify-center rounded-md">
-                <Sparkles className="w-4 h-4" />
-              </div>
-            </div>
-            <SidebarTrigger className="px-1 py-1" />
-          </div>
-        )}
+      <SidebarMenuItem
+        className={`flex items-center justify-between px-2 py-2 w-full group`}
+      >
+        <div className="flex items-center relative w-6 h-6 justify-center">
+          <GalaxyChat
+            className={`w-6 h-6 transition-opacity -ml-0.5 ${
+              state === "collapsed"
+                ? "opacity-100 group-hover:opacity-0"
+                : "opacity-100"
+            }`}
+          />
+          <SidebarTrigger
+            className={`absolute inset-0 w-6 h-6 transition-opacity -ml-0.5 ${
+              state === "collapsed"
+                ? "opacity-0 group-hover:opacity-100"
+                : "opacity-0"
+            }`}
+          />
+        </div>
+        <SidebarTrigger
+          className={`px-1 py-1 transition-opacity ${
+            state === "expanded" ? "opacity-100" : "opacity-0"
+          }`}
+        />
       </SidebarMenuItem>
 
       {/* New Chat Button */}
@@ -58,6 +54,14 @@ export function SidebarActions() {
         >
           <SquarePen />
           <span>New Chat</span>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+
+      {/* Library Button */}
+      <SidebarMenuItem>
+        <SidebarMenuButton className="cursor-pointer">
+          <Image />
+          <span>Library</span>
         </SidebarMenuButton>
       </SidebarMenuItem>
     </SidebarMenu>
