@@ -76,11 +76,9 @@ export async function getChatById(chatId: string): Promise<Chat | null> {
     const chat = await ChatModel.findOne({
       _id: new Types.ObjectId(chatId),
       userId: new Types.ObjectId(userProfile._id),
-    })
-      .lean<Chat>()
-      .exec();
+    }).exec();
 
-    return chat;
+    return chat ? (chat.toJSON() as Chat) : null;
   } catch (error) {
     console.error(`Error fetching chat ${chatId}:`, error);
     return null;
@@ -106,10 +104,10 @@ export async function getUserChats(): Promise<Chat[]> {
       userId: new Types.ObjectId(userProfile._id),
     })
       .sort({ updatedAt: -1 })
-      .lean<Chat[]>()
       .exec();
 
-    return chats;
+    // Convert to plain objects with proper id field
+    return chats.map((chat) => chat.toJSON() as Chat);
   } catch (error) {
     console.error("Error in getUserChats:", error);
     return [];
@@ -147,11 +145,9 @@ export async function updateChat(
       },
       { $set: updates },
       { new: true },
-    )
-      .lean<Chat>()
-      .exec();
+    ).exec();
 
-    return updatedChat;
+    return updatedChat ? (updatedChat.toJSON() as Chat) : null;
   } catch (error) {
     console.error(`Error updating chat ${chatId}:`, error);
     return null;
@@ -282,10 +278,9 @@ export async function getChatMessages(chatId: string): Promise<ChatMessage[]> {
       chatId: new Types.ObjectId(chatId),
     })
       .sort({ createdAt: 1 })
-      .lean<ChatMessage[]>()
       .exec();
 
-    return messages;
+    return messages.map((message) => message.toJSON() as ChatMessage);
   } catch (error) {
     console.error(`Error fetching messages for chat ${chatId}:`, error);
     return [];

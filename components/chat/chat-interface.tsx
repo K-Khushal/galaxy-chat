@@ -231,13 +231,13 @@ export default function ChatInterface({
   return (
     <div className="max-w-4xl mx-auto p-6 relative size-full h-full overscroll-none">
       <div className="flex flex-col h-full">
-        {chatTitle && (
+        {/* {chatTitle && (
           <div className="mb-4">
             <h1 className="text-2xl font-semibold text-foreground">
               {chatTitle}
             </h1>
           </div>
-        )}
+        )} */}
 
         <Conversation className="h-full">
           <ConversationContent>
@@ -388,4 +388,3 @@ export default function ChatInterface({
     </div>
   );
 }
-

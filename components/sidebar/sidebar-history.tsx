@@ -56,11 +56,15 @@ export function SidebarHistory({ chats, currentChatId }: SidebarHistoryProps) {
       if (result.success) {
         toast.success(`Chat "${chatTitle}" deleted successfully`);
 
-        // If we're currently viewing the deleted chat, redirect to main chat page
+        // If we're currently viewing the deleted chat, redirect immediately
         if (currentChatId === chatId) {
-          router.push("/chat");
+          // Use replace instead of push to avoid back button issues
+          // Add a small delay to ensure server action completes
+          setTimeout(() => {
+            router.replace("/chat");
+          }, 100);
         } else {
-          // Refresh the page to update the sidebar
+          // For other chats, just refresh to update the sidebar
           router.refresh();
         }
       } else {
@@ -105,7 +109,7 @@ export function SidebarHistory({ chats, currentChatId }: SidebarHistoryProps) {
           const isDeleting = deletingChatId === chat.id;
 
           return (
-            <SidebarMenuItem key={chat.id}>
+            <SidebarMenuItem key={`chat-${chat.id}`}>
               <DropdownMenu>
                 <div className="flex items-center w-full">
                   <Link

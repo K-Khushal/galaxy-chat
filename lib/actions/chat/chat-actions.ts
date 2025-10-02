@@ -16,19 +16,15 @@ export async function deleteChatAction(
       return { success: false, error: "Invalid chat ID provided" };
     }
 
-    console.log(`Attempting to delete chat: ${chatId}`);
     const success = await deleteChat(chatId);
 
     if (success) {
-      console.log(`Successfully deleted chat: ${chatId}`);
-      // Revalidate multiple paths to ensure UI updates
+      // Revalidate paths to ensure UI updates, but avoid revalidating the specific deleted chat
       revalidatePath("/chat");
-      revalidatePath("/chat/[id]", "page");
       revalidatePath("/", "layout");
 
       return { success: true };
     } else {
-      console.warn(`Failed to delete chat: ${chatId}`);
       return {
         success: false,
         error: "Chat not found or could not be deleted",
