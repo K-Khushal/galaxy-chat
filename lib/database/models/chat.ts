@@ -34,13 +34,28 @@ const ChatSchema = new Schema<IChat>(
     versionKey: false,
     toJSON: {
       virtuals: true,
-      transform: (_doc: unknown, ret: any) => {
-        ret.id = ret._id?.toString();
-        delete ret._id;
+      transform: (_doc: unknown, ret: Record<string, unknown>) => {
+        // Only transform if _id exists to avoid null id values
+        if (ret._id) {
+          ret.id = ret._id.toString();
+          delete ret._id;
+        }
+        delete ret.__v;
         return ret;
       },
     },
-    toObject: { virtuals: true },
+    toObject: {
+      virtuals: true,
+      transform: (_doc: unknown, ret: Record<string, unknown>) => {
+        // Only transform if _id exists to avoid null id values
+        if (ret._id) {
+          ret.id = ret._id.toString();
+          delete ret._id;
+        }
+        delete ret.__v;
+        return ret;
+      },
+    },
   },
 );
 
