@@ -121,15 +121,16 @@ export function ChatMessages({
                             <Action label="Dislike">
                               <ThumbsDownIcon className="size-4" />
                             </Action>
+
+                            {/* Retry only for the last message & last part */}
+                            {message.id === messages.at(-1)?.id &&
+                              i === message.parts.length - 1 && (
+                                <Action onClick={regenerate} label="Retry">
+                                  <RefreshCcwIcon className="size-4" />
+                                </Action>
+                              )}
                           </>
                         )}
-                        {/* Show Retry only for the last message & last part */}
-                        {message.id === messages.at(-1)?.id &&
-                          i === message.parts.length - 1 && (
-                            <Action onClick={regenerate} label="Retry">
-                              <RefreshCcwIcon className="size-4" />
-                            </Action>
-                          )}
                       </Actions>
                     </Fragment>
                   );
@@ -185,14 +186,14 @@ export function ChatMessages({
             </Message>
             <Actions>
               <Action onClick={regenerate} label="Retry">
-                <RefreshCcwIcon className="size-3" />
+                <RefreshCcwIcon className="size-4" />
               </Action>
               <Action
                 onClick={() => navigator.clipboard.writeText(error.message)}
                 label="Copy"
                 disabled={!(status === "ready" || status === "error")}
               >
-                <CopyIcon className="size-3" />
+                <CopyIcon className="size-4" />
               </Action>
             </Actions>
           </Fragment>

@@ -23,7 +23,7 @@ export async function POST(req: Request) {
   const modelMessages = convertToModelMessages(messages);
 
   const result = streamText({
-    model: webSearch ? "perplexity/sonar" : model,
+    model: webSearch ? "perplexity/sonar" : (model ?? "meta/llama-3.2-1b"),
     messages: modelMessages,
     system:
       "You are a helpful assistant that can answer questions and help with tasks. You can see and analyze images that are shared with you. When a user shares an image, describe what you see in detail.",
