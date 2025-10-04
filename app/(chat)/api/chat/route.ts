@@ -1,8 +1,19 @@
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
-import { convertToModelMessages, streamText, type UIMessage } from "ai";
+import {
+  convertToModelMessages,
+  type LanguageModelUsage,
+  streamText,
+  type UIMessage,
+} from "ai";
 
 // Allow streaming responses up to 30 seconds
 export const maxDuration = 30;
+
+type UsageMetadata = {
+  usage: LanguageModelUsage;
+};
+
+export type TypeUIMessage = UIMessage<UsageMetadata>;
 
 export async function POST(req: Request) {
   const {
@@ -10,7 +21,7 @@ export async function POST(req: Request) {
     model,
     webSearch,
   }: {
-    messages: UIMessage[];
+    messages: TypeUIMessage[];
     model: string;
     webSearch: boolean;
   } = await req.json();
@@ -34,14 +45,7 @@ export async function POST(req: Request) {
     sendReasoning: true,
     messageMetadata: ({ part }) => {
       if (part.type === "finish") {
-        return {
-          model: model,
-          inputTokens: part.totalUsage.inputTokens,
-          outputTokens: part.totalUsage.outputTokens,
-          totalTokens: part.totalUsage.totalTokens,
-          cachedInputTokens: part.totalUsage.cachedInputTokens,
-          reasoningTokens: part.totalUsage.reasoningTokens,
-        };
+        return { usage: part.totalUsage };
       }
     },
   });

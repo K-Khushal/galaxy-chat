@@ -13,6 +13,7 @@ import {
   PromptInputTools,
   usePromptInputAttachments,
 } from "@/components/elements/prompt-input";
+import { cn } from "@/lib/utils";
 import type { ChatStatus, UIMessage } from "ai";
 import { GlobeIcon, MicIcon, Paperclip } from "lucide-react";
 
@@ -68,58 +69,64 @@ export function ChatInput({
   setUseWebSearch,
 }: ChatInputProps) {
   return (
-    <PromptInput
-      onSubmit={onSubmit}
-      className="mt-4"
-      globalDrop
-      multiple
-      accept="image/*"
-    >
-      <PromptInputBody>
-        <PromptInputAttachments>
-          {(attachment) => <PromptInputAttachment data={attachment} />}
-        </PromptInputAttachments>
-        <PromptInputTextarea
-          onChange={(e) => setText(e.target.value)}
-          value={text}
-        />
-      </PromptInputBody>
-      <PromptInputToolbar>
-        <PromptInputTools>
-          <AddAttachmentButton />
-          <PromptInputButton
-            disabled={true}
-            onClick={() => setUseMicrophone(!useMicrophone)}
-            variant={useMicrophone ? "default" : "ghost"}
-          >
-            <MicIcon size={16} />
-            <span className="sr-only">Microphone</span>
-          </PromptInputButton>
-          <PromptInputButton
-            disabled={true}
-            onClick={() => setUseWebSearch(!useWebSearch)}
-            variant={useWebSearch ? "default" : "ghost"}
-          >
-            <GlobeIcon size={16} />
-            <span>Search</span>
-          </PromptInputButton>
-          <ModelSelector value={model} onValueChange={setModel} />
-        </PromptInputTools>
-        <div className="flex items-center gap-2">
-          <ChatContext />
-          <PromptInputSubmit
-            disabled={
-              !(status === "streaming" || status === "submitted" || text)
-            }
-            status={status}
-            onClick={
-              status === "streaming" || status === "submitted"
-                ? () => stop()
-                : undefined
-            }
+    <div className={cn("relative flex w-full flex-col gap-4")}>
+      <PromptInput
+        onSubmit={onSubmit}
+        className="rounded-xl border border-border bg-background p-3 shadow-xs transition-all duration-200 focus-within:border-border hover:border-muted-foreground/50"
+        globalDrop
+        multiple
+        accept="image/*"
+      >
+        <PromptInputBody>
+          <PromptInputAttachments>
+            {(attachment) => <PromptInputAttachment data={attachment} />}
+          </PromptInputAttachments>
+          <PromptInputTextarea
+            onChange={(e) => setText(e.target.value)}
+            value={text}
           />
-        </div>
-      </PromptInputToolbar>
-    </PromptInput>
+        </PromptInputBody>
+        <PromptInputToolbar>
+          <PromptInputTools>
+            <AddAttachmentButton />
+            <PromptInputButton
+              disabled={true}
+              onClick={() => setUseMicrophone(!useMicrophone)}
+              variant={useMicrophone ? "default" : "ghost"}
+            >
+              <MicIcon size={16} />
+              <span className="sr-only">Microphone</span>
+            </PromptInputButton>
+            <PromptInputButton
+              disabled={true}
+              onClick={() => setUseWebSearch(!useWebSearch)}
+              variant={useWebSearch ? "default" : "ghost"}
+            >
+              <GlobeIcon size={16} />
+              <span>Search</span>
+            </PromptInputButton>
+            <ModelSelector value={model} onValueChange={setModel} />
+          </PromptInputTools>
+          <div className="flex items-center gap-2">
+            <ChatContext />
+            <PromptInputSubmit
+              disabled={
+                !(
+                  status === "streaming" ||
+                  status === "submitted" ||
+                  text?.trim()
+                )
+              }
+              status={status}
+              onClick={
+                status === "streaming" || status === "submitted"
+                  ? () => stop()
+                  : undefined
+              }
+            />
+          </div>
+        </PromptInputToolbar>
+      </PromptInput>
+    </div>
   );
 }
