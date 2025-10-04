@@ -17,12 +17,17 @@ export async function getOrCreateUserProfile(params: {
   const result = await UserProfileModel.findOneAndUpdate(
     { userId: params.userId },
     {
+      // Update the document if it exists
+      $set: {
+        name: params.name,
+        imageUrl: params.imageUrl,
+      },
+      // Insert the document if it doesn't exist
       $setOnInsert: {
         userId: params.userId,
         email: params.email,
         name: params.name,
         imageUrl: params.imageUrl,
-        preferences: {},
       },
     },
     {
@@ -35,16 +40,4 @@ export async function getOrCreateUserProfile(params: {
     .exec();
 
   return result!;
-}
-
-export async function updateUserPreferences(
-  userId: string,
-  preferences: Record<string, unknown>,
-) {
-  await ensureDb();
-  await UserProfileModel.updateOne(
-    { userId },
-    { $set: { preferences } },
-    { upsert: true },
-  ).exec();
 }

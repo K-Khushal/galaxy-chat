@@ -3,7 +3,6 @@ import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { getOrCreateUserProfile } from "@/lib/actions/auth/user";
 import { toSidebarUser, toUserProfileInput } from "@/lib/mappers/user";
 import { currentUser } from "@clerk/nextjs/server";
-import { ChatUserProvider } from "./user-provider";
 
 export default async function ChatLayout({
   children,
@@ -28,11 +27,7 @@ export default async function ChatLayout({
   return (
     <SidebarProvider>
       <AppSidebar user={sidebarUser} />
-      <SidebarInset>
-        <ChatUserProvider user={sidebarUser ?? null}>
-          {children}
-        </ChatUserProvider>
-      </SidebarInset>
+      <SidebarInset>{children}</SidebarInset>
     </SidebarProvider>
   );
 }

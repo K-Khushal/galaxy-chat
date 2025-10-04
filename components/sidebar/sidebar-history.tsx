@@ -62,7 +62,10 @@ export function SidebarHistory({
                   <span>Share</span>
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem variant="destructive">
+                <DropdownMenuItem
+                  variant="destructive"
+                  className="cursor-pointer"
+                >
                   <Trash2 className="text-muted-foreground" />
                   <span>Delete</span>
                 </DropdownMenuItem>
