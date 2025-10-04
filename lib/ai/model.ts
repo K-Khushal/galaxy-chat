@@ -7,9 +7,9 @@ export type ChatModel = {
 
 export const chatModels: ChatModel[] = [
   {
-    id: "x-ai/grok-4-fast:free",
-    name: "Grok 4 Fast",
-    available: false,
+    id: "meta/llama-3.2-1b",
+    name: "Llama 3.2 1B",
+    available: true,
   },
   {
     id: "deepseek/deepseek-r1:free",
@@ -19,7 +19,7 @@ export const chatModels: ChatModel[] = [
   {
     id: "openai/gpt-oss-120b:free",
     name: "GPT OSS 120B",
-    available: true,
+    available: false,
   },
   {
     id: "google/gemini-2.0-flash-exp:free",

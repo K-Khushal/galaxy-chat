@@ -1,5 +1,14 @@
-import { ChatStatus, UIMessage } from "ai";
-import { CopyIcon, PaperclipIcon, RefreshCcwIcon } from "lucide-react";
+import { cn } from "@/lib/utils";
+import type { ChatStatus, UIMessage } from "ai";
+import {
+  AlertCircleIcon,
+  CopyIcon,
+  PaperclipIcon,
+  PencilIcon,
+  RefreshCcwIcon,
+  ThumbsDownIcon,
+  ThumbsUpIcon,
+} from "lucide-react";
 import Image from "next/image";
 import { Fragment } from "react";
 import { Action, Actions } from "../elements/actions";
@@ -26,11 +35,13 @@ import {
 export function ChatMessages({
   messages,
   status,
-  retryLast,
+  error,
+  regenerate,
 }: {
   messages: UIMessage[];
   status: ChatStatus;
-  retryLast: () => void;
+  error?: Error;
+  regenerate?: () => void;
 }) {
   return (
     <Conversation className="h-full">
@@ -65,28 +76,61 @@ export function ChatMessages({
                 case "text":
                   return (
                     <Fragment key={`${message.id}-${i}`}>
-                      <Message from={message.role}>
+                      <Message from={message.role} className="py-1">
                         <MessageContent>
                           <Response>{part.text}</Response>
                         </MessageContent>
                       </Message>
-                      {message.role === "assistant" &&
-                        message.id === messages.at(-1)?.id &&
-                        i === message.parts.length - 1 && (
-                          <Actions className="mt-2">
-                            <Action onClick={retryLast} label="Retry">
-                              <RefreshCcwIcon className="size-3" />
-                            </Action>
-                            <Action
-                              onClick={() =>
-                                navigator.clipboard.writeText(part.text)
-                              }
-                              label="Copy"
-                            >
-                              <CopyIcon className="size-3" />
-                            </Action>
-                          </Actions>
+                      <Actions
+                        className={cn(
+                          "group flex w-full",
+                          message.role !== "user" &&
+                            "items-start justify-start",
+                          message.role === "user" && "items-end justify-end",
                         )}
+                        // className="group flex w-full items-end justify-end gap-2 py-4"
+                      >
+                        {/* Always show */}
+                        <Action
+                          className={cn(
+                            message.role === "user" &&
+                              "transition-opacity opacity-0 group-hover:opacity-100",
+                          )}
+                          onClick={() =>
+                            navigator.clipboard.writeText(part.text)
+                          }
+                          label="Copy"
+                        >
+                          <CopyIcon className="size-4" />
+                        </Action>
+
+                        {message.role === "user" && (
+                          <Action
+                            className="transition-opacity opacity-0 group-hover:opacity-100"
+                            label="Edit"
+                          >
+                            <PencilIcon className="size-4" />
+                          </Action>
+                        )}
+
+                        {message.role === "assistant" && (
+                          <>
+                            <Action label="Like">
+                              <ThumbsUpIcon className="size-4" />
+                            </Action>
+                            <Action label="Dislike">
+                              <ThumbsDownIcon className="size-4" />
+                            </Action>
+                          </>
+                        )}
+                        {/* Show Retry only for the last message & last part */}
+                        {message.id === messages.at(-1)?.id &&
+                          i === message.parts.length - 1 && (
+                            <Action onClick={regenerate} label="Retry">
+                              <RefreshCcwIcon className="size-4" />
+                            </Action>
+                          )}
+                      </Actions>
                     </Fragment>
                   );
                 case "file":
@@ -129,6 +173,30 @@ export function ChatMessages({
             })}
           </div>
         ))}
+        {error && (
+          <Fragment>
+            <Message from="system">
+              <div className="text-destructive bg-destructive/10 flex flex-row gap-2 overflow-hidden rounded-lg text-sm items-center max-w-[80%] px-4 py-3">
+                <AlertCircleIcon className="text-destructive" />
+                <Response className="text-destructive">
+                  An error occurred.
+                </Response>
+              </div>
+            </Message>
+            <Actions>
+              <Action onClick={regenerate} label="Retry">
+                <RefreshCcwIcon className="size-3" />
+              </Action>
+              <Action
+                onClick={() => navigator.clipboard.writeText(error.message)}
+                label="Copy"
+                disabled={!(status === "ready" || status === "error")}
+              >
+                <CopyIcon className="size-3" />
+              </Action>
+            </Actions>
+          </Fragment>
+        )}
         {status === "submitted" && <Loader />}
       </ConversationContent>
       <ConversationScrollButton />

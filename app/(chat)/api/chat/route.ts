@@ -23,7 +23,7 @@ export async function POST(req: Request) {
   const modelMessages = convertToModelMessages(messages);
 
   const result = streamText({
-    model: openrouter.chat(model),
+    model: webSearch ? "perplexity/sonar" : model,
     messages: modelMessages,
     system:
       "You are a helpful assistant that can answer questions and help with tasks. You can see and analyze images that are shared with you. When a user shares an image, describe what you see in detail.",
@@ -32,5 +32,17 @@ export async function POST(req: Request) {
   return result.toUIMessageStreamResponse({
     sendSources: true,
     sendReasoning: true,
+    messageMetadata: ({ part }) => {
+      if (part.type === "finish") {
+        return {
+          model: model,
+          inputTokens: part.totalUsage.inputTokens,
+          outputTokens: part.totalUsage.outputTokens,
+          totalTokens: part.totalUsage.totalTokens,
+          cachedInputTokens: part.totalUsage.cachedInputTokens,
+          reasoningTokens: part.totalUsage.reasoningTokens,
+        };
+      }
+    },
   });
 }
