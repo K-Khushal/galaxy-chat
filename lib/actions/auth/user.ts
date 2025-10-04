@@ -12,15 +12,50 @@ export async function createUser(
 ): Promise<UserProfile> {
   await ensureDb();
 
-  const userProfile = new UserProfileModel({
-    userId: params.userId,
-    email: params.email,
-    name: params.name,
-    imageUrl: params.imageUrl,
-  });
+  // First check if user already exists by userId or email
+  const existingUser = await UserProfileModel.findOne({
+    $or: [{ userId: params.userId }, { email: params.email }],
+  })
+    .lean<UserProfile>()
+    .exec();
 
-  const result = await userProfile.save();
-  return result.toObject();
+  if (existingUser) {
+    return existingUser;
+  }
+
+  try {
+    const userProfile = new UserProfileModel({
+      userId: params.userId,
+      email: params.email,
+      name: params.name,
+      imageUrl: params.imageUrl,
+    });
+
+    const result = await userProfile.save();
+    return result.toObject();
+  } catch (error: unknown) {
+    // Handle MongoDB duplicate key error (code 11000)
+    if (
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      error.code === 11000
+    ) {
+      // User was created by another request, fetch and return the existing user
+      const existingUser = await UserProfileModel.findOne({
+        $or: [{ userId: params.userId }, { email: params.email }],
+      })
+        .lean<UserProfile>()
+        .exec();
+
+      if (existingUser) {
+        return existingUser;
+      }
+    }
+
+    // Re-throw if it's not a duplicate key error or if we couldn't find the existing user
+    throw error;
+  }
 }
 
 export async function getUser(userId: string): Promise<UserProfile | null> {
@@ -70,11 +105,36 @@ export async function deleteUser(userId: string): Promise<void> {
 export async function getOrCreateUserProfile(
   params: TypeUserProfile,
 ): Promise<UserProfile> {
+  // First try to get existing user
   const existingUser = await getUser(params.userId);
 
   if (existingUser) {
     return existingUser;
   }
 
-  return await createUser(params);
+  // If no existing user, try to create one
+  // The createUser function now handles duplicates internally,
+  // so this is safe even under concurrent requests
+  try {
+    return await createUser(params);
+  } catch (error: unknown) {
+    // If createUser fails for any reason other than duplicates,
+    // try one more time to get the user (in case another request created it)
+    if (
+      !(
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        error.code === 11000
+      )
+    ) {
+      const user = await getUser(params.userId);
+      if (user) {
+        return user;
+      }
+    }
+
+    // Re-throw the original error if we still can't find the user
+    throw error;
+  }
 }

@@ -1,44 +1,47 @@
-"use client";
-
-import { ChatInput } from "@/components/chat/chat-input";
-import { ChatMessages } from "@/components/chat/chat-messages";
-import { type PromptInputMessage } from "@/components/elements/prompt-input";
+import { ModelSelector } from "@/components/chat/model-selector";
+import {
+  PromptInput,
+  PromptInputAttachment,
+  PromptInputAttachments,
+  PromptInputBody,
+  PromptInputButton,
+  type PromptInputMessage,
+  PromptInputSubmit,
+  PromptInputTextarea,
+  PromptInputToolbar,
+  PromptInputTools,
+  usePromptInputAttachments,
+} from "@/components/elements/prompt-input";
+import { chatModels } from "@/lib/ai/model";
 import { useChat } from "@ai-sdk/react";
 import type { FileUIPart } from "ai";
+import { GlobeIcon, ImageIcon, MicIcon } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
-const models = [
-  {
-    name: "Grok 4 Fast",
-    value: "x-ai/grok-4-fast:free",
-  },
-  {
-    name: "Deepseek R1",
-    value: "deepseek/deepseek-r1:free",
-  },
-  {
-    name: "GPT OSS 120B",
-    value: "openai/gpt-oss-120b:free",
-  },
-  {
-    name: "Gemini 2.0 Flash Exp",
-    value: "google/gemini-2.0-flash-exp:free",
-  },
-  {
-    name: "Z AI GLM 4.5 Air",
-    value: "z-ai/glm-4.5-air:free",
-  },
-  {
-    name: "Mistral Small",
-    value: "mistralai/mistral-small-3.2-24b-instruct:free",
-  },
-];
+function AddAttachmentButton() {
+  const attachments = usePromptInputAttachments();
 
-const ChatBotDemo = () => {
-  const [input, setInput] = useState("");
-  const [model, setModel] = useState<string>(models[0].value);
-  const [webSearch] = useState(false);
+  return (
+    <PromptInputButton
+      onClick={() => attachments.openFileDialog()}
+      variant="ghost"
+    >
+      <ImageIcon size={16} />
+      <span className="sr-only">Add photos or files</span>
+    </PromptInputButton>
+  );
+}
+
+export function ChatInput() {
+  const [text, setText] = useState<string>("");
+  const [model, setModel] = useState<string>(
+    chatModels.find((m) => m.available)?.id || "",
+  );
+
+  const [useMicrophone, setUseMicrophone] = useState<boolean>(false);
+  const [useWebSearch, setUseWebSearch] = useState<boolean>(false);
+
   const { messages, sendMessage, status } = useChat({
     onError: (error) => {
       console.error("Chat API error:", error);
@@ -112,7 +115,7 @@ const ChatBotDemo = () => {
     const text = lastUser.parts?.find((p) => p.type === "text")?.text || "";
     const files = lastUser.parts?.filter((p) => p.type === "file") || [];
 
-    sendMessage({ text, files }, { body: { model, webSearch } });
+    sendMessage({ text, files }, { body: { model, webSearch: useWebSearch } });
   };
 
   const handleSubmit = async (message: PromptInputMessage) => {
@@ -130,35 +133,54 @@ const ChatBotDemo = () => {
     // Use AI SDK v5 pattern - send files directly
     sendMessage(
       {
-        text: message.text || "",
+        text: message.text || "Sent with attachments",
         files: validFiles,
       },
       {
         body: {
           model: model,
-          webSearch: webSearch,
+          webSearch: useWebSearch,
         },
       },
     );
-    setInput("");
+    setText("");
   };
 
-  // console.log(messages);
+  console.log(messages);
 
   return (
-    <div className="max-w-4xl mx-auto p-6 relative size-full h-full overscroll-none">
-      <div className="flex flex-col h-full">
-        <ChatMessages
-          messages={messages}
-          status={status}
-          retryLast={retryLast}
+    <PromptInput onSubmit={handleSubmit} className="mt-4" globalDrop multiple>
+      <PromptInputBody>
+        <PromptInputAttachments>
+          {(attachment) => <PromptInputAttachment data={attachment} />}
+        </PromptInputAttachments>
+        <PromptInputTextarea
+          onChange={(e) => setText(e.target.value)}
+          value={text}
         />
-      </div>
-      <div className="sticky bottom-0 pb-4 bg-background">
-        <ChatInput />
-      </div>
-    </div>
+      </PromptInputBody>
+      <PromptInputToolbar>
+        <PromptInputTools>
+          <AddAttachmentButton />
+          <PromptInputButton
+            disabled={true}
+            onClick={() => setUseMicrophone(!useMicrophone)}
+            variant={useMicrophone ? "default" : "ghost"}
+          >
+            <MicIcon size={16} />
+            <span className="sr-only">Microphone</span>
+          </PromptInputButton>
+          <PromptInputButton
+            onClick={() => setUseWebSearch(!useWebSearch)}
+            variant={useWebSearch ? "default" : "ghost"}
+          >
+            <GlobeIcon size={16} />
+            <span>Search</span>
+          </PromptInputButton>
+          <ModelSelector value={model} onValueChange={setModel} />
+        </PromptInputTools>
+        <PromptInputSubmit disabled={!text && !status} status={status} />
+      </PromptInputToolbar>
+    </PromptInput>
   );
-};
-
-export default ChatBotDemo;
+}
