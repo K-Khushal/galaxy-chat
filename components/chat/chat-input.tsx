@@ -15,7 +15,7 @@ import {
 import { chatModels } from "@/lib/ai/model";
 import { useChat } from "@ai-sdk/react";
 import type { FileUIPart } from "ai";
-import { GlobeIcon, ImageIcon, MicIcon } from "lucide-react";
+import { GlobeIcon, MicIcon, Paperclip } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -24,11 +24,14 @@ function AddAttachmentButton() {
 
   return (
     <PromptInputButton
-      onClick={() => attachments.openFileDialog()}
+      onClick={(e) => {
+        e.preventDefault();
+        attachments.openFileDialog();
+      }}
       variant="ghost"
     >
-      <ImageIcon size={16} />
-      <span className="sr-only">Add photos or files</span>
+      <Paperclip size={16} />
+      <span className="sr-only">Add photos</span>
     </PromptInputButton>
   );
 }
@@ -149,7 +152,13 @@ export function ChatInput() {
   console.log(messages);
 
   return (
-    <PromptInput onSubmit={handleSubmit} className="mt-4" globalDrop multiple>
+    <PromptInput
+      onSubmit={handleSubmit}
+      className="mt-4"
+      globalDrop
+      multiple
+      accept="image/*"
+    >
       <PromptInputBody>
         <PromptInputAttachments>
           {(attachment) => <PromptInputAttachment data={attachment} />}

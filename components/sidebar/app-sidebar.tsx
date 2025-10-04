@@ -8,7 +8,7 @@ import {
   SidebarHeader,
   SidebarRail,
 } from "@/components/ui/sidebar";
-import type { TypeSidebarUser } from "@/lib/types";
+import type { TypeUserProfile } from "@/lib/types";
 import type * as React from "react";
 
 // This is sample data.
@@ -34,7 +34,7 @@ const data = {
 export function AppSidebar({
   user,
   ...props
-}: React.ComponentProps<typeof Sidebar> & { user?: TypeSidebarUser }) {
+}: React.ComponentProps<typeof Sidebar> & { user?: TypeUserProfile }) {
   return (
     <Sidebar {...props} collapsible="icon">
       <SidebarHeader>
