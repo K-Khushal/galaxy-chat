@@ -75,7 +75,7 @@ export async function fetchWithErrorHandling(
 
     if (!response.ok) {
       const { code, cause } = await response.json();
-      throw new Error(code, cause);
+      throw new Error(code ?? "Unknown error", { cause });
     }
 
     return response;
@@ -94,7 +94,7 @@ export async function fetchJson(url: string) {
 
   if (!response.ok) {
     const { code, cause } = await response.json();
-    throw new Error(code, cause);
+    throw new Error(code ?? "Unknown error", { cause });
   }
 
   return response.json();

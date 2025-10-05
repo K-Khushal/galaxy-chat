@@ -59,7 +59,7 @@ export function SidebarHistory({
     isLoading,
     mutate,
   } = useSWRInfinite<ChatHistory>(getPaginatedChatHistory, fetchJson, {
-    fallbackData: [],
+    fallbackData: [] as ChatHistory[],
   });
 
   const hasReachedEnd = paginatedChatHistory
@@ -72,7 +72,9 @@ export function SidebarHistory({
 
   return (
     <SidebarGroup className="group-data-[collapsible=icon]:hidden">
-      <SidebarGroupLabel className="text-sm">Chats</SidebarGroupLabel>
+      <SidebarGroupLabel className="text-sm text-muted-foreground mb-2">
+        Chats
+      </SidebarGroupLabel>
       <SidebarGroupContent>
         <SidebarMenu>
           {isLoading &&
