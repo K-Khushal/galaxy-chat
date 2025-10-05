@@ -7,7 +7,7 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import {
   Sidebar,
   SidebarContent,
@@ -45,7 +45,9 @@ export function SettingsDialog({
           <Sidebar collapsible="none" className="hidden md:flex w-[12rem]">
             <SidebarContent>
               <SidebarGroup>
-                <SidebarGroupLabel>Account</SidebarGroupLabel>
+                <SidebarGroupLabel>
+                  <DialogTitle>Account</DialogTitle>
+                </SidebarGroupLabel>
                 <SidebarGroupContent>
                   <SidebarMenu>
                     {data.nav.map((item) => (

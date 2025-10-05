@@ -1,4 +1,3 @@
-import { useMessages } from "@/hooks/use-messages";
 import { cn } from "@/lib/utils";
 import type { ChatStatus, UIMessage } from "ai";
 import {
@@ -12,7 +11,7 @@ import {
   ThumbsUpIcon,
 } from "lucide-react";
 import Image from "next/image";
-import { Fragment, useEffect } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { Action, Actions } from "../elements/actions";
 import { Conversation, ConversationContent } from "../elements/conversation";
 import { Loader } from "../elements/loader";
@@ -42,35 +41,42 @@ export function ChatMessages({
   error?: Error;
   regenerate?: () => void;
 }) {
-  const {
-    containerRef: messagesContainerRef,
-    endRef: messagesEndRef,
-    isAtBottom,
-    scrollToBottom,
-    hasSentMessage,
-  } = useMessages({
-    status,
-  });
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [isAtBottom, setIsAtBottom] = useState(true);
+
+  const scrollToBottom = useCallback(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, []);
+
+  const checkIfAtBottom = useCallback(() => {
+    if (!containerRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = containerRef.current;
+    const isNearBottom = scrollTop + clientHeight >= scrollHeight - 100;
+    setIsAtBottom(isNearBottom);
+  }, []);
 
   useEffect(() => {
-    if (status === "submitted") {
-      requestAnimationFrame(() => {
-        const container = messagesContainerRef.current;
-        if (container) {
-          container.scrollTo({
-            top: container.scrollHeight,
-            behavior: "smooth",
-          });
-        }
-      });
+    const container = containerRef.current;
+    if (!container) return;
+
+    container.addEventListener("scroll", checkIfAtBottom);
+    checkIfAtBottom();
+
+    return () => container.removeEventListener("scroll", checkIfAtBottom);
+  }, [checkIfAtBottom]);
+
+  // Auto-scroll only when at bottom and content changes
+  useEffect(() => {
+    if (isAtBottom) {
+      scrollToBottom();
     }
-  }, [status, messagesContainerRef]);
+  }, [isAtBottom, scrollToBottom]);
 
   return (
     <div
+      ref={containerRef}
       className="overscroll-behavior-contain -webkit-overflow-scrolling-touch flex-1 touch-pan-y overflow-y-scroll"
-      ref={messagesContainerRef}
-      style={{ overflowAnchor: "none" }}
     >
       <Conversation className="mx-auto flex min-w-0 max-w-4xl flex-col gap-4 md:gap-6">
         <ConversationContent className="flex flex-col gap-4 px-2 py-4 md:gap-6 md:px-4">
@@ -151,9 +157,9 @@ export function ChatMessages({
                               <Action label="Dislike">
                                 <ThumbsDownIcon className="size-4" />
                               </Action>
-
                               {/* Retry only for the last message & last part */}
-                              {message.id === messages.at(-1)?.id &&
+                              {regenerate &&
+                                message.id === messages.at(-1)?.id &&
                                 i === message.parts.length - 1 && (
                                   <Action onClick={regenerate} label="Retry">
                                     <RefreshCcwIcon className="size-4" />
@@ -229,10 +235,7 @@ export function ChatMessages({
             </Fragment>
           )}
           {status === "submitted" && <Loader />}
-          <div
-            className="min-h-[24px] min-w-[24px] shrink-0"
-            ref={messagesEndRef}
-          />
+          <div ref={messagesEndRef} />
         </ConversationContent>
       </Conversation>
 
@@ -240,7 +243,7 @@ export function ChatMessages({
         <button
           aria-label="Scroll to bottom"
           className="-translate-x-1/2 absolute bottom-40 left-1/2 z-10 rounded-full border bg-background p-2 shadow-lg transition-colors hover:bg-muted"
-          onClick={() => scrollToBottom("smooth")}
+          onClick={scrollToBottom}
           type="button"
         >
           <ArrowDownIcon className="size-4" />

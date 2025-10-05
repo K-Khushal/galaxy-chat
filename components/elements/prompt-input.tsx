@@ -768,6 +768,7 @@ export const PromptInputSubmit = ({
   size = "icon",
   status,
   children,
+  disabled,
   ...props
 }: PromptInputSubmitProps) => {
   const attachments = usePromptInputAttachments();
@@ -788,6 +789,7 @@ export const PromptInputSubmit = ({
       size={size}
       type="submit"
       variant={variant}
+      disabled={disabled || attachments.isUploading}
       {...props}
     >
       {children ?? Icon}
