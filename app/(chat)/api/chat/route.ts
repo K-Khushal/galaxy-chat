@@ -1,5 +1,6 @@
 import {
   createChat,
+  deleteChat,
   getChat,
   updateChatLastContext,
 } from "@/lib/actions/chat/chat";
@@ -214,4 +215,29 @@ export async function POST(req: Request) {
   //     }
   //   },
   // });
+}
+
+export async function DELETE(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const id = searchParams.get("id");
+
+  if (!id) {
+    return NextResponse.json({ error: "Invalid Chat" }, { status: 401 });
+  }
+
+  const { isAuthenticated, userId } = await auth();
+
+  if (!isAuthenticated) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const chat = await getChat(id);
+
+  if (chat?.userId !== userId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const deletedChat = await deleteChat(id);
+
+  return Response.json(deletedChat, { status: 200 });
 }

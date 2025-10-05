@@ -31,7 +31,18 @@ import {
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
+import { toast } from "sonner";
 import useSWRInfinite from "swr/infinite";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "../ui/alert-dialog";
 
 export function SidebarHistory({
   items,
@@ -50,6 +61,7 @@ export function SidebarHistory({
   const router = useRouter();
   const { id } = useParams();
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const { isMobile } = useSidebar();
 
   const {
@@ -70,83 +82,137 @@ export function SidebarHistory({
     ? paginatedChatHistory.every((page) => page.chats.length === 0)
     : false;
 
-  return (
-    <SidebarGroup className="group-data-[collapsible=icon]:hidden">
-      <SidebarGroupLabel className="text-sm text-muted-foreground mb-2">
-        Chats
-      </SidebarGroupLabel>
-      <SidebarGroupContent>
-        <SidebarMenu>
-          {isLoading &&
-            [1, 2, 3, 4, 5].map((index) => (
-              <SidebarMenuItem key={index}>
-                <SidebarMenuSkeleton />
-              </SidebarMenuItem>
-            ))}
-          {hasEmptyChatHistory && (
-            <div className="mt-2 flex w-full flex-row items-center justify-center gap-2 px-2 text-sm text-zinc-500">
-              Your conversations will appear here once you start chatting!
-            </div>
-          )}
-          {paginatedChatHistory
-            ?.flatMap((item) => item.chats)
-            .map((item) => (
-              <SidebarMenuItem key={item.id}>
-                <SidebarMenuButton asChild isActive={item.id === id}>
-                  <Link href={`/chat/${item.id}`}>
-                    <span>{item.title}</span>
-                  </Link>
-                </SidebarMenuButton>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <SidebarMenuAction showOnHover className="ring-0">
-                      <MoreHorizontal />
-                      <span className="sr-only">More</span>
-                    </SidebarMenuAction>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent
-                    className="w-32 rounded-lg"
-                    side={isMobile ? "bottom" : "right"}
-                    align={isMobile ? "end" : "start"}
-                  >
-                    <DropdownMenuItem>
-                      <Forward className="text-muted-foreground" />
-                      <span>Share</span>
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      variant="destructive"
-                      className="cursor-pointer"
-                    >
-                      <Trash2 className="text-muted-foreground" />
-                      <span>Delete</span>
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </SidebarMenuItem>
-            ))}
-        </SidebarMenu>
-      </SidebarGroupContent>
-      <motion.div
-        onViewportEnter={() => {
-          if (!isValidating && !hasReachedEnd) {
-            setSize((size) => size + 1);
+  const handleDelete = () => {
+    const deletePromise = fetch(`/api/chat?id=${deleteId}`, {
+      method: "DELETE",
+    });
+
+    toast.promise(deletePromise, {
+      loading: "Deleting chat...",
+      closeButton: true,
+      success: () => {
+        mutate((chatHistories) => {
+          if (chatHistories) {
+            return chatHistories.map((chatHistory) => ({
+              ...chatHistory,
+              chats: chatHistory.chats.filter((chat) => chat.id !== deleteId),
+            }));
           }
-        }}
-      />
-      {hasReachedEnd ? (
-        <div className="mt-4 flex w-full flex-row items-center justify-center gap-2 px-2 text-sm text-zinc-500">
-          You have reached the end of your chat history.
-        </div>
-      ) : (
-        <div className="mt-4 flex flex-row items-center gap-2 p-2 text-zinc-500 dark:text-zinc-400 text-sm">
-          <div className="animate-spin">
-            <LoaderIcon size={16} />
+        });
+
+        return "Chat deleted successfully";
+      },
+      error: "Failed to delete chat",
+    });
+
+    setShowDeleteDialog(false);
+
+    if (deleteId === id) {
+      router.push("/chat");
+    }
+  };
+
+  return (
+    <>
+      <SidebarGroup className="group-data-[collapsible=icon]:hidden">
+        <SidebarGroupLabel className="text-sm text-muted-foreground mb-2">
+          Chats
+        </SidebarGroupLabel>
+        <SidebarGroupContent>
+          <SidebarMenu>
+            {isLoading &&
+              [1, 2, 3, 4, 5].map((index) => (
+                <SidebarMenuItem key={index}>
+                  <SidebarMenuSkeleton />
+                </SidebarMenuItem>
+              ))}
+            {hasEmptyChatHistory && (
+              <div className="mt-2 flex w-full flex-row items-center justify-center gap-2 px-2 text-sm text-zinc-500">
+                Your conversations will appear here once you start chatting!
+              </div>
+            )}
+            {paginatedChatHistory
+              ?.flatMap((item) => item.chats)
+              .map((item) => (
+                <SidebarMenuItem key={item.id}>
+                  <SidebarMenuButton asChild isActive={item.id === id}>
+                    <Link href={`/chat/${item.id}`}>
+                      <span>{item.title}</span>
+                    </Link>
+                  </SidebarMenuButton>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <SidebarMenuAction showOnHover className="ring-0">
+                        <MoreHorizontal />
+                        <span className="sr-only">More</span>
+                      </SidebarMenuAction>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent
+                      className="w-32 rounded-lg"
+                      side={isMobile ? "bottom" : "right"}
+                      align={isMobile ? "end" : "start"}
+                    >
+                      <DropdownMenuItem>
+                        <Forward className="text-muted-foreground" />
+                        <span>Share</span>
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onSelect={() => {
+                          setDeleteId(item.id);
+                          setShowDeleteDialog(true);
+                        }}
+                        variant="destructive"
+                        className="cursor-pointer"
+                      >
+                        <Trash2 className="text-muted-foreground" />
+                        <span>Delete</span>
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </SidebarMenuItem>
+              ))}
+          </SidebarMenu>
+        </SidebarGroupContent>
+        <motion.div
+          onViewportEnter={() => {
+            if (!isValidating && !hasReachedEnd) {
+              setSize((size) => size + 1);
+            }
+          }}
+        />
+        {hasReachedEnd ? (
+          <div className="mt-4 flex w-full flex-row items-center justify-center gap-2 px-2 text-sm text-zinc-500">
+            You have reached the end of your chat history.
           </div>
-          <div>Loading Chats...</div>
-        </div>
-      )}
-    </SidebarGroup>
+        ) : (
+          <div className="mt-4 flex flex-row items-center gap-2 p-2 text-zinc-500 dark:text-zinc-400 text-sm">
+            <div className="animate-spin">
+              <LoaderIcon size={16} />
+            </div>
+            <div>Loading Chats...</div>
+          </div>
+        )}
+      </SidebarGroup>
+
+      <AlertDialog onOpenChange={setShowDeleteDialog} open={showDeleteDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. This will permanently delete your
+              chat and remove it from our servers.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDelete}>
+              Continue
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }
 
