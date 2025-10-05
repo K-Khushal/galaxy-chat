@@ -18,7 +18,12 @@ import {
 import type { ChatVisibility, TypeUIMessage } from "@/lib/types";
 import { auth } from "@clerk/nextjs/server";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
-import { convertToModelMessages, createUIMessageStream, streamText } from "ai";
+import {
+  convertToModelMessages,
+  createUIMessageStream,
+  JsonToSseTransformStream,
+  streamText,
+} from "ai";
 import { unstable_cache as cache } from "next/cache";
 import { NextResponse } from "next/server";
 import type { ModelCatalog } from "tokenlens/core";
@@ -195,6 +200,7 @@ export async function POST(req: Request) {
         return "Oops, an error occurred!";
       },
     });
+    return new Response(stream.pipeThrough(new JsonToSseTransformStream()));
   } catch (error) {
     console.error("Error in chat route", error);
     return NextResponse.json({ error: error }, { status: 500 });

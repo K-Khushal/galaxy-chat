@@ -13,7 +13,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { unstable_serialize, useSWRConfig } from "swr";
 import { v4 as uuidv4 } from "uuid";
-import { getPaginatedChatHistoryKey } from "../sidebar/sidebar-history";
+import { getPaginatedChatHistory } from "../sidebar/sidebar-history";
 
 export default function Chat({
   id,
@@ -68,7 +68,7 @@ export default function Chat({
       }
     },
     onFinish: () => {
-      mutate(unstable_serialize(getPaginatedChatHistoryKey));
+      mutate(unstable_serialize(getPaginatedChatHistory));
     },
     onError: (error) => {
       const errorMessage = getChatErrorMessage(error);

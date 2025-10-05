@@ -81,8 +81,21 @@ export async function fetchWithErrorHandling(
     return response;
   } catch (error: unknown) {
     if (typeof navigator !== "undefined" && !navigator.onLine) {
-      throw new Error("offline:chat");
+      throw new Error(
+        "Network error. Please check your connection and try again.",
+      );
     }
     throw error;
   }
+}
+
+export async function fetchJson(url: string) {
+  const response = await fetch(url);
+
+  if (!response.ok) {
+    const { code, cause } = await response.json();
+    throw new Error(code, cause);
+  }
+
+  return response.json();
 }

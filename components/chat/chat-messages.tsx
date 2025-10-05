@@ -1,3 +1,4 @@
+import { TextShimmer } from "@/components/ui/text-shimmer";
 import type { TypeUIMessage } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import type { UseChatHelpers } from "@ai-sdk/react";
@@ -16,7 +17,6 @@ import Image from "next/image";
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { Action, Actions } from "../elements/actions";
 import { Conversation, ConversationContent } from "../elements/conversation";
-import { Loader } from "../elements/loader";
 import { Message, MessageContent } from "../elements/message";
 import {
   Reasoning,
@@ -240,7 +240,13 @@ export function ChatMessages({
               </Actions>
             </Fragment>
           )}
-          {status === "submitted" && <Loader />}
+          {status === "submitted" && (
+            <div className="flex flex-row items-center justify-start ml-2">
+              <TextShimmer className="font-mono text-sm" duration={1}>
+                Generating...
+              </TextShimmer>
+            </div>
+          )}
           <div ref={messagesEndRef} />
         </ConversationContent>
       </Conversation>
