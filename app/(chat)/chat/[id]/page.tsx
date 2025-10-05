@@ -1,17 +1,33 @@
-export default async function ConversationPage({
+import Chat from "@/components/chat/chat";
+import { getChat } from "@/lib/actions/chat/chat";
+import { getChatMessages } from "@/lib/actions/chat/chat-message";
+import { convertToUIMessages } from "@/lib/ai/utils";
+import { notFound } from "next/navigation";
+
+export default async function Page({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
 
+  const chat = await getChat(id);
+
+  if (!chat) {
+    return notFound();
+  }
+
+  const messages = await getChatMessages({ chatId: id });
+
+  const chatMessages = convertToUIMessages(messages);
+
   return (
-    <main className="max-w-2xl mx-auto p-6 space-y-6">
-      <h1 className="text-2xl font-semibold">Conversation</h1>
-      <p className="text-sm text-muted-foreground">ID: {id}</p>
-      <div className="rounded-md border p-4">
-        This is where messages will appear.
-      </div>
-    </main>
+    <>
+      <Chat
+        id={chat.id}
+        chatMessages={chatMessages}
+        lastContext={chat.lastContext ?? undefined}
+      />
+    </>
   );
 }

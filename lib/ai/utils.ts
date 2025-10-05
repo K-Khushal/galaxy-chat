@@ -65,3 +65,24 @@ export function convertToUIMessages(
     parts: message.parts as UIMessagePart<UIDataTypes, UITools>[],
   }));
 }
+
+export async function fetchWithErrorHandling(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+) {
+  try {
+    const response = await fetch(input, init);
+
+    if (!response.ok) {
+      const { code, cause } = await response.json();
+      throw new Error(code, cause);
+    }
+
+    return response;
+  } catch (error: unknown) {
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      throw new Error("offline:chat");
+    }
+    throw error;
+  }
+}

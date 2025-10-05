@@ -1,5 +1,7 @@
+import type { TypeUIMessage } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import type { ChatStatus, UIMessage } from "ai";
+import type { UseChatHelpers } from "@ai-sdk/react";
+import type { ChatStatus } from "ai";
 import {
   AlertCircleIcon,
   ArrowDownIcon,
@@ -31,12 +33,16 @@ import {
 import { ChatGreeting } from "./chat-greeting";
 
 export function ChatMessages({
+  id,
   messages,
+  setMessages,
   status,
   error,
   regenerate,
 }: {
-  messages: UIMessage[];
+  id: string;
+  messages: TypeUIMessage[];
+  setMessages: UseChatHelpers<TypeUIMessage>["setMessages"];
   status: ChatStatus;
   error?: Error;
   regenerate?: () => void;

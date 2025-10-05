@@ -56,6 +56,7 @@ export async function POST(req: Request) {
     const json = await req.json();
     requestBody = postRequestBodySchema.parse(json);
   } catch (_) {
+    console.error("Invalid request body", _);
     return NextResponse.json(
       { error: "Invalid request body" },
       { status: 400 },
@@ -100,9 +101,9 @@ export async function POST(req: Request) {
       });
     }
 
-    const perviousMessages = await getChatMessages({ chatId: id });
+    const previousMessages = await getChatMessages({ chatId: id });
 
-    const chatMessages = [...convertToUIMessages(perviousMessages), message];
+    const chatMessages = [...convertToUIMessages(previousMessages), message];
 
     await createMessage({
       chatId: id,

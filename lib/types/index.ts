@@ -1,4 +1,5 @@
 import type { LanguageModelUsage, UIMessage } from "ai";
+import type { AppUsage } from "../ai/usage";
 
 export type TypeUserProfile = {
   userId: string;
@@ -10,6 +11,16 @@ export type TypeUserProfile = {
 export type ChatMessageRole = "system" | "user" | "assistant";
 
 export type ChatVisibility = "public" | "private";
+
+export type Chat = {
+  id: string;
+  title: string;
+  userId: string;
+  visibility: ChatVisibility;
+  lastContext: AppUsage | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
 
 export type TypeChatMessage = {
   id: string;
@@ -25,3 +36,8 @@ export type UsageMetadata = {
 };
 
 export type TypeUIMessage = UIMessage<UsageMetadata>;
+
+export type ChatHistory = {
+  chats: Chat[];
+  hasMore: boolean;
+};

@@ -1,3 +1,4 @@
+import type { AppUsage } from "@/lib/ai/usage";
 import {
   Context,
   ContextCacheUsage,
@@ -10,19 +11,13 @@ import {
   ContextTrigger,
 } from "../elements/context";
 
-export function ChatContext() {
+export function ChatContext({ usage }: { usage?: AppUsage }) {
   return (
     <Context
       maxTokens={128000}
-      usedTokens={40000}
-      usage={{
-        inputTokens: 32000,
-        outputTokens: 8000,
-        totalTokens: 40000,
-        cachedInputTokens: 0,
-        reasoningTokens: 0,
-      }}
-      modelId="openai:gpt-4"
+      usedTokens={usage?.totalTokens ?? 0}
+      usage={usage}
+      modelId={usage?.modelId ?? "openai:gpt-4"}
     >
       <ContextTrigger />
       <ContextContent>
