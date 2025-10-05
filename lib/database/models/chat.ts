@@ -1,24 +1,33 @@
-import { model, models, Schema, type Types } from "mongoose";
+import type { AppUsage } from "@/lib/ai/usage";
+import type { ChatVisibility } from "@/lib/types";
+import { type Document, model, models, Schema } from "mongoose";
+import { v4 as uuidv4 } from "uuid";
 
-export type ChatVisibility = "public" | "private";
-
-export interface IChat {
+export interface IChat extends Document {
+  id: string;
   title: string;
-  userId: Types.ObjectId; // Ref to UserProfile document
+  userId: string;
   visibility: ChatVisibility;
-  lastContext: unknown | null; // AppUsage | null
+  lastContext: AppUsage | null;
   createdAt: Date;
   updatedAt: Date;
 }
 
 const ChatSchema = new Schema<IChat>(
   {
+    id: {
+      type: String,
+      required: true,
+      unique: true,
+      index: true,
+      default: () => uuidv4(),
+    },
     title: { type: String, required: true },
     userId: {
-      type: Schema.Types.ObjectId,
-      ref: "UserProfile",
+      type: String,
       required: true,
       index: true,
+      ref: "UserProfile",
     },
     visibility: {
       type: String,
@@ -27,20 +36,10 @@ const ChatSchema = new Schema<IChat>(
       default: "private",
       index: true,
     },
-    lastContext: { type: Schema.Types.Mixed, default: null },
+    lastContext: { type: Schema.Types.Mixed, default: null }, // AppUsage
   },
   {
     timestamps: true,
-    versionKey: false,
-    toJSON: {
-      virtuals: true,
-      transform: (_doc: unknown, ret: any) => {
-        ret.id = ret._id?.toString();
-        delete ret._id;
-        return ret;
-      },
-    },
-    toObject: { virtuals: true },
   },
 );
 

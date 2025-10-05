@@ -1,5 +1,5 @@
+import type { TypeUserProfile } from "@/lib/types";
 import type { User } from "@clerk/nextjs/server";
-import type { TypeSidebarUser } from "@/lib/types";
 
 export function getDisplayName(user: User): string | undefined {
   const first = user.firstName ?? "";
@@ -9,12 +9,12 @@ export function getDisplayName(user: User): string | undefined {
   return name === "" ? undefined : name;
 }
 
-export function toSidebarUser(user: User | null): TypeSidebarUser | undefined {
+export function toSidebarUser(user: User | null): TypeUserProfile | undefined {
   if (!user) return undefined;
   const name = getDisplayName(user);
   const email = user.emailAddresses?.[0]?.emailAddress;
   return {
-    id: user.id,
+    userId: user.id,
     name,
     email,
     imageUrl: user.imageUrl,

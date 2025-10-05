@@ -1,7 +1,5 @@
 "use client";
 
-import { BadgeCheck, ChevronsUpDown } from "lucide-react";
-
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -18,16 +16,21 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
-import type { TypeSidebarUser } from "@/lib/types";
+import type { TypeUserProfile } from "@/lib/types";
+import { BadgeCheck, ChevronsUpDown } from "lucide-react";
+import { useState } from "react";
+import { SettingsDialog } from "../account-settings";
 import SignOut from "../sign-out";
 
-export function SidebarUser({ user }: { user: TypeSidebarUser }) {
+export function SidebarUser({ user }: { user: TypeUserProfile }) {
   const { isMobile } = useSidebar();
+  const [openDropdown, setOpenDropdown] = useState(false);
+  const [openDialog, setOpenDialog] = useState(false);
 
   return (
     <SidebarMenu>
       <SidebarMenuItem>
-        <DropdownMenu>
+        <DropdownMenu open={openDropdown} onOpenChange={setOpenDropdown}>
           <DropdownMenuTrigger asChild>
             <SidebarMenuButton
               size="lg"
@@ -64,7 +67,13 @@ export function SidebarUser({ user }: { user: TypeSidebarUser }) {
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
-              <DropdownMenuItem>
+              <DropdownMenuItem
+                onSelect={(e) => {
+                  e.preventDefault();
+                  setOpenDropdown(false); // ✅ close dropdown
+                  setOpenDialog(true); // ✅ then open dialog
+                }}
+              >
                 <BadgeCheck />
                 Account
               </DropdownMenuItem>
@@ -72,6 +81,7 @@ export function SidebarUser({ user }: { user: TypeSidebarUser }) {
             </DropdownMenuGroup>
           </DropdownMenuContent>
         </DropdownMenu>
+        <SettingsDialog open={openDialog} setOpen={setOpenDialog} />
       </SidebarMenuItem>
     </SidebarMenu>
   );

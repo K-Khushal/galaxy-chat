@@ -2,10 +2,9 @@ import { model, models, Schema } from "mongoose";
 
 export interface IUserProfile {
   userId: string;
-  email?: string;
+  email: string;
   name?: string;
   imageUrl?: string;
-  preferences?: Record<string, unknown>;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -16,7 +15,6 @@ const UserProfileSchema = new Schema<IUserProfile>(
     email: { type: String, required: true, unique: true },
     name: { type: String },
     imageUrl: { type: String },
-    preferences: { type: Schema.Types.Mixed, default: {} },
   },
   { timestamps: true },
 );

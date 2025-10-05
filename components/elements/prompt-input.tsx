@@ -768,6 +768,7 @@ export const PromptInputSubmit = ({
   size = "icon",
   status,
   children,
+  disabled,
   ...props
 }: PromptInputSubmitProps) => {
   const attachments = usePromptInputAttachments();
@@ -777,17 +778,18 @@ export const PromptInputSubmit = ({
     Icon = <Loader2Icon className="size-4 animate-spin" />;
   } else if (status === "streaming") {
     Icon = <SquareIcon className="size-4" />;
-  } else if (status === "error") {
-    Icon = <XIcon className="size-4" />;
   }
+  // else if (status === "error") {
+  //   Icon = <XIcon className="size-4" />;
+  // }
 
   return (
     <Button
-      className={cn("gap-1.5 rounded-lg", className)}
+      className={cn("gap-1.5 rounded-lg cursor-pointer", className)}
       size={size}
       type="submit"
       variant={variant}
-      disabled={attachments.isUploading}
+      disabled={disabled || attachments.isUploading}
       {...props}
     >
       {children ?? Icon}
