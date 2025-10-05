@@ -1,4 +1,5 @@
-import type { FileUIPart } from "ai";
+import type { FileUIPart, UIDataTypes, UIMessagePart, UITools } from "ai";
+import type { TypeChatMessage, TypeUIMessage } from "../types";
 
 /**
  * Handles chat API errors and returns user-friendly error messages
@@ -54,3 +55,13 @@ export const filterValidFiles = (files: FileUIPart[]) => {
     return hasValidUrl && isUploaded;
   });
 };
+
+export function convertToUIMessages(
+  messages: TypeChatMessage[],
+): TypeUIMessage[] {
+  return messages.map((message) => ({
+    id: message.id,
+    role: message.role,
+    parts: message.parts as UIMessagePart<UIDataTypes, UITools>[],
+  }));
+}

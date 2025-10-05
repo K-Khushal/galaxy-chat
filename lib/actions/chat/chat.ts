@@ -1,8 +1,9 @@
 import type { AppUsage } from "@/lib/ai/usage";
 import { ensureDb } from "@/lib/database/db";
 import type { IChat } from "@/lib/database/models/chat";
-import { ChatModel, type ChatVisibility } from "@/lib/database/models/chat";
+import { ChatModel } from "@/lib/database/models/chat";
 import { ChatMessageModel } from "@/lib/database/models/chat-message";
+import type { ChatVisibility } from "@/lib/types";
 
 export type Chat = IChat;
 
@@ -103,7 +104,7 @@ export async function updateChat(input: UpdateChatInput): Promise<Chat> {
   }
 
   try {
-    const updateData: Partial<CreateChatInput> = {};
+    const updateData: Partial<UpdateChatInput> = {};
 
     if (input.title !== undefined) {
       updateData.title = input.title.trim();
@@ -301,7 +302,7 @@ export async function deleteChat(id: string): Promise<boolean> {
 /**
  * Updates the lastContext field for a specific chat
  */
-export async function updateChatLastContextById({
+export async function updateChatLastContext({
   chatId,
   context,
 }: {

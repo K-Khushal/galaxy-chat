@@ -1,14 +1,14 @@
 import { ensureDb } from "@/lib/database/db";
 import {
   ChatMessageModel,
-  type ChatMessageRole,
   type IChatMessage,
 } from "@/lib/database/models/chat-message";
+import type { ChatMessageRole } from "@/lib/types";
 
 export type ChatMessage = IChatMessage;
 
 // Input validation types
-export type CreateMessageInput = {
+export type CreateSingleMessageInput = {
   id: string;
   chatId: string;
   role: ChatMessageRole;
@@ -16,9 +16,7 @@ export type CreateMessageInput = {
   attachments?: unknown[];
 };
 
-export type CreateMessagesInput = {
-  messages: CreateMessageInput[];
-};
+export type CreateMultipleMessagesInput = CreateSingleMessageInput[];
 
 export type UpdateMessageInput = {
   id: string;
@@ -36,7 +34,7 @@ export type GetMessagesInput = {
  * Creates a single chat message
  */
 export async function createMessage(
-  input: CreateMessageInput,
+  input: CreateSingleMessageInput,
 ): Promise<ChatMessage> {
   await ensureDb();
 
@@ -110,7 +108,9 @@ export async function updateMessage(
   }
 
   try {
-    const updateData: Partial<CreateMessageInput> = {};
+    const updateData: Partial<
+      Pick<CreateSingleMessageInput, "parts" | "attachments">
+    > = {};
 
     if (input.parts !== undefined) {
       if (!Array.isArray(input.parts)) {
@@ -236,5 +236,91 @@ export async function getLatestMessage(
   } catch (error: unknown) {
     console.error("Failed to get latest message:", error);
     throw new Error("Failed to get latest message");
+  }
+}
+
+/**
+ * Creates multiple messages
+ */
+export async function createMultipleMessages(
+  inputs: CreateMultipleMessagesInput,
+): Promise<ChatMessage[]> {
+  await ensureDb();
+
+  // Input validation
+  if (!inputs?.length) {
+    throw new Error("At least one message is required");
+  }
+
+  // Validate each input message
+  for (const input of inputs) {
+    if (!input.id?.trim()) {
+      throw new Error("Message ID is required for all messages");
+    }
+    if (!input.chatId?.trim()) {
+      throw new Error("Chat ID is required for all messages");
+    }
+    if (!input.role) {
+      throw new Error("Message role is required for all messages");
+    }
+    if (!Array.isArray(input.parts)) {
+      throw new Error("Message parts must be an array for all messages");
+    }
+  }
+
+  try {
+    // Check for existing messages first to avoid unnecessary operations
+    const existingMessages = await ChatMessageModel.find({
+      id: { $in: inputs.map((m) => m.id.trim()) },
+    })
+      .lean<ChatMessage[]>()
+      .exec();
+
+    const existingIds = new Set(existingMessages.map((m) => m.id));
+    const newInputs = inputs.filter(
+      (input) => !existingIds.has(input.id.trim()),
+    );
+
+    // If all messages already exist, return them
+    if (newInputs.length === 0) {
+      return existingMessages;
+    }
+
+    // Prepare new messages for insertion
+    const messagesToInsert = newInputs.map((input) => ({
+      id: input.id.trim(),
+      chatId: input.chatId.trim(),
+      role: input.role,
+      parts: input.parts,
+      attachments: input.attachments || [],
+    }));
+
+    // Insert new messages with ordered: false to continue on duplicates
+    await ChatMessageModel.insertMany(messagesToInsert, { ordered: false });
+
+    // Return all messages (existing + newly created)
+    return await ChatMessageModel.find({
+      id: { $in: inputs.map((m) => m.id.trim()) },
+    })
+      .lean<ChatMessage[]>()
+      .exec();
+  } catch (error: unknown) {
+    // Handle MongoDB duplicate key error (code 11000)
+    if (
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      error.code === 11000
+    ) {
+      // Some messages were created by another request, fetch and return all messages
+      return await ChatMessageModel.find({
+        id: { $in: inputs.map((m) => m.id.trim()) },
+      })
+        .lean<ChatMessage[]>()
+        .exec();
+    }
+
+    console.error("Failed to create multiple messages:", error);
+    throw new Error("Failed to create multiple messages");
   }
 }

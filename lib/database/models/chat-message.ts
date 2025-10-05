@@ -1,7 +1,6 @@
-import { model, models, Schema } from "mongoose";
+import type { ChatMessageRole } from "@/lib/types";
+import { type Document, model, models, Schema } from "mongoose";
 import { v4 as uuidv4 } from "uuid";
-
-export type ChatMessageRole = "system" | "user" | "assistant";
 
 export interface IChatMessage extends Document {
   id: string;

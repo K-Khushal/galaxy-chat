@@ -1,8 +1,7 @@
 import type { AppUsage } from "@/lib/ai/usage";
-import { model, models, Schema } from "mongoose";
+import type { ChatVisibility } from "@/lib/types";
+import { type Document, model, models, Schema } from "mongoose";
 import { v4 as uuidv4 } from "uuid";
-
-export type ChatVisibility = "public" | "private";
 
 export interface IChat extends Document {
   id: string;
