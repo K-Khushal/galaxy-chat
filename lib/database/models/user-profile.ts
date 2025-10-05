@@ -2,7 +2,7 @@ import { model, models, Schema } from "mongoose";
 
 export interface IUserProfile {
   userId: string;
-  email?: string;
+  email: string;
   name?: string;
   imageUrl?: string;
   createdAt: Date;

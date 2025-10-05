@@ -1,9 +1,11 @@
-import { model, models, Schema, type Types } from "mongoose";
+import { model, models, Schema } from "mongoose";
+import { v4 as uuidv4 } from "uuid";
 
 export type ChatMessageRole = "system" | "user" | "assistant";
 
-export interface IChatMessage {
-  chatId: Types.ObjectId; // Ref to Chat document
+export interface IChatMessage extends Document {
+  id: string;
+  chatId: string; // Ref to Chat document
   role: ChatMessageRole;
   parts: unknown[]; // Array of UIMessagePart JSON objects from AI SDK
   attachments: unknown[]; // Arbitrary attachment metadata
@@ -13,11 +15,18 @@ export interface IChatMessage {
 
 const ChatMessageSchema = new Schema<IChatMessage>(
   {
+    id: {
+      type: String,
+      required: true,
+      unique: true,
+      index: true,
+      default: () => uuidv4(),
+    },
     chatId: {
-      type: Schema.Types.ObjectId,
-      ref: "Chat",
+      type: String,
       required: true,
       index: true,
+      ref: "Chat",
     },
     role: {
       type: String,
@@ -38,16 +47,6 @@ const ChatMessageSchema = new Schema<IChatMessage>(
   },
   {
     timestamps: true, // createdAt, updatedAt
-    versionKey: false,
-    toJSON: {
-      virtuals: true,
-      transform: (_doc: unknown, ret: any) => {
-        ret.id = ret._id?.toString();
-        delete ret._id;
-        return ret;
-      },
-    },
-    toObject: { virtuals: true },
   },
 );
 
