@@ -9,7 +9,7 @@ import type { TypeUIMessage } from "@/lib/types";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { unstable_serialize, useSWRConfig } from "swr";
 import { v4 as uuidv4 } from "uuid";
@@ -30,6 +30,7 @@ export default function Chat({
   const [model, setModel] = useState<string>(
     chatModels.find((m) => m.available)?.id || "",
   );
+  const modelRef = useRef(model);
   const [useMicrophone, setUseMicrophone] = useState<boolean>(false);
   const [useWebSearch, setUseWebSearch] = useState<boolean>(false);
 
@@ -54,7 +55,7 @@ export default function Chat({
           body: {
             id: request.id,
             message: request.messages.at(-1),
-            model: model,
+            model: modelRef.current,
             visibility: "private",
             webSearch: useWebSearch,
             ...request.body,
@@ -95,6 +96,10 @@ export default function Chat({
       window.history.replaceState({}, "", `/chat/${id}`);
     }
   }, [query, sendMessage, hasAppendedQuery, id]);
+
+  useEffect(() => {
+    modelRef.current = model;
+  }, [model]);
 
   return (
     <div className="overscroll-behavior-contain flex h-dvh min-w-0 touch-pan-y flex-col bg-background">

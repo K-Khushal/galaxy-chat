@@ -217,28 +217,28 @@ export function ChatMessages({
             </div>
           ))}
           {error && (
-            <Fragment>
-              <Message from="system">
-                <div className="text-destructive bg-destructive/10 flex flex-row gap-2 overflow-hidden rounded-lg text-sm items-center max-w-[80%] px-4 py-3">
+            <Message from="system">
+              <div className="flex flex-col max-w-[80%] gap-1">
+                <div className="text-destructive bg-destructive/10 flex flex-row gap-2 overflow-hidden rounded-lg text-sm items-center px-4 py-3">
                   <AlertCircleIcon className="text-destructive" />
                   <Response className="text-destructive">
                     An error occurred.
                   </Response>
                 </div>
-              </Message>
-              <Actions>
-                <Action onClick={regenerate} label="Retry">
-                  <RefreshCcwIcon className="size-4" />
-                </Action>
-                <Action
-                  onClick={() => navigator.clipboard.writeText(error.message)}
-                  label="Copy"
-                  disabled={!(status === "ready" || status === "error")}
-                >
-                  <CopyIcon className="size-4" />
-                </Action>
-              </Actions>
-            </Fragment>
+                <Actions>
+                  <Action onClick={regenerate} label="Retry">
+                    <RefreshCcwIcon className="size-4" />
+                  </Action>
+                  <Action
+                    onClick={() => navigator.clipboard.writeText(error.message)}
+                    label="Copy"
+                    disabled={!(status === "ready" || status === "error")}
+                  >
+                    <CopyIcon className="size-4" />
+                  </Action>
+                </Actions>
+              </div>
+            </Message>
           )}
           {status === "submitted" && (
             <div className="flex flex-row items-center justify-start ml-2">

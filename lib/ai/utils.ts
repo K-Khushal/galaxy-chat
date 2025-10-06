@@ -99,3 +99,11 @@ export async function fetchJson(url: string) {
 
   return response.json();
 }
+
+export function formatTitle(input: string): string {
+  // 1. Remove any surrounding quotes (single or double)
+  const cleaned = input.replace(/^["']|["']$/g, "").trim();
+
+  // 2. Capitalize the first letter
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+}

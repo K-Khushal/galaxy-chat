@@ -11,7 +11,7 @@ import {
 } from "@/lib/actions/chat/chat-message";
 import type { ChatModel } from "@/lib/ai/model";
 import type { AppUsage } from "@/lib/ai/usage";
-import { convertToUIMessages } from "@/lib/ai/utils";
+import { convertToUIMessages, formatTitle } from "@/lib/ai/utils";
 import {
   type PostRequestBody,
   postRequestBodySchema,
@@ -62,7 +62,6 @@ export async function POST(req: Request) {
     const json = await req.json();
     requestBody = postRequestBodySchema.parse(json);
   } catch (_) {
-    console.error("Invalid request body", _);
     return NextResponse.json(
       { error: "Invalid request body" },
       { status: 400 },
@@ -98,11 +97,12 @@ export async function POST(req: Request) {
       }
     } else {
       const title = await generateChatTitle({ message });
+      const formattedTitle = formatTitle(title);
 
       await createChat({
         id,
         userId,
-        title,
+        title: formattedTitle,
         visibility: visibility ?? "private",
       });
     }

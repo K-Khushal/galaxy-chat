@@ -2,7 +2,7 @@ import { generateText, type UIMessage } from "ai";
 
 export async function generateChatTitle({ message }: { message: UIMessage }) {
   const { text: title } = await generateText({
-    model: "meta/llama-3.2-1b",
+    model: "meituan/longcat-flash-chat",
     system: `\n
       - you will generate a short title based on the first message a user begins a conversation with
       - ensure it is not more than 80 characters long

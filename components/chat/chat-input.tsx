@@ -20,7 +20,6 @@ import { cn } from "@/lib/utils";
 import type { UseChatHelpers } from "@ai-sdk/react";
 import type { ChatStatus, UIMessage } from "ai";
 import { GlobeIcon, MicIcon, Paperclip } from "lucide-react";
-import { toast } from "sonner";
 
 function AddAttachmentButton() {
   const attachments = usePromptInputAttachments();
@@ -84,33 +83,29 @@ export function ChatInput({
       return;
     }
 
-    try {
-      // Filter out files that are still uploading or failed to upload
-      // Only include files that have been successfully uploaded to Cloudinary
-      const validFiles = filterValidFiles(message.files || []);
+    // Filter out files that are still uploading or failed to upload
+    // Only include files that have been successfully uploaded to Cloudinary
+    const validFiles = filterValidFiles(message.files || []);
 
-      // Use AI SDK v5 pattern - send files directly
-      await sendMessage({
-        text: message.text || "Sent with attachments",
-        files: validFiles,
-      });
+    // Use AI SDK v5 pattern - send files directly
+    sendMessage({
+      role: "user",
+      parts: [
+        ...validFiles.map((attachment) => ({
+          type: attachment.type,
+          url: attachment.url,
+          name: attachment.filename,
+          mediaType: attachment.mediaType,
+        })),
+        {
+          type: "text",
+          text: message.text || "Sent with attachments",
+        },
+      ],
+    });
 
-      // Only clear the input on successful message sending
-      setText("");
-    } catch (error) {
-      // Handle errors from file filtering or message sending
-      console.error("Failed to send message:", error);
-
-      // Show error toast to user
-      toast.error("Failed to send message", {
-        description:
-          error instanceof Error
-            ? error.message
-            : "An unexpected error occurred. Please try again.",
-      });
-
-      // Don't clear the input so user can retry
-    }
+    // Only clear the input on successful message sending
+    setText("");
   };
 
   return (
