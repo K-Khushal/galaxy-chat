@@ -25,6 +25,11 @@ import {
   JsonToSseTransformStream,
   streamText,
 } from "ai";
+
+// Use any for now to avoid type conflicts between different ai package versions
+type LanguageModelV1Prompt = any;
+
+import { addMemories, retrieveMemories } from "@/lib/ai/memory";
 import { unstable_cache as cache } from "next/cache";
 import { NextResponse } from "next/server";
 import type { ModelCatalog } from "tokenlens/core";
@@ -36,8 +41,17 @@ import { generateChatTitle } from "../../action";
 // Allow streaming responses up to 30 seconds
 export const maxDuration = 30;
 
-const systemPrompt =
-  "You are a helpful assistant that can answer questions and help with tasks. You can see and analyze images that are shared with you. When a user shares an image, describe what you see in detail.";
+const getSystemPrompt = (memories: string[] = []) => {
+  const basePrompt =
+    "You are a helpful assistant that can answer questions and help with tasks. You can see and analyze images that are shared with you. When a user shares an image, describe what you see in detail.";
+
+  if (memories.length > 0) {
+    const memoryContext = `\n\nRelevant context from previous conversations:\n${memories.join("\n")}`;
+    return basePrompt + memoryContext;
+  }
+
+  return basePrompt;
+};
 
 const getTokenlensCatalog = cache(
   async (): Promise<ModelCatalog | undefined> => {
@@ -73,7 +87,6 @@ export async function POST(req: Request) {
       id,
       message,
       model,
-      webSearch,
       visibility,
     }: {
       id: string;
@@ -111,6 +124,23 @@ export async function POST(req: Request) {
 
     const chatMessages = [...convertToUIMessages(previousMessages), message];
 
+    // Retrieve relevant memories for context
+    let memories: string[] = [];
+    try {
+      const messageText =
+        message.parts.find((part) => part.type === "text")?.text ?? "";
+      const retrievedMemories = await retrieveMemories(messageText, {
+        user_id: userId,
+      });
+
+      // retrieveMemories returns a string, so we can use it directly
+      if (retrievedMemories && retrievedMemories.trim()) {
+        memories = [retrievedMemories];
+      }
+    } catch (error) {
+      console.warn("Failed to retrieve memories:", error);
+    }
+
     await createMessage({
       chatId: id,
       id: message.id,
@@ -128,10 +158,8 @@ export async function POST(req: Request) {
     const stream = createUIMessageStream({
       execute: ({ writer: dataStream }) => {
         const result = streamText({
-          model: webSearch
-            ? "perplexity/sonar"
-            : (model ?? "meta/llama-3.2-1b"),
-          system: systemPrompt,
+          model: model ?? "google/gemini-2.0-flash-lite",
+          system: getSystemPrompt(memories),
           messages: convertToModelMessages(chatMessages),
           onFinish: async ({ usage }) => {
             try {
@@ -185,6 +213,23 @@ export async function POST(req: Request) {
             attachments: [],
           })),
         );
+
+        // Store memories from the conversation
+        try {
+          // Convert messages to LanguageModelV1Prompt format
+          const mem0Messages: LanguageModelV1Prompt = chatMessages.map(
+            (msg) => ({
+              role: msg.role as "user" | "assistant" | "system",
+              content: msg.parts.map((part) => ({
+                type: part.type as "text",
+                text: part.type === "text" ? part.text : "",
+              })),
+            }),
+          );
+          await addMemories(mem0Messages, { user_id: userId });
+        } catch (error) {
+          console.warn("Failed to store memories:", error);
+        }
 
         if (finalMergedUsage) {
           try {
