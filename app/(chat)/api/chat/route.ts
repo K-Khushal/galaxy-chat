@@ -216,16 +216,26 @@ export async function POST(req: Request) {
 
         // Store memories from the conversation
         try {
-          // Convert messages to LanguageModelV1Prompt format
-          const mem0Messages: LanguageModelV1Prompt = chatMessages.map(
-            (msg) => ({
+          // Convert messages to LanguageModelV1Prompt format with proper validation
+          const allowedRoles = new Set(["user", "assistant", "system"]);
+          const mem0Messages: LanguageModelV1Prompt = chatMessages
+            .filter((msg) => {
+              // Only include messages with valid roles
+              if (!allowedRoles.has(msg.role)) {
+                return false;
+              }
+              // Only include messages that have at least one text part
+              return msg.parts.some((part) => part.type === "text");
+            })
+            .map((msg) => ({
               role: msg.role as "user" | "assistant" | "system",
-              content: msg.parts.map((part) => ({
-                type: part.type as "text",
-                text: part.type === "text" ? part.text : "",
-              })),
-            }),
-          );
+              content: msg.parts
+                .filter((part) => part.type === "text")
+                .map((part) => ({
+                  type: "text" as const,
+                  text: part.text,
+                })),
+            }));
           await addMemories(mem0Messages, { user_id: userId });
         } catch (error) {
           console.warn("Failed to store memories:", error);
