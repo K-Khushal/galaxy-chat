@@ -240,6 +240,94 @@ export async function getLatestMessage(
 }
 
 /**
+ * Gets all messages with media images from assistant messages for a user
+ */
+export async function getChatMessagesWithMedia(userId: string): Promise<
+  Array<{
+    id: string;
+    chatId: string;
+    messageId: string;
+    imageUrl: string;
+    createdAt: Date;
+    chatTitle?: string;
+  }>
+> {
+  await ensureDb();
+
+  if (!userId?.trim()) {
+    throw new Error("User ID is required");
+  }
+
+  try {
+    // First get all chats for the user
+    const { getChatsByUserId } = await import("./chat");
+    const chats = await getChatsByUserId(userId);
+    const chatIds = chats.map((chat) => chat.id);
+
+    if (chatIds.length === 0) {
+      return [];
+    }
+
+    // Get all assistant messages that contain image parts
+    const messages = await ChatMessageModel.find({
+      chatId: { $in: chatIds },
+      role: "assistant",
+      parts: {
+        $elemMatch: {
+          type: "file",
+          mediaType: { $regex: /^image\// },
+        },
+      },
+    })
+      .sort({ createdAt: -1 })
+      .lean<ChatMessage[]>()
+      .exec();
+
+    // Extract image URLs from message parts
+    const mediaMessages: Array<{
+      id: string;
+      chatId: string;
+      messageId: string;
+      imageUrl: string;
+      createdAt: Date;
+      chatTitle?: string;
+    }> = [];
+
+    for (const message of messages) {
+      const chat = chats.find((c) => c.id === message.chatId);
+
+      for (const part of message.parts) {
+        if (
+          typeof part === "object" &&
+          part !== null &&
+          "type" in part &&
+          part.type === "file" &&
+          "mediaType" in part &&
+          typeof part.mediaType === "string" &&
+          part.mediaType.startsWith("image/") &&
+          "url" in part &&
+          typeof part.url === "string"
+        ) {
+          mediaMessages.push({
+            id: `${message.id}-${part.url}`,
+            chatId: message.chatId,
+            messageId: message.id,
+            imageUrl: part.url,
+            createdAt: message.createdAt,
+            chatTitle: chat?.title,
+          });
+        }
+      }
+    }
+
+    return mediaMessages;
+  } catch (error: unknown) {
+    console.error("Failed to get chat messages with media:", error);
+    throw new Error("Failed to get chat messages with media");
+  }
+}
+
+/**
  * Creates multiple messages
  */
 export async function createMultipleMessages(

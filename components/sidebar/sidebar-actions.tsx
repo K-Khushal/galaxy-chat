@@ -60,7 +60,13 @@ export function SidebarActions() {
 
       {/* Library Button */}
       <SidebarMenuItem>
-        <SidebarMenuButton className="cursor-pointer">
+        <SidebarMenuButton
+          onClick={() => {
+            router.push("/chat/library");
+            router.refresh();
+          }}
+          className="cursor-pointer"
+        >
           <Image />
           <span>Library</span>
         </SidebarMenuButton>

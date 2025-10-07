@@ -260,6 +260,11 @@ export async function getAllUserChats(userId: string): Promise<Chat[]> {
 }
 
 /**
+ * Alias for getAllUserChats for backward compatibility
+ */
+export const getChatsByUserId = getAllUserChats;
+
+/**
  * Deletes a chat and all its associated messages
  */
 export async function deleteChat(id: string): Promise<boolean> {
