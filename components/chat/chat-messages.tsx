@@ -1,11 +1,11 @@
 import { TextShimmer } from "@/components/ui/text-shimmer";
 import type { TypeUIMessage } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import type { UseChatHelpers } from "@ai-sdk/react";
 import type { ChatStatus } from "ai";
 import {
   AlertCircleIcon,
   ArrowDownIcon,
+  CheckIcon,
   CopyIcon,
   PaperclipIcon,
   PencilIcon,
@@ -33,16 +33,12 @@ import {
 import { ChatGreeting } from "./chat-greeting";
 
 export function ChatMessages({
-  id,
   messages,
-  setMessages,
   status,
   error,
   regenerate,
 }: {
-  id: string;
   messages: TypeUIMessage[];
-  setMessages: UseChatHelpers<TypeUIMessage>["setMessages"];
   status: ChatStatus;
   error?: Error;
   regenerate?: () => void;
@@ -50,6 +46,7 @@ export function ChatMessages({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -78,6 +75,21 @@ export function ChatMessages({
       scrollToBottom();
     }
   }, [isAtBottom, scrollToBottom]);
+
+  // Handle copy feedback
+  const handleCopy = async (text: string, messageId: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedMessageId(messageId);
+
+      // Reset the copied state after 2 seconds
+      setTimeout(() => {
+        setCopiedMessageId(null);
+      }, 1000);
+    } catch (err) {
+      console.error("Failed to copy text: ", err);
+    }
+  };
 
   return (
     <div
@@ -138,12 +150,18 @@ export function ChatMessages({
                               message.role === "user" &&
                                 "transition-opacity opacity-0 group-hover:opacity-100",
                             )}
-                            onClick={() =>
-                              navigator.clipboard.writeText(part.text)
+                            onClick={() => handleCopy(part.text, message.id)}
+                            label={
+                              copiedMessageId === message.id
+                                ? "Copied!"
+                                : "Copy"
                             }
-                            label="Copy"
                           >
-                            <CopyIcon className="size-4" />
+                            {copiedMessageId === message.id ? (
+                              <CheckIcon className="size-4" />
+                            ) : (
+                              <CopyIcon className="size-4" />
+                            )}
                           </Action>
 
                           {message.role === "user" && (
@@ -230,11 +248,15 @@ export function ChatMessages({
                     <RefreshCcwIcon className="size-4" />
                   </Action>
                   <Action
-                    onClick={() => navigator.clipboard.writeText(error.message)}
-                    label="Copy"
+                    onClick={() => handleCopy(error.message, "error")}
+                    label={copiedMessageId === "error" ? "Copied!" : "Copy"}
                     disabled={!(status === "ready" || status === "error")}
                   >
-                    <CopyIcon className="size-4" />
+                    {copiedMessageId === "error" ? (
+                      <CheckIcon className="size-4" />
+                    ) : (
+                      <CopyIcon className="size-4" />
+                    )}
                   </Action>
                 </Actions>
               </div>

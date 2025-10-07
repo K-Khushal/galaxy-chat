@@ -42,10 +42,10 @@ export default function Chat({
     stop,
     error,
     regenerate,
-    resumeStream,
   } = useChat<TypeUIMessage>({
     id,
     messages: chatMessages,
+    experimental_throttle: 100,
     generateId: uuidv4,
     transport: new DefaultChatTransport({
       api: "/api/chat",
@@ -104,9 +104,7 @@ export default function Chat({
   return (
     <div className="overscroll-behavior-contain flex h-dvh min-w-0 touch-pan-y flex-col bg-background">
       <ChatMessages
-        id={id}
         messages={messages}
-        setMessages={setMessages}
         status={status}
         error={error}
         regenerate={regenerate}

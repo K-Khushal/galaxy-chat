@@ -43,6 +43,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "../ui/alert-dialog";
+import { TextEffect } from "../ui/text-effect";
 
 export function SidebarHistory({
   items,
@@ -137,7 +138,9 @@ export function SidebarHistory({
                 <SidebarMenuItem key={item.id}>
                   <SidebarMenuButton asChild isActive={item.id === id}>
                     <Link href={`/chat/${item.id}`}>
-                      <span>{item.title}</span>
+                      <TextEffect per="char" preset="fade">
+                        {item.title}
+                      </TextEffect>
                     </Link>
                   </SidebarMenuButton>
                   <DropdownMenu>
@@ -181,7 +184,7 @@ export function SidebarHistory({
             }
           }}
         />
-        {hasReachedEnd ? (
+        {hasReachedEnd && !isLoading && !hasEmptyChatHistory ? (
           <div className="mt-4 flex w-full flex-row items-center justify-center gap-2 px-2 text-sm text-zinc-500">
             You have reached the end of your chat history.
           </div>
