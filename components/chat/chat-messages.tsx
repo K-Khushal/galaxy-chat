@@ -81,15 +81,21 @@ export function ChatMessages({
     try {
       await navigator.clipboard.writeText(text);
       setCopiedMessageId(messageId);
-
-      // Reset the copied state after 2 seconds
-      setTimeout(() => {
-        setCopiedMessageId(null);
-      }, 1000);
     } catch (err) {
       console.error("Failed to copy text: ", err);
     }
   };
+
+  // Reset copied state after 1 seconds
+  useEffect(() => {
+    if (copiedMessageId) {
+      const timer = setTimeout(() => {
+        setCopiedMessageId(null);
+      }, 1000);
+
+      return () => clearTimeout(timer);
+    }
+  }, [copiedMessageId]);
 
   return (
     <div
