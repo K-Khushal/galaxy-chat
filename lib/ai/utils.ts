@@ -107,3 +107,10 @@ export function formatTitle(input: string): string {
   // 2. Capitalize the first letter
   return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
 }
+
+export function getTextMessage(message: TypeUIMessage): string {
+  return message.parts
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("");
+}

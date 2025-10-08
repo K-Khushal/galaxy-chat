@@ -1,15 +1,15 @@
 "use client";
 
-import { useControllableState } from "@radix-ui/react-use-controllable-state";
-import { BrainIcon, ChevronDownIcon } from "lucide-react";
-import type { ComponentProps } from "react";
-import { createContext, memo, useContext, useEffect, useState } from "react";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
+import { useControllableState } from "@radix-ui/react-use-controllable-state";
+import { BrainIcon, ChevronDownIcon } from "lucide-react";
+import type { ComponentProps } from "react";
+import { createContext, memo, useContext, useEffect, useState } from "react";
 import { Response } from "./response";
 
 type ReasoningContextValue = {
@@ -113,10 +113,10 @@ export const Reasoning = memo(
 export type ReasoningTriggerProps = ComponentProps<typeof CollapsibleTrigger>;
 
 const getThinkingMessage = (isStreaming: boolean, duration?: number) => {
-  if (isStreaming || duration === 0) {
+  if (isStreaming) {
     return <p>Thinking...</p>;
   }
-  if (duration === undefined) {
+  if (duration === undefined || duration === 0) {
     return <p>Thought for a few seconds</p>;
   }
   return <p>Thought for {duration} seconds</p>;

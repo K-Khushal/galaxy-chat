@@ -1,3 +1,9 @@
+"use server";
+
+import {
+  deleteTrailingMessages,
+  getMessageById,
+} from "@/lib/actions/chat/chat-message";
 import { generateText, type UIMessage } from "ai";
 
 export async function generateChatTitle({ message }: { message: UIMessage }) {
@@ -12,4 +18,17 @@ export async function generateChatTitle({ message }: { message: UIMessage }) {
   });
 
   return title;
+}
+
+export async function deleteChatMessages(id: string) {
+  const message = await getMessageById(id);
+
+  if (!message) {
+    throw new Error("Message not found");
+  }
+
+  const chatId = message.chatId;
+  const timestamp = message.createdAt;
+
+  await deleteTrailingMessages(chatId, timestamp);
 }

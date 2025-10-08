@@ -9,7 +9,7 @@ export interface MediaMessage {
   chatId: string;
   messageId: string;
   imageUrl: string;
-  createdAt: Date;
+  createdAt: string | Date;
   chatTitle?: string;
 }
 
@@ -24,7 +24,7 @@ export function LibraryMasonry({ mediaMessages }: LibraryMasonryProps) {
     return heights[index % heights.length];
   };
 
-  const formatDate = (date: Date) => {
+  const formatDate = (date: string | Date) => {
     return new Intl.DateTimeFormat("en-US", {
       month: "short",
       day: "numeric",

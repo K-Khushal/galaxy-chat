@@ -5,31 +5,12 @@ import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
+  SidebarGroupLabel,
   SidebarHeader,
   SidebarRail,
 } from "@/components/ui/sidebar";
 import type { TypeUserProfile } from "@/lib/types";
 import type * as React from "react";
-
-// This is sample data.
-const data = {
-  navMain: [
-    {
-      title: "Getting Started",
-      url: "#",
-      items: [
-        {
-          title: "Edit",
-          url: "#",
-        },
-        {
-          title: "Delete",
-          url: "#",
-        },
-      ],
-    },
-  ],
-};
 
 export function AppSidebar({
   user,
@@ -40,8 +21,13 @@ export function AppSidebar({
       <SidebarHeader>
         <SidebarActions />
       </SidebarHeader>
+
+      <SidebarGroupLabel className="text-[16px] text-muted-foreground px-4">
+        Chats
+      </SidebarGroupLabel>
+
       <SidebarContent>
-        <SidebarHistory items={data.navMain} />
+        <SidebarHistory />
       </SidebarContent>
       <SidebarFooter>
         <div className="pb-2">{user ? <SidebarUser user={user} /> : null}</div>

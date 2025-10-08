@@ -215,6 +215,39 @@ export async function deleteMessage(id: string): Promise<boolean> {
 }
 
 /**
+ * Deletes all messages in a chat that were created after the given timestamp
+ */
+export async function deleteTrailingMessages(
+  chatId: string,
+  timestamp: Date,
+): Promise<number> {
+  await ensureDb();
+
+  if (!chatId?.trim()) {
+    throw new Error("Chat ID is required");
+  }
+
+  if (!timestamp || !(timestamp instanceof Date)) {
+    throw new Error("Valid timestamp is required");
+  }
+
+  try {
+    const result = await ChatMessageModel.deleteMany({
+      chatId: chatId.trim(),
+      createdAt: { $gt: timestamp },
+    });
+
+    return result.deletedCount || 0;
+  } catch (error: unknown) {
+    console.error(
+      "Failed to delete messages by chat ID after timestamp:",
+      error,
+    );
+    throw new Error("Failed to delete messages by chat ID after timestamp");
+  }
+}
+
+/**
  * Gets the latest message for a specific chat
  */
 export async function getLatestMessage(

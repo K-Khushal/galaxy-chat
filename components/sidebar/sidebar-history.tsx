@@ -10,7 +10,6 @@ import {
 import {
   SidebarGroup,
   SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuAction,
   SidebarMenuButton,
@@ -21,13 +20,7 @@ import {
 import { fetchJson } from "@/lib/ai/utils";
 import type { ChatHistory } from "@/lib/types";
 import { motion } from "framer-motion";
-import {
-  Forward,
-  LoaderIcon,
-  type LucideIcon,
-  MoreHorizontal,
-  Trash2,
-} from "lucide-react";
+import { Forward, LoaderIcon, MoreHorizontal, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
@@ -45,20 +38,7 @@ import {
 } from "../ui/alert-dialog";
 import { TextEffect } from "../ui/text-effect";
 
-export function SidebarHistory({
-  items,
-}: {
-  items: {
-    title: string;
-    url: string;
-    icon?: LucideIcon;
-    isActive?: boolean;
-    items?: {
-      title: string;
-      url: string;
-    }[];
-  }[];
-}) {
+export function SidebarHistory() {
   const router = useRouter();
   const { id } = useParams();
   const [deleteId, setDeleteId] = useState<string | null>(null);
@@ -116,9 +96,6 @@ export function SidebarHistory({
   return (
     <>
       <SidebarGroup className="group-data-[collapsible=icon]:hidden">
-        <SidebarGroupLabel className="text-sm text-muted-foreground mb-2">
-          Chats
-        </SidebarGroupLabel>
         <SidebarGroupContent>
           <SidebarMenu>
             {isLoading &&

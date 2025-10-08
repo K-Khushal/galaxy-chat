@@ -1,28 +1,11 @@
 import { TextShimmer } from "@/components/ui/text-shimmer";
 import type { TypeUIMessage } from "@/lib/types";
-import { cn } from "@/lib/utils";
+import type { UseChatHelpers } from "@ai-sdk/react";
 import type { ChatStatus } from "ai";
-import {
-  AlertCircleIcon,
-  ArrowDownIcon,
-  CheckIcon,
-  CopyIcon,
-  PaperclipIcon,
-  PencilIcon,
-  RefreshCcwIcon,
-  ThumbsDownIcon,
-  ThumbsUpIcon,
-} from "lucide-react";
-import Image from "next/image";
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
-import { Action, Actions } from "../elements/actions";
+import { AlertCircleIcon, ArrowDownIcon } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Conversation, ConversationContent } from "../elements/conversation";
-import { Message, MessageContent } from "../elements/message";
-import {
-  Reasoning,
-  ReasoningContent,
-  ReasoningTrigger,
-} from "../elements/reasoning";
+import { Message } from "../elements/message";
 import { Response } from "../elements/response";
 import {
   Source,
@@ -31,22 +14,27 @@ import {
   SourcesTrigger,
 } from "../elements/sources";
 import { ChatGreeting } from "./chat-greeting";
+import { ErrorActions } from "./message/message-action";
+import { MessagePart } from "./message/message-part";
 
 export function ChatMessages({
   messages,
   status,
   error,
   regenerate,
+  setMessages,
 }: {
   messages: TypeUIMessage[];
   status: ChatStatus;
   error?: Error;
-  regenerate?: () => void;
+  regenerate: () => void;
+  setMessages: UseChatHelpers<TypeUIMessage>["setMessages"];
 }) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
-  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+
+  console.log(status);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -75,27 +63,6 @@ export function ChatMessages({
       scrollToBottom();
     }
   }, [isAtBottom, scrollToBottom]);
-
-  // Handle copy feedback
-  const handleCopy = async (text: string, messageId: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopiedMessageId(messageId);
-    } catch (err) {
-      console.error("Failed to copy text: ", err);
-    }
-  };
-
-  // Reset copied state after 1 seconds
-  useEffect(() => {
-    if (copiedMessageId) {
-      const timer = setTimeout(() => {
-        setCopiedMessageId(null);
-      }, 1000);
-
-      return () => clearTimeout(timer);
-    }
-  }, [copiedMessageId]);
 
   return (
     <div
@@ -131,113 +98,18 @@ export function ChatMessages({
                       ))}
                   </Sources>
                 )}
-              {message.parts.map((part, i) => {
-                switch (part.type) {
-                  case "text":
-                    return (
-                      <Fragment key={`${message.id}-${i}`}>
-                        <Message from={message.role} className="py-1">
-                          <MessageContent>
-                            <Response>{part.text}</Response>
-                          </MessageContent>
-                        </Message>
-                        <Actions
-                          className={cn(
-                            "group flex w-full",
-                            message.role !== "user" &&
-                              "items-start justify-start",
-                            message.role === "user" && "items-end justify-end",
-                          )}
-                          // className="group flex w-full items-end justify-end gap-2 py-4"
-                        >
-                          {/* Always show */}
-                          <Action
-                            className={cn(
-                              message.role === "user" &&
-                                "transition-opacity opacity-0 group-hover:opacity-100",
-                            )}
-                            onClick={() => handleCopy(part.text, message.id)}
-                            label={
-                              copiedMessageId === message.id
-                                ? "Copied!"
-                                : "Copy"
-                            }
-                          >
-                            {copiedMessageId === message.id ? (
-                              <CheckIcon className="size-4" />
-                            ) : (
-                              <CopyIcon className="size-4" />
-                            )}
-                          </Action>
-
-                          {message.role === "user" && (
-                            <Action
-                              className="transition-opacity opacity-0 group-hover:opacity-100"
-                              label="Edit"
-                            >
-                              <PencilIcon className="size-4" />
-                            </Action>
-                          )}
-
-                          {message.role === "assistant" && (
-                            <>
-                              <Action label="Like">
-                                <ThumbsUpIcon className="size-4" />
-                              </Action>
-                              <Action label="Dislike">
-                                <ThumbsDownIcon className="size-4" />
-                              </Action>
-                              {/* Retry only for the last message & last part */}
-                              {regenerate &&
-                                message.id === messages.at(-1)?.id &&
-                                i === message.parts.length - 1 && (
-                                  <Action onClick={regenerate} label="Retry">
-                                    <RefreshCcwIcon className="size-4" />
-                                  </Action>
-                                )}
-                            </>
-                          )}
-                        </Actions>
-                      </Fragment>
-                    );
-                  case "file":
-                    return (
-                      <Message from={message.role} key={`${message.id}-${i}`}>
-                        {part.mediaType?.startsWith("image/") && part.url ? (
-                          <Image
-                            alt={part.filename || "attachment"}
-                            className="size-full rounded-md object-cover h-14 w-14 border"
-                            height={56}
-                            src={part.url}
-                            width={56}
-                            unoptimized={part.url.startsWith("blob:")}
-                          />
-                        ) : (
-                          <div className="flex size-full items-center justify-center text-muted-foreground">
-                            <PaperclipIcon className="size-4" />
-                          </div>
-                        )}
-                      </Message>
-                    );
-                  case "reasoning":
-                    return (
-                      <Reasoning
-                        key={`${message.id}-${i}`}
-                        className="w-full"
-                        isStreaming={
-                          status === "streaming" &&
-                          i === message.parts.length - 1 &&
-                          message.id === messages.at(-1)?.id
-                        }
-                      >
-                        <ReasoningTrigger />
-                        <ReasoningContent>{part.text}</ReasoningContent>
-                      </Reasoning>
-                    );
-                  default:
-                    return null;
-                }
-              })}
+              {message.parts.map((part, i) => (
+                <MessagePart
+                  key={`${message.id}-${i}`}
+                  message={message}
+                  partIndex={i}
+                  part={part}
+                  status={status}
+                  isLastMessage={message.id === messages.at(-1)?.id}
+                  regenerate={regenerate}
+                  setMessages={setMessages}
+                />
+              ))}
             </div>
           ))}
           {error && (
@@ -249,22 +121,11 @@ export function ChatMessages({
                     An error occurred.
                   </Response>
                 </div>
-                <Actions>
-                  <Action onClick={regenerate} label="Retry">
-                    <RefreshCcwIcon className="size-4" />
-                  </Action>
-                  <Action
-                    onClick={() => handleCopy(error.message, "error")}
-                    label={copiedMessageId === "error" ? "Copied!" : "Copy"}
-                    disabled={!(status === "ready" || status === "error")}
-                  >
-                    {copiedMessageId === "error" ? (
-                      <CheckIcon className="size-4" />
-                    ) : (
-                      <CopyIcon className="size-4" />
-                    )}
-                  </Action>
-                </Actions>
+                <ErrorActions
+                  errorMessage={error.message}
+                  status={status}
+                  onRetry={regenerate || (() => {})}
+                />
               </div>
             </Message>
           )}
