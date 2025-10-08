@@ -9,6 +9,7 @@ import {
   createMultipleMessages,
   getChatMessages,
 } from "@/lib/actions/chat/chat-message";
+import { addMemories, retrieveMemories } from "@/lib/actions/mem0/memory";
 import type { ChatModel } from "@/lib/ai/model";
 import type { AppUsage } from "@/lib/ai/usage";
 import { convertToUIMessages, formatTitle } from "@/lib/ai/utils";
@@ -36,8 +37,19 @@ import { generateChatTitle } from "../../action";
 // Allow streaming responses up to 30 seconds
 export const maxDuration = 30;
 
-const systemPrompt =
-  "You are a helpful assistant that can answer questions and help with tasks. You can see and analyze images that are shared with you. When a user shares an image, describe what you see in detail.";
+const getSystemPrompt = (memories: string[] = []) => {
+  const basePrompt =
+    "You are a helpful assistant that can answer questions and help with tasks. You can see and analyze images that are shared with you. When a user shares an image, describe what you see in detail.";
+
+  if (memories.length > 0) {
+    const memoryContext = `\n\nRelevant context from previous conversations:\n${memories.join("\n")}`;
+    return basePrompt + memoryContext;
+  }
+
+  return basePrompt;
+};
+
+type LanguageModelV1Prompt = any;
 
 const getTokenlensCatalog = cache(
   async (): Promise<ModelCatalog | undefined> => {
@@ -111,6 +123,23 @@ export async function POST(req: Request) {
 
     const chatMessages = [...convertToUIMessages(previousMessages), message];
 
+    // Retrieve relevant memories for context
+    let memories: string[] = [];
+    try {
+      const messageText =
+        message.parts.find((part) => part.type === "text")?.text ?? "";
+      const retrievedMemories = await retrieveMemories(messageText, {
+        user_id: userId,
+      });
+
+      // retrieveMemories returns a string, so we can use it directly
+      if (retrievedMemories && retrievedMemories.trim()) {
+        memories = [retrievedMemories];
+      }
+    } catch (error) {
+      console.warn("Failed to retrieve memories:", error);
+    }
+
     await createMessage({
       chatId: id,
       id: message.id,
@@ -131,7 +160,7 @@ export async function POST(req: Request) {
           model: webSearch
             ? "perplexity/sonar"
             : (model ?? "meta/llama-3.2-1b"),
-          system: systemPrompt,
+          system: getSystemPrompt(memories),
           messages: convertToModelMessages(chatMessages),
           onFinish: async ({ usage }) => {
             try {
@@ -195,6 +224,23 @@ export async function POST(req: Request) {
           } catch (err) {
             console.warn("Unable to persist last usage for chat", id, err);
           }
+        }
+
+        // Store memories from the conversation
+        try {
+          // Convert messages to LanguageModelV1Prompt format
+          const mem0Messages: LanguageModelV1Prompt = chatMessages.map(
+            (msg) => ({
+              role: msg.role as "user" | "assistant" | "system",
+              content: msg.parts.map((part) => ({
+                type: part.type as "text",
+                text: part.type === "text" ? part.text : "",
+              })),
+            }),
+          );
+          await addMemories(mem0Messages, { user_id: userId });
+        } catch (error) {
+          console.warn("Failed to store memories:", error);
         }
       },
       onError: () => {
