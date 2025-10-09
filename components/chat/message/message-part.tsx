@@ -98,7 +98,7 @@ export function MessagePart({
               height={56}
               src={part.url}
               width={56}
-              unoptimized={(part.url ?? "").startsWith("blob:")}
+              unoptimized={part.url.startsWith("blob:")}
             />
           ) : (
             <div className="flex size-full items-center justify-center text-muted-foreground">
@@ -183,7 +183,7 @@ export function FilePart({
           height={56}
           src={part.url}
           width={56}
-          unoptimized={(part.url ?? "").startsWith("blob:")}
+          unoptimized={part.url.startsWith("blob:")}
         />
       ) : (
         <div className="flex size-full items-center justify-center text-muted-foreground">

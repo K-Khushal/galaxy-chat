@@ -22,7 +22,7 @@ export async function addMemories(
     // Convert messages to the format Mem0 expects
     const mem0Messages = messages.map((msg: any) => ({
       role: msg.role,
-      content: msg.content ?? [{ type: "text", text: "" }],
+      content: msg.content || [{ type: "text", text: "" }],
     }));
 
     await addMemoriesFn(mem0Messages, {

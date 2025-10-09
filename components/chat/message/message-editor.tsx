@@ -7,6 +7,7 @@ import { getTextMessage } from "@/lib/ai/utils";
 import type { TypeUIMessage } from "@/lib/types";
 import type { UseChatHelpers } from "@ai-sdk/react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 
 export type MessageEditorProps = {
   message: TypeUIMessage;
@@ -22,7 +23,6 @@ export function MessageEditor({
   regenerate,
 }: MessageEditorProps) {
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
 
   const [draftContent, setDraftContent] = useState<string>(
     getTextMessage(message),
@@ -44,7 +44,6 @@ export function MessageEditor({
 
   const handleInput = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
     setDraftContent(event.target.value);
-    setError(null); // Clear error when user types
     adjustHeight();
   };
 
@@ -60,9 +59,6 @@ export function MessageEditor({
           value={draftContent}
           placeholder="Type your message..."
         />
-
-        {/* Error message */}
-        {error && <div className="mb-2 text-sm text-destructive">{error}</div>}
 
         {/* Buttons positioned at bottom-right */}
         <div className="absolute bottom-4 right-4 flex flex-row gap-2">
@@ -80,26 +76,22 @@ export function MessageEditor({
             data-testid="message-editor-send-button"
             disabled={isSubmitting}
             onClick={async () => {
-              // Validate input
-              const trimmedContent = draftContent.trim();
-              if (!trimmedContent) {
-                setError("Message cannot be empty");
+              if (draftContent.trim() === "") {
                 return;
               }
 
               setIsSubmitting(true);
-              setError(null);
+
+              await deleteChatMessages(message.id);
 
               try {
-                await deleteChatMessages(message.id);
-
                 setMessages((messages) => {
                   const index = messages.findIndex((m) => m.id === message.id);
 
                   if (index !== -1) {
                     const updatedMessage: TypeUIMessage = {
                       ...message,
-                      parts: [{ type: "text", text: trimmedContent }],
+                      parts: [{ type: "text", text: draftContent }],
                     };
 
                     return [...messages.slice(0, index), updatedMessage];
@@ -110,15 +102,10 @@ export function MessageEditor({
 
                 setMode("view");
                 regenerate();
-              } catch (err) {
-                console.error("Failed to update message:", err);
-                setError(
-                  err instanceof Error
-                    ? err.message
-                    : "Failed to update message",
-                );
-              } finally {
-                setIsSubmitting(false);
+              } catch (error) {
+                toast.error("Failed to edit message", {
+                  description: error as string,
+                });
               }
             }}
             variant="default"

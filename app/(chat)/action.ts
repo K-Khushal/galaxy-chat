@@ -1,11 +1,9 @@
 "use server";
 
-import { getChat } from "@/lib/actions/chat/chat";
 import {
   deleteTrailingMessages,
   getMessageById,
 } from "@/lib/actions/chat/chat-message";
-import { auth } from "@clerk/nextjs/server";
 import { generateText, type UIMessage } from "ai";
 
 export async function generateChatTitle({ message }: { message: UIMessage }) {
@@ -23,12 +21,6 @@ export async function generateChatTitle({ message }: { message: UIMessage }) {
 }
 
 export async function deleteChatMessages(id: string) {
-  const { isAuthenticated, userId } = await auth();
-
-  if (!isAuthenticated || !userId) {
-    throw new Error("Unauthorized");
-  }
-
   const message = await getMessageById(id);
 
   if (!message) {
@@ -36,18 +28,6 @@ export async function deleteChatMessages(id: string) {
   }
 
   const chatId = message.chatId;
-  const chat = await getChat(chatId);
-
-  if (!chat) {
-    throw new Error("Chat not found");
-  }
-
-  if (chat.userId !== userId) {
-    throw new Error(
-      "Unauthorized: You can only delete messages from your own chats",
-    );
-  }
-
   const timestamp = message.createdAt;
 
   await deleteTrailingMessages(chatId, timestamp);

@@ -227,11 +227,7 @@ export async function deleteTrailingMessages(
     throw new Error("Chat ID is required");
   }
 
-  if (
-    !timestamp ||
-    !(timestamp instanceof Date) ||
-    Number.isNaN(timestamp.getTime())
-  ) {
+  if (!timestamp || !(timestamp instanceof Date)) {
     throw new Error("Valid timestamp is required");
   }
 

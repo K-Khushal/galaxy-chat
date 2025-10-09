@@ -19,6 +19,7 @@ import {
 } from "@/lib/schema/chat/chat";
 import type { ChatVisibility, TypeUIMessage } from "@/lib/types";
 import { auth } from "@clerk/nextjs/server";
+import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import {
   convertToModelMessages,
   createUIMessageStream,
@@ -132,7 +133,7 @@ export async function POST(req: Request) {
       });
 
       // retrieveMemories returns a string, so we can use it directly
-      if (retrievedMemories?.trim()) {
+      if (retrievedMemories && retrievedMemories.trim()) {
         memories = [retrievedMemories];
       }
     } catch (error) {
@@ -148,6 +149,11 @@ export async function POST(req: Request) {
     });
 
     let finalMergedUsage: AppUsage | undefined;
+
+    // Open router configuration
+    const openrouter = createOpenRouter({
+      apiKey: process.env.OPENROUTER_API_KEY,
+    });
 
     const stream = createUIMessageStream({
       execute: ({ writer: dataStream }) => {
@@ -223,16 +229,16 @@ export async function POST(req: Request) {
 
         // Store memories from the conversation
         try {
-          // Convert messages to LanguageModelV1Prompt format using complete conversation
-          const mem0Messages: LanguageModelV1Prompt = messages.map((msg) => ({
-            role: msg.role as "user" | "assistant" | "system",
-            content: msg.parts
-              .filter((part) => part.type === "text")
-              .map((part) => ({
-                type: "text" as const,
-                text: part.text,
+          // Convert messages to LanguageModelV1Prompt format
+          const mem0Messages: LanguageModelV1Prompt = chatMessages.map(
+            (msg) => ({
+              role: msg.role as "user" | "assistant" | "system",
+              content: msg.parts.map((part) => ({
+                type: part.type as "text",
+                text: part.type === "text" ? part.text : "",
               })),
-          }));
+            }),
+          );
           await addMemories(mem0Messages, { user_id: userId });
         } catch (error) {
           console.warn("Failed to store memories:", error);
