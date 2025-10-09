@@ -22,7 +22,7 @@ export function AppSidebar({
         <SidebarActions />
       </SidebarHeader>
 
-      <SidebarGroupLabel className="text-[16px] text-muted-foreground px-4">
+      <SidebarGroupLabel className="text-sm text-muted-foreground px-4">
         Chats
       </SidebarGroupLabel>
 

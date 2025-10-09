@@ -11,9 +11,7 @@ import { DefaultChatTransport } from "ai";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { unstable_serialize, useSWRConfig } from "swr";
 import { v4 as uuidv4 } from "uuid";
-import { getPaginatedChatHistory } from "../sidebar/sidebar-history";
 
 export default function Chat({
   id,
@@ -24,7 +22,6 @@ export default function Chat({
   chatMessages: TypeUIMessage[];
   lastContext?: AppUsage;
 }) {
-  const { mutate } = useSWRConfig();
   const [text, setText] = useState<string>("");
   const [usage, setUsage] = useState<AppUsage | undefined>(lastContext);
   const [model, setModel] = useState<string>(
@@ -69,7 +66,13 @@ export default function Chat({
       }
     },
     onFinish: () => {
-      mutate(unstable_serialize(getPaginatedChatHistory));
+      // Ensure URL is updated to show the current chat
+      window.history.replaceState({}, "", `/chat/${id}`);
+
+      // Dispatch custom event to trigger sidebar update
+      window.dispatchEvent(
+        new CustomEvent("chat-created", { detail: { chatId: id } }),
+      );
     },
     onError: (error) => {
       const errorMessage = getChatErrorMessage(error);

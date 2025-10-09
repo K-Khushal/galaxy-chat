@@ -22,8 +22,8 @@ import type { ChatHistory } from "@/lib/types";
 import { motion } from "framer-motion";
 import { Forward, LoaderIcon, MoreHorizontal, Trash2 } from "lucide-react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
-import { useState } from "react";
+import { useParams, usePathname, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import useSWRInfinite from "swr/infinite";
 import {
@@ -41,6 +41,7 @@ import { TextEffect } from "../ui/text-effect";
 export function SidebarHistory() {
   const router = useRouter();
   const { id } = useParams();
+  const pathname = usePathname();
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const { isMobile } = useSidebar();
@@ -62,6 +63,19 @@ export function SidebarHistory() {
   const hasEmptyChatHistory = paginatedChatHistory
     ? paginatedChatHistory.every((page) => page.chats.length === 0)
     : false;
+
+  // Listen for chat creation events to trigger sidebar update
+  useEffect(() => {
+    const handleChatCreated = () => {
+      mutate(); // Revalidate the sidebar data
+    };
+
+    window.addEventListener("chat-created", handleChatCreated);
+    return () => window.removeEventListener("chat-created", handleChatCreated);
+  }, [mutate]);
+
+  // Get current chat ID from params or pathname as fallback
+  const currentChatId = id || pathname.split("/").pop();
 
   const handleDelete = () => {
     const deletePromise = fetch(`/api/chat?id=${deleteId}`, {
@@ -88,7 +102,7 @@ export function SidebarHistory() {
 
     setShowDeleteDialog(false);
 
-    if (deleteId === id) {
+    if (deleteId === currentChatId) {
       router.push("/chat");
     }
   };
@@ -111,47 +125,53 @@ export function SidebarHistory() {
             )}
             {paginatedChatHistory
               ?.flatMap((item) => item.chats)
-              .map((item) => (
-                <SidebarMenuItem key={item.id}>
-                  <SidebarMenuButton asChild isActive={item.id === id}>
-                    <Link href={`/chat/${item.id}`}>
-                      <TextEffect per="char" preset="fade">
-                        {item.title}
-                      </TextEffect>
-                    </Link>
-                  </SidebarMenuButton>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <SidebarMenuAction showOnHover className="ring-0">
-                        <MoreHorizontal />
-                        <span className="sr-only">More</span>
-                      </SidebarMenuAction>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent
-                      className="w-32 rounded-lg"
-                      side={isMobile ? "bottom" : "right"}
-                      align={isMobile ? "end" : "start"}
+              .map((item) => {
+                return (
+                  <SidebarMenuItem key={item.id}>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={item.id === currentChatId}
                     >
-                      <DropdownMenuItem>
-                        <Forward className="text-muted-foreground" />
-                        <span>Share</span>
-                      </DropdownMenuItem>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem
-                        onSelect={() => {
-                          setDeleteId(item.id);
-                          setShowDeleteDialog(true);
-                        }}
-                        variant="destructive"
-                        className="cursor-pointer"
+                      <Link href={`/chat/${item.id}`}>
+                        {/* <span>{item.title}</span> */}
+                        <TextEffect per="char" preset="fade">
+                          {item.title}
+                        </TextEffect>
+                      </Link>
+                    </SidebarMenuButton>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <SidebarMenuAction showOnHover className="ring-0">
+                          <MoreHorizontal />
+                          <span className="sr-only">More</span>
+                        </SidebarMenuAction>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent
+                        className="w-32 rounded-lg"
+                        side={isMobile ? "bottom" : "right"}
+                        align={isMobile ? "end" : "start"}
                       >
-                        <Trash2 className="text-muted-foreground" />
-                        <span>Delete</span>
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </SidebarMenuItem>
-              ))}
+                        <DropdownMenuItem>
+                          <Forward className="text-muted-foreground" />
+                          <span>Share</span>
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          onSelect={() => {
+                            setDeleteId(item.id);
+                            setShowDeleteDialog(true);
+                          }}
+                          variant="destructive"
+                          className="cursor-pointer"
+                        >
+                          <Trash2 className="text-muted-foreground" />
+                          <span>Delete</span>
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </SidebarMenuItem>
+                );
+              })}
           </SidebarMenu>
         </SidebarGroupContent>
         <motion.div
@@ -161,18 +181,20 @@ export function SidebarHistory() {
             }
           }}
         />
-        {hasReachedEnd && !isLoading && !hasEmptyChatHistory ? (
-          <div className="mt-4 flex w-full flex-row items-center justify-center gap-2 px-2 text-sm text-zinc-500">
-            You have reached the end of your chat history.
-          </div>
-        ) : (
-          <div className="mt-4 flex flex-row items-center gap-2 p-2 text-zinc-500 dark:text-zinc-400 text-sm">
-            <div className="animate-spin">
-              <LoaderIcon size={16} />
+        {!isLoading &&
+          !hasEmptyChatHistory &&
+          (hasReachedEnd ? (
+            <div className="mt-4 flex w-full flex-row items-center justify-center gap-2 px-2 text-sm text-zinc-500">
+              You have reached the end of your chat history.
             </div>
-            <div>Loading Chats...</div>
-          </div>
-        )}
+          ) : (
+            <div className="mt-4 flex flex-row items-center gap-2 p-2 text-zinc-500 dark:text-zinc-400 text-sm">
+              <div className="animate-spin">
+                <LoaderIcon size={16} />
+              </div>
+              <div>Loading Chats...</div>
+            </div>
+          ))}
       </SidebarGroup>
 
       <AlertDialog onOpenChange={setShowDeleteDialog} open={showDeleteDialog}>
