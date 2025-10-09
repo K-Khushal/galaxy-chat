@@ -47,6 +47,49 @@ export function MessageEditor({
     adjustHeight();
   };
 
+  const handleSendMessage = async () => {
+    if (draftContent.trim() === "" || isSubmitting) {
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      await deleteChatMessages(message.id);
+
+      setMessages((messages) => {
+        const index = messages.findIndex((m) => m.id === message.id);
+
+        if (index !== -1) {
+          const updatedMessage: TypeUIMessage = {
+            ...message,
+            parts: [{ type: "text", text: draftContent }],
+          };
+
+          return [...messages.slice(0, index), updatedMessage];
+        }
+
+        return messages;
+      });
+
+      setMode("view");
+      regenerate();
+    } catch (error) {
+      toast.error("Failed to edit message", {
+        description: error as string,
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      handleSendMessage();
+    }
+  };
+
   return (
     <div className="relative w-full">
       {/* Light gray container with rounded corners */}
@@ -55,6 +98,7 @@ export function MessageEditor({
           className="w-full resize-none overflow-hidden bg-transparent text-base outline-none focus-visible:ring-0 border-0 shadow-none min-h-[60px]"
           data-testid="message-editor"
           onChange={handleInput}
+          onKeyDown={handleKeyDown}
           ref={textareaRef}
           value={draftContent}
           placeholder="Type your message..."
@@ -75,39 +119,7 @@ export function MessageEditor({
             className="h-8 px-3 py-2 rounded-lg cursor-pointer"
             data-testid="message-editor-send-button"
             disabled={isSubmitting}
-            onClick={async () => {
-              if (draftContent.trim() === "") {
-                return;
-              }
-
-              setIsSubmitting(true);
-
-              await deleteChatMessages(message.id);
-
-              try {
-                setMessages((messages) => {
-                  const index = messages.findIndex((m) => m.id === message.id);
-
-                  if (index !== -1) {
-                    const updatedMessage: TypeUIMessage = {
-                      ...message,
-                      parts: [{ type: "text", text: draftContent }],
-                    };
-
-                    return [...messages.slice(0, index), updatedMessage];
-                  }
-
-                  return messages;
-                });
-
-                setMode("view");
-                regenerate();
-              } catch (error) {
-                toast.error("Failed to edit message", {
-                  description: error as string,
-                });
-              }
-            }}
+            onClick={handleSendMessage}
             variant="default"
           >
             {isSubmitting ? "Sending..." : "Send"}
