@@ -85,7 +85,11 @@ export class ByokStore {
       return { configured: true, state, credentials };
     });
   }
-  private async limits(tx: Tx, actor: string): Promise<ByokView["state"]> {
+  private async limits(
+    tx: Tx,
+    actor: string,
+    resourceUnits = 1,
+  ): Promise<ByokView["state"]> {
     const [row] = await tx.execute<{
       actor_active: number;
       global_active: number;
@@ -97,9 +101,9 @@ export class ByokStore {
     }>(sql`
       SELECT count(*) FILTER(WHERE actor_key=${actor} AND ${active})::integer AS actor_active,
       count(*) FILTER(WHERE ${active})::integer AS global_active,
-      count(*) FILTER(WHERE actor_key=${actor} AND created_at>=(date_trunc('hour',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'))::integer AS hourly,
-      count(*) FILTER(WHERE actor_key=${actor} AND created_at>=(date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'))::integer AS daily,
-      count(*) FILTER(WHERE created_at>=(date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'))::integer AS global_daily,
+      COALESCE(sum(resource_units) FILTER(WHERE actor_key=${actor} AND created_at>=(date_trunc('hour',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')),0)::integer AS hourly,
+      COALESCE(sum(resource_units) FILTER(WHERE actor_key=${actor} AND created_at>=(date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')),0)::integer AS daily,
+      COALESCE(sum(resource_units) FILTER(WHERE created_at>=(date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')),0)::integer AS global_daily,
       count(*) FILTER(WHERE actor_key=${actor})::integer AS actor_records, count(*)::integer AS global_records FROM byok_operation`);
     if (
       row.actor_active >= BYOK_LIMITS.actorConcurrency ||
@@ -107,9 +111,9 @@ export class ByokStore {
     )
       return "busy";
     if (
-      row.hourly >= BYOK_LIMITS.hourly ||
-      row.daily >= BYOK_LIMITS.daily ||
-      row.global_daily >= BYOK_LIMITS.globalDaily ||
+      row.hourly + resourceUnits > BYOK_LIMITS.hourly ||
+      row.daily + resourceUnits > BYOK_LIMITS.daily ||
+      row.global_daily + resourceUnits > BYOK_LIMITS.globalDaily ||
       row.actor_records >= BYOK_LIMITS.actorRecords ||
       row.global_records >= BYOK_LIMITS.globalRecords
     )
@@ -168,9 +172,13 @@ export class ByokStore {
     digest: string;
     env: EnvSource;
     revision?: string;
+    resourceUnits?: 1 | 3;
   }) {
     requireByok(options.env);
     const actor = resourceActor(options.userId, options.env);
+    const units = options.resourceUnits ?? 1;
+    if (units !== 1 && units !== 3)
+      throw new AppError("byok_resource_limited", 429);
     return this.transaction(async (tx) => {
       await lockByokResources(tx);
       const [prior] = await tx.execute<Operation>(
@@ -183,7 +191,7 @@ export class ByokStore {
             : "request_already_processed",
           409,
         );
-      const state = await this.limits(tx, actor);
+      const state = await this.limits(tx, actor, units);
       if (state !== "available")
         throw new AppError(
           state === "busy" ? "byok_busy" : "byok_resource_limited",
@@ -195,7 +203,7 @@ export class ByokStore {
       if (options.kind === "chat" && row.test_state === "invalid")
         throw new AppError("byok_key_invalid", 403);
       await tx.execute(
-        sql`INSERT INTO byok_operation(id,actor_key,provider,credential_revision,kind,digest,state) VALUES(${options.id},${actor},${options.provider},${row.revision},${options.kind},${options.digest},'reserved')`,
+        sql`INSERT INTO byok_operation(id,actor_key,provider,credential_revision,kind,digest,state,resource_units) VALUES(${options.id},${actor},${options.provider},${row.revision},${options.kind},${options.digest},'reserved',${units})`,
       );
       return row.revision;
     });

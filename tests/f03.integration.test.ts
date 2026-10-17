@@ -146,6 +146,7 @@ beforeAll(async () => {
     "0004_byok",
     "0005_explicit_context",
     "0007_artifacts",
+    "0008_tools",
   ]);
 
   await db
