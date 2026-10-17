@@ -1,6 +1,6 @@
 # F08 gated beta local integration evidence
 
-Date: 2026-10-17. Base: `fb442449971038c31e7d6a4197e88047710171a7` (merged F07). Worktree: `codex/f08-beta` at `galaxy-credits/galaxy-chat`. Local work only: no commit, push, pull request, cloud login/provisioning/deployment, billing change, paid request or usable credential was created. The original checkout and its user commit were not changed. Public landing/privacy/help belong to the separate F15 slice. F08 issue 12 and all live acceptance gates remain open.
+Date: 2026-10-17. Base: `fb442449971038c31e7d6a4197e88047710171a7` (merged F07). Worktree: `codex/f08-beta` at `galaxy-credits/galaxy-chat`. This implementation worker created no commit, push, pull request, cloud login/provisioning/deployment, billing change, paid request or usable credential. The original checkout and its user commit were not changed. Public landing/privacy/help initially shipped in the separate F15 slice; the integration follow-up below connects them to the reviewed guest route. F08 issue 12 and all live acceptance gates remain open.
 
 ## Guest integration and safety
 
@@ -28,9 +28,9 @@ The installed SDK guest Stop test receives real partial synthetic OpenRouter tex
 
 ## Local measurements and recovery
 
-Final full-suite run measured guest request-to-first-text **11.38ms**, complete text stream **14.26ms**. This includes the local guest handler/SQL/installed SDK parsing with an immediate in-memory synthetic provider response; it excludes real model latency, network, hydration and rendering. It is not a hosted first-token SLO. The earlier full-suite run measured first text 10.36ms on a warmed process; isolated cold runs measured 34–43ms. The regression retains an explicit two-second local first-text bound.
+The standalone F08 acceptance run measured guest request-to-first-text **11.38ms**, complete text stream **14.26ms**. This includes the local guest handler/SQL/installed SDK parsing with an immediate in-memory synthetic provider response; it excludes real model latency, network, hydration and rendering. It is not a hosted first-token SLO. The earlier full-suite run measured first text 10.36ms on a warmed process; isolated cold runs measured 34–43ms. The regression retains an explicit two-second local first-text bound.
 
-A physical fake-data PGlite snapshot/restore measured **565.19ms**, snapshot **4,758,941 bytes** in the final full-suite run. It restores actual owned chat data, encrypted saved credentials, exact ledger charges, RLS, append-only trigger and foreign-key constraints. The original fixture is drained before the physical snapshot; the restored engine owns its own direct queue and has no competing socket. Ciphertext is inspected without printing key material, and separately supplied fixture keyring decrypts the restored record. The missing-owner insertion must fail with PostgreSQL `23503`. No cloud backup, production RPO/RTO, secret-manager recovery or deployed binary rollback is inferred from this proof.
+A physical fake-data PGlite snapshot/restore measured **565.19ms**, snapshot **4,758,941 bytes** in that standalone F08 run. It restores actual owned chat data, encrypted saved credentials, exact ledger charges, RLS, append-only trigger and foreign-key constraints. The original fixture is drained before the physical snapshot; the restored engine owns its own direct queue and has no competing socket. Ciphertext is inspected without printing key material, and separately supplied fixture keyring decrypts the restored record. The missing-owner insertion must fail with PostgreSQL `23503`. No cloud backup, production RPO/RTO, secret-manager recovery or deployed binary rollback is inferred from this proof.
 
 [Beta operations](../operations/beta.md) documents retention without invented TTLs, provider processing and billing, owned export/delete scope, retained anonymous accounting, support-safe reproduction details, quota messages, backup completeness, separate secret recovery, post-snapshot deletion/charge reconciliation and non-destructive shutdown/rollback. F08 adds no schema migration; prior reviewed F07 base understands migrations 0000–0004. Actual prior-artifact rollback on the chosen host remains an operator/live gate. Never drop audit data, reset identity secrets or release unknown incurred holds as a rollback shortcut.
 
@@ -52,4 +52,21 @@ Toolchain: Node 25.8.2, Bun 1.4.2, Next 16.4.2, AI SDK 7.0.143, OpenRouter 3.1.0
 
 Real GitHub OAuth/invite onboarding; operator-reviewed model/route pricing, limits, cancellation and final cost receipts; provider-side budgets and all recurring infrastructure/payment/reserve costs within $10; real Turnstile/proxy/HTTPS trust; hosted PostgreSQL roles/pooler/independent concurrent backends; production streaming/drain termination, first token and client performance; Worker/runtime CPU/memory/size; encrypted cloud backup and separate secret-manager recovery; physical mobile/keyboard/assistive technology/contrast checks; production retention/backup expiry and monitored support details; prior-artifact deployment rollback and billing reconciliation. Advanced features remain unimplemented/unavailable and prototype/harness flags remain off by default. No live issue/checklist box was closed.
 
-Handoff: implementation writer stopped after the final evidence update. No development/preview server was started by this worker; all test databases/sockets and build processes completed. Root owns browser review, F15 integration and Git/GitHub actions.
+Handoff: implementation writer stopped after the final evidence update. No development/preview server was started by this worker; all test databases/sockets and build processes completed. Root owns browser review and Git/GitHub actions.
+
+## F15 integration follow-up
+
+Integration base: `7239d11475ca6997a98d7f8ac8051bab294ce8bc`, containing reviewed F08 source `18dc95b` plus merged F15 PR 26. Root delegated the previously separate public copy files for this narrow integration. The landing guest section now links directly to `/guest` with “Try a guest prompt”. Its copy makes bot verification, quota and shared funding conditional and explicitly allows unavailable generation. Help/privacy now describe the implemented guest page rather than a future entry flow, and explain that signing in does not save or transfer the guest exchange. Existing Account-tab export/delete instructions, private funding/BYOK boundaries, design/assets and runtime configuration are unchanged.
+
+This follow-up edits only landing guest-section copy/link, help/privacy guest-flow wording and this evidence. No new inference availability, OAuth, Turnstile/proxy trust, provider receipt, hosted backup/runtime or budget proof is claimed. Live gates and both issues remain open.
+
+Combined-tree verification after the narrow integration:
+
+- `bun test tests/f15-preview.test.tsx tests/f15-metadata.test.ts tests/f08-ui.test.tsx` — **6 passed**, 0 failures, **53 assertions**, **281ms**.
+- `bun test` — **98 passed**, 0 failures, **878 assertions**, **50.52s** across 13 files; default five-second per-test deadline unchanged. Synthetic guest first text **9.89ms**, complete stream **12.57ms**; local physical snapshot/restore **556.02ms**, **4,759,017 bytes**. These retain the same local-only limitations above.
+- `bun run lint` — passed, **222 files**. Vendor integrity and `git diff --check` also passed.
+- `bun run build` — passed credential-free, including TypeScript and static prerendering of `/`, `/guest`, `/help` and `/privacy`; private/guest APIs remain dynamic.
+
+The earlier accepted Workers build applies to the unchanged F08 runtime/backend. This public-copy/link follow-up did not rerun the Workers compiler and does not claim a fresh combined Workers artifact or hosted runtime acceptance. The combined Next build above covers the actual integrated pages and types. No assets, CSS, schemas, model calls, quota/BYOK guards or runtime configuration changed in this follow-up.
+
+No-writer handoff after this evidence update: all checks/builds completed, no implementation-owned server was started, and all test databases/sockets closed. Root may now start browser review of the combined landing-to-guest flow and fixture states without concurrent build work. No commit, push, PR, paid request or live issue closure was performed by this worker.

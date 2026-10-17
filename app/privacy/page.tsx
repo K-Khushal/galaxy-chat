@@ -73,10 +73,15 @@ export default function PrivacyPage() {
           here.
         </p>
         <p>
-          Authentication uses session cookies. If guest chat is enabled in a
-          future entry flow, it uses a signed guest cookie and bot checks; it
-          does not save a conversation to an account. Cookie resets and other
-          devices mean anonymous identity cannot prove one real person.
+          Authentication uses session cookies. The{" "}
+          <Link href="/guest" prefetch={false}>
+            guest page
+          </Link>{" "}
+          checks current availability. Configured guest access uses a signed
+          guest cookie and bot checks, and depends on quota and shared funding.
+          The guest exchange is not saved to account history or transferred when
+          you sign in. Cookie resets and other devices mean anonymous identity
+          cannot prove one real person.
         </p>
         <p>
           Operational errors use stable error identifiers. Live hosting logs,
