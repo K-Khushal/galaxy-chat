@@ -2,6 +2,7 @@ import { asc, desc, eq, sql } from "drizzle-orm";
 import { resourceActor } from "@/lib/byok/config";
 import type { CredentialView } from "@/lib/byok/contract";
 import { ByokStore, lockByokResources } from "@/lib/byok/store";
+import { lockContext } from "@/lib/context/service";
 import { requireDb } from "@/lib/db/client";
 import {
   account,
@@ -200,6 +201,7 @@ export async function deleteOwnedAccount(userId: string) {
     // Serialize deletion with credential reads/provider entry. Anonymous resource
     // leases survive the cascade and still count until remote work is terminal.
     await lockByokResources(tx);
+    await lockContext(tx, userId);
     const owned = await tx
       .select({ id: user.id })
       .from(user)

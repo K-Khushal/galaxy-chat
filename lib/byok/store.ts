@@ -1,7 +1,7 @@
 import "server-only";
 import { sql } from "drizzle-orm";
 import type { EnvSource } from "@/lib/auth/env";
-import { requireDb } from "@/lib/db/client";
+import { type EntryValidation, requireDb } from "@/lib/db/client";
 import { AppError } from "@/lib/errors";
 import { BYOK_LIMITS, requireByok, resourceActor } from "./config";
 import type { ByokProvider, ByokView, CredentialView } from "./contract";
@@ -202,7 +202,12 @@ export class ByokStore {
   }
   /** Commit entry before execution. Replacement/delete serialize against this check.
    * A key already in use cannot be recalled from the remote provider. */
-  async enter(id: string, userId: string, env: EnvSource) {
+  async enter(
+    id: string,
+    userId: string,
+    env: EnvSource,
+    validateEntry?: EntryValidation,
+  ) {
     requireByok(env);
     const actor = resourceActor(userId, env);
     return this.transaction(async (tx) => {
@@ -218,6 +223,8 @@ export class ByokStore {
       if (operation.kind === "chat" && row.test_state === "invalid")
         throw new AppError("byok_key_invalid", 403);
       const key = decrypt(row, env);
+      // Use only this transaction queue for the final owned-context check.
+      await validateEntry?.(tx);
       await tx.execute(
         sql`UPDATE byok_operation SET state='entered',updated_at=now() WHERE id=${id} AND actor_key=${actor}`,
       );
