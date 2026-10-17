@@ -187,7 +187,7 @@ export function ArtifactEditor({
   }
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain px-5 pb-5 [padding-bottom:max(1.25rem,env(safe-area-inset-bottom))]">
-      <div className="grid gap-2">
+      <div className="grid shrink-0 gap-2">
         <label htmlFor={`${uid}-title`} className="text-sm font-medium">
           Artifact title
         </label>
@@ -204,9 +204,9 @@ export function ArtifactEditor({
       <Tabs
         value={tab}
         onValueChange={(value) => setTab(value as typeof tab)}
-        className="min-h-0 flex-1"
+        className="flex-1 shrink-0"
       >
-        <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
           <TabsList aria-label="Artifact view" className="h-auto min-h-11">
             {(["source", "preview", "history"] as const).map((view) => (
               <TabsTrigger key={view} value={view} className="min-h-11 px-3">
@@ -224,7 +224,7 @@ export function ArtifactEditor({
         </div>
         <TabsContent
           value="source"
-          className="flex min-h-0 flex-1 flex-col gap-2"
+          className="flex flex-1 flex-col gap-2"
         >
           <label htmlFor={`${uid}-source`} className="text-sm font-medium">
             {document.kind === "html" ? "HTML source" : "Markdown source"}
@@ -252,7 +252,7 @@ export function ArtifactEditor({
         </TabsContent>
         <TabsContent
           value="preview"
-          className="flex min-h-0 flex-1 flex-col gap-3"
+          className="flex flex-1 flex-col gap-3"
         >
           <p className="text-sm text-muted-foreground">
             Safe reading preview. Links, scripts, images, external resources,
@@ -262,7 +262,7 @@ export function ArtifactEditor({
         </TabsContent>
         <TabsContent
           value="history"
-          className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain"
+          className="flex-1 space-y-4"
         >
           <p className="text-sm text-muted-foreground">
             Each save is permanent in history. Restore adds a new revision.
@@ -339,7 +339,7 @@ export function ArtifactEditor({
       <output aria-live="polite" className="text-sm text-muted-foreground">
         {notice}
       </output>
-      <div className="flex flex-wrap items-center gap-2 border-t pt-4">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-t pt-4">
         <Button
           aria-busy={operation === "save"}
           disabled={busy || !canSave}
@@ -399,7 +399,7 @@ export function ArtifactEditor({
         </Button>
       </div>
       {deleteConfirm && (
-        <div className="flex flex-wrap items-center gap-2 rounded-md border p-3">
+        <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-md border p-3">
           <p className="w-full text-sm">
             Delete this artifact and all {document.version} revisions?
           </p>
