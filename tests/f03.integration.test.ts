@@ -140,6 +140,7 @@ beforeAll(async () => {
   expect(versions.map((row) => row.version).sort()).toEqual([
     "0000_baseline",
     "0001_ownership",
+    "0002_credit_ledger",
   ]);
 
   await db
@@ -326,6 +327,31 @@ function idsOf(json: unknown) {
     return typeof chat.id === "string" ? chat.id : "";
   });
 }
+
+test("credits derive identity from the real invited session and return a private disabled view", async () => {
+  const { GET } = await import("../app/api/credits/route");
+  const anonymous = await GET(
+    request("/api/credits?userId=user-alice", new Headers()),
+  );
+  expect(anonymous.status).toBe(401);
+  expect(anonymous.headers.get("cache-control")).toBe("no-store");
+  const alice = await cookieHeader("alice-token");
+  const own = await GET(request("/api/credits?userId=user-bob", alice));
+  expect(own.status).toBe(200);
+  expect(own.headers.get("cache-control")).toBe("no-store");
+  const body = await own.json();
+  expect(body).toMatchObject({
+    funding: "platform",
+    state: "disabled",
+    configured: false,
+    allowanceMicrodollars: 500000,
+    remainingMicrodollars: 0,
+    creditMicrodollars: 100000,
+  });
+  expect(JSON.stringify(body)).not.toContain("user-bob");
+  expect(JSON.stringify(body)).not.toContain("user-alice");
+  expect(JSON.stringify(body)).not.toContain("monthly");
+});
 
 test("history pages tied timestamps without another user's titles", async () => {
   const headers = await cookieHeader("alice-token");

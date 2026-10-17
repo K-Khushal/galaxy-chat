@@ -104,3 +104,5 @@ export const schemaMigrations = pgTable("schema_migrations", {
 
 export const authSchema = { user, session, account, verification };
 export const appSchema = { chat, chatMessage, usageRecord };
+
+export * from "./credit-schema";

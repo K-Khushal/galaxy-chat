@@ -1,35 +1,16 @@
 import "server-only";
-import { createOpenRouter } from "@openrouter/ai-sdk-provider";
-import { generateText, type UIMessage } from "ai";
-import { runAuthorizedFundedModelCall } from "@/lib/ai/authorized-model";
+import type { UIMessage } from "ai";
 import { requireChatAccess } from "@/lib/auth/access";
-import { AppError } from "@/lib/errors";
 
+/** A local title has no auxiliary provider call or hidden funding cost. */
 export async function generateChatTitle(
   requestHeaders: Headers,
   message: UIMessage,
 ) {
-  return runAuthorizedFundedModelCall({
-    authorize: () => requireChatAccess(requestHeaders),
-    env: process.env,
-    run: () => requestTitle(message),
-  });
-}
-
-async function requestTitle(message: UIMessage) {
-  const providerKey = process.env.OPENROUTER_API_KEY?.trim();
-  if (!providerKey) {
-    throw new AppError("provider_unconfigured", 503);
-  }
-  const openrouter = createOpenRouter({ apiKey: providerKey });
-  const { text: title } = await generateText({
-    instructions:
-      "Generate a short title, at most 80 characters, summarizing the user's message. Do not use quotes or colons.",
-    model: openrouter.chat("openai/gpt-4o-mini"),
-    prompt: JSON.stringify({
-      role: message.role,
-      parts: message.parts,
-    }),
-  });
-  return title;
+  await requireChatAccess(requestHeaders);
+  const text = message.parts
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join(" ");
+  return text.replace(/\s+/g, " ").trim().slice(0, 80) || "New chat";
 }

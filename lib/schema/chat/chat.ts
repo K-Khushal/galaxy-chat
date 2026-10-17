@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { chatModels } from "@/lib/ai/model";
 
 const textPartSchema = z.object({
   type: z.enum(["text"]),
@@ -15,16 +14,20 @@ const filePartSchema = z.object({
 
 const partSchema = z.union([textPartSchema, filePartSchema]);
 
-export const postRequestBodySchema = z.object({
-  id: z.uuid(),
-  message: z.object({
+export const postRequestBodySchema = z
+  .object({
     id: z.uuid(),
-    role: z.enum(["user"]),
-    parts: z.array(partSchema),
-  }),
-  model: z.enum(chatModels.map((model) => model.id)),
-  webSearch: z.boolean(),
-  visibility: z.enum(["public", "private"]).default("private"),
-});
+    message: z
+      .object({
+        id: z.uuid(),
+        role: z.enum(["user"]),
+        parts: z.array(partSchema).min(1).max(8),
+      })
+      .strict(),
+    model: z.string().min(1).max(100),
+    webSearch: z.boolean(),
+    visibility: z.enum(["public", "private"]).default("private"),
+  })
+  .strict();
 
 export type PostRequestBody = z.infer<typeof postRequestBodySchema>;
