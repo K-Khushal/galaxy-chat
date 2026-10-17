@@ -106,8 +106,10 @@ export class AttachmentStore {
     const owner = ownerKey(userId);
     return this.db.transaction(async (tx) => {
       await lockAttachments(tx);
+      // Pin parent identity/deletion without blocking artifact FK key-share reads.
+      // The attachment advisory lock already serializes quotas and app deletion.
       const chat = await tx.execute(
-        sql`SELECT id FROM chat WHERE id=${chatId} AND user_id=${userId} FOR UPDATE`,
+        sql`SELECT id FROM chat WHERE id=${chatId} AND user_id=${userId} FOR KEY SHARE`,
       );
       if (!chat[0]) throw new AppError("not_found", 404);
       const totals = await tx.execute<{

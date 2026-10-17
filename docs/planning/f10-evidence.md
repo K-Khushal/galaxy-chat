@@ -98,8 +98,34 @@ Final checks on pinned source `592d04b43dd557e5c10713c1d3fede82d1cd2eb7` (only t
 
 The earlier `cfbc2ad` results remain historical evidence for that checkpoint. Browser interaction and operational gates remain separate; no claim of hosted acceptance or live storage/provider behavior follows from these local checks.
 
+## Integration with accepted F11 artifacts
+
+Merged main artifact commit `f1d19a68bb3eda037690eac9c3284f3335af88fa` into the attachment branch after root's attachment source/browser review. Eight conflict files were inspected: `app/(chat)/api/chat/route.ts`, `lib/byok/service.ts`, `components/chat/chat.tsx`, `lib/actions/account/account.ts`, `components/account-settings.tsx`, `app/help/page.tsx`, `app/privacy/page.tsx`, and `tests/f03.integration.test.ts`.
+
+The chat route, BYOK image preparation and atomic context/file entry validation remain byte-for-byte identical to the reviewed F10 head. The merged composer/header/message controls retain attachments and artifacts; exports contain both owned attachments and artifact revisions; account deletion retains the existing resource → context → attachment lock order and durable file cleanup. Public copy describes both capabilities and their distinct retention/execution boundaries. The existing development picker retains both fixtures. Schema/migration expectations include 0005, 0006 and 0007.
+
+A real concurrent PostgreSQL regression exposed a cross-feature inversion: artifact creation holds the owner row `FOR UPDATE` before its foreign-key parent read, while attachment reservation formerly held the chat row `FOR UPDATE` before its owner foreign-key read. The old code reproducibly failed with PostgreSQL `40P01` at the artifact chat `FOR KEY SHARE` check. The narrow fix changes only the reservation's chat pin to `FOR KEY SHARE`. It still prevents parent deletion/key changes; the existing attachment advisory lock continues to serialize capacity accounting and application conversation/account deletion. Other owner/chat paths were inspected: branch completion locks run/branch rows, context edits do not lock chat identity, and account deletion takes its shared locks before the owner cascade.
+
+`tests/f10-f11-postgres.test.ts` uses two real transaction sessions, an observer, and the real application deletion queue against a disposable native PostgreSQL database. Its first transaction reproduces the artifact owner-first/FK write contract; the other executes the real `AttachmentStore.reserve`. It checks simultaneous completion, owned metadata/export, enforced quota, foreign-owner rejection, and real conversation/account deletes waiting before parent mutation. Both artifact revisions and attachment rows cascade while anonymous cleanup bytes remain. No storage/provider request is made. The old-lock regression failed with a real deadlock (356 ms); the narrow fix passed one test / 29 assertions (358 ms) on native PostgreSQL 18.4.
+
+The normal suite continues to use the captured postgres.js max:1 queue with PGlite. The native concurrency test is explicitly skipped unless `F10_F11_POSTGRES_URL` points to an opted-in localhost PostgreSQL test administrator server with permission to create a test database and set the local deadlock detector interval. It creates and drops only its own random `galaxy_f10_f11_*` database. This avoids presenting multiplexed single-backend PGlite as concurrent row-lock proof. Native binaries were downloaded only into a temporary local fixture directory, not added to application dependencies. The portable command for an already running dedicated local test server is:
+
+```sh
+F10_F11_POSTGRES_URL=postgres://postgres@127.0.0.1:55481/postgres bun test tests/f10-f11-postgres.test.ts
+```
+
+Combined verification on the resolved merge source:
+
+- Full suite with the native regression enabled: 144 passed, zero failures or skips, 1,582 assertions across 21 files (86.12 seconds). This includes both artifact and attachment route/UI suites, atomic memory/file revocation tests, and the native combined export/delete/quota regression.
+- Strict nonincremental typecheck: passed.
+- Full lint: passed, 269 files checked.
+- `bun run build --webpack`: passed on the combined source; Next 16.4.2 compile 23.6 seconds, generated-route TypeScript 10.9 seconds, all 24 static pages generated in 668 ms, route generation/tracing completed. Both `/api/artifacts` and `/api/attachments` emitted alongside shared chat/context routes.
+- Vendor integrity and final working/index diff checks: passed.
+- The disposable native PostgreSQL fixture was stopped successfully before the final build. No live Supabase, cloud provisioning, or paid inference is involved.
+
 ## Primary API references checked
 
+- [PostgreSQL row locks and deadlock prevention](https://www.postgresql.org/docs/current/explicit-locking.html#LOCKING-ROWS) for the combined native lock regression; [PGlite socket documentation](https://pglite.dev/docs/pglite-socket) documents its single-backend multiplexing limitation.
 - Installed Next 16.4.2 route-handler guide at `node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/route.md`.
 - Installed AI SDK 7.0.143 prompt docs/types at `node_modules/ai/docs/02-foundations/03-prompts.mdx` and its provider-utils file-part type.
 - [Supabase private downloads](https://supabase.com/docs/guides/storage/serving/downloads) and [official StorageFileApi REST implementation](https://github.com/supabase/storage-js/blob/master/src/packages/StorageFileApi.ts).
@@ -109,7 +135,7 @@ The earlier `cfbc2ad` results remain historical evidence for that checkpoint. Br
 ## Principal changed modules
 
 - `.env.example`, `package.json`, `bun.lock`: fail-closed storage/capacity and reviewed image capability configuration, pinned parser, operator commands.
-- `drizzle/0006_attachments.sql`: owned records, durable deletion/capacity liability, transfer reservations, reconciliation evidence; migration manifest preserves F09 0005 and F10 0006.
+- `drizzle/0006_attachments.sql`: owned records, durable deletion/capacity liability, transfer reservations, reconciliation evidence; migration manifest preserves F09 0005, F10 0006, and accepted F11 0007.
 - `lib/attachments/`: content/extraction, Supabase REST, ownership/quota store, service, request/context/model payload, HTTP/client boundaries.
 - `app/(chat)/api/{attachments,context,chat}/route.ts`, shared context/schema/types/chat/account actions and BYOK service: owned preview, bounded request, final transactional claim, provenance, export and cascade cleanup.
 - `components/chat/{attachment-picker,attachment-composer,chat,chat-input,chat-messages}.tsx`: production selection and disclosure flow. `components/preview/attachment-preview.tsx` plus the existing preview route: labeled local review fixture.

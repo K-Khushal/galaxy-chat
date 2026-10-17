@@ -8,4 +8,6 @@ Root CUA reviewed the production attachment composer using the explicitly local 
 
 Browser review did not perform a native upload or contact Supabase/auth/model providers. Upload/cancel races are DOM regressions; private storage/provider serialization are local integration checks. Live storage capacity/egress, hosted PDF CPU/memory, OAuth and provider proof remain pending.
 
-F11 integration and the resulting combined checks remain required before opening the attachment PR.
+The worker subsequently integrated accepted main F11 commit f1d19a68bb3eda037690eac9c3284f3335af88fa. Eight shared conflicts were inspected and both complete capabilities retained. A native PostgreSQL regression proved an owner/chat FK lock inversion; narrowing the attachment chat pin to FOR KEY SHARE preserved parent deletion protection and advisory quota serialization. The regression also passed actual account/conversation cascade, combined export, quota and ownership checks.
+
+Combined worker verification: 144 tests / 1,582 assertions across 21 files with the native concurrency regression explicitly enabled, no skips or failures; strict nonincremental typecheck, lint269, vendor integrity, and strict Webpack build (24 static pages) passed. The temporary local PostgreSQL server was stopped. Exact conflict files, native proof/opt-in command, limits and build timing are in f10-evidence.md. The earlier root source/browser acceptance above applies to its reviewed checkpoints; combined-source integration review remains a root step before PR publication.

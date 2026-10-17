@@ -4,6 +4,7 @@ import { DefaultChatTransport } from "ai";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { ConversationArtifacts } from "@/components/artifacts/artifact-workbench";
 import { AttachmentComposer } from "@/components/chat/attachment-composer";
 import { BranchNavigation } from "@/components/chat/branch-navigation";
 import { ChatInput } from "@/components/chat/chat-input";
@@ -83,6 +84,10 @@ export default function Chat({
   const inFlight = useRef(false);
   const [submitting, setSubmitting] = useState(false);
   const persisted = useRef(initialBranches.length > 0);
+  const [persistedChatId, setPersistedChatId] = useState<string | undefined>(
+    initialBranches.length > 0 ? id : undefined,
+  );
+  const artifactChatId = !temporary && persistedChatId === id ? id : undefined;
   const [localStopped, setLocalStopped] = useState(false);
   const access = usePlatformAccess();
   const byokKey = access.byok?.credentials.find(
@@ -135,8 +140,9 @@ export default function Chat({
       fetch: (async (input, init) => {
         const response = await fetch(input, init);
         const selected = response.headers.get("x-chat-branch");
-        if (selected) {
+        if (selected && !temporary) {
           persisted.current = true;
+          setPersistedChatId(id);
           branchRef.current = selected;
           setBranchId(selected);
         }
@@ -194,6 +200,8 @@ export default function Chat({
         );
         if (!response.ok) throw new Error("history_unavailable");
         const view = await response.json();
+        persisted.current = true;
+        setPersistedChatId(id);
         setBranches(view.branches);
         setRuns(view.runs);
         setMessages(view.messages);
@@ -306,6 +314,11 @@ export default function Chat({
           temporary ? "Temporary conversation" : (title ?? "New conversation")
         }
         onNewChat={() => window.location.assign("/chat")}
+        actions={
+          artifactChatId ? (
+            <ConversationArtifacts chatId={artifactChatId} />
+          ) : undefined
+        }
       />
       {temporary && (
         <p className="border-b border-border px-4 py-3 text-sm leading-relaxed text-muted-foreground">
@@ -333,6 +346,7 @@ export default function Chat({
         messages={messages}
         setMessages={setMessages}
         status={status}
+        artifactChatId={!syncing && !submitting ? artifactChatId : undefined}
         error={error}
         regenerate={() => retry(error ? "retry" : "regenerate")}
         onEdit={async (messageId, draft) => {

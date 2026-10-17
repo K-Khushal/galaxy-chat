@@ -1,5 +1,6 @@
 import {
   boolean,
+  integer,
   jsonb,
   pgTable,
   primaryKey,
@@ -180,6 +181,38 @@ export const byokOperation = pgTable("byok_operation", {
     .notNull()
     .defaultNow(),
 });
+
+export const artifact = pgTable("artifact", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  chatId: text("chat_id")
+    .notNull()
+    .references(() => chat.id, { onDelete: "cascade" }),
+  messageId: text("message_id")
+    .notNull()
+    .references(() => chatMessage.id, { onDelete: "cascade" }),
+  kind: text("kind").notNull(),
+  head: integer("head").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+export const artifactRevision = pgTable(
+  "artifact_revision",
+  {
+    artifactId: text("artifact_id")
+      .notNull()
+      .references(() => artifact.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull(),
+    version: integer("version").notNull(),
+    title: text("title").notNull(),
+    content: text("content").notNull(),
+    restoredFrom: integer("restored_from"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.artifactId, table.version] })],
+);
 
 /** Explicit user-authored context only. No inference writes to these tables. */
 export const project = pgTable("project", {
