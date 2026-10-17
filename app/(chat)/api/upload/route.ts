@@ -1,174 +1,59 @@
-import { v2 as cloudinary } from "cloudinary";
-import { type NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+import { requireChatAccess } from "@/lib/auth/access";
+import { AppError } from "@/lib/errors";
+import { errorResponse } from "@/lib/http/error-response";
+import { assertOwnedObjectKey } from "@/lib/storage/objects";
+import { privateStorageConfig } from "@/lib/storage/private";
 
-// Constants
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
-const ALLOWED_IMAGE_TYPES = [
-  "image/jpeg",
-  "image/png",
-  "image/gif",
-  "image/webp",
-  "image/svg+xml",
-] as const;
+async function readObjectKey(request: Request) {
+  const url = new URL(request.url);
+  const queryKey = url.searchParams.get("key");
+  if (queryKey) {
+    return queryKey;
+  }
+  if (request.method === "GET" || request.method === "DELETE") {
+    return "";
+  }
+  const contentType = request.headers.get("content-type") ?? "";
+  if (!contentType.includes("application/json")) {
+    return "";
+  }
+  const body: unknown = await request.json();
+  if (!body || typeof body !== "object" || !("key" in body)) {
+    return "";
+  }
+  const key = body.key;
+  return typeof key === "string" ? key : "";
+}
 
-// Configure Cloudinary
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-});
+async function guardedObject(request: Request) {
+  const access = await requireChatAccess(request.headers);
+  const key = await readObjectKey(request);
+  if (!key) {
+    throw new AppError("invalid_object", 400);
+  }
+  assertOwnedObjectKey(access.userId, key);
+  if (!privateStorageConfig()) {
+    throw new AppError("storage_unconfigured", 503);
+  }
+  return NextResponse.json(
+    { error: { id: "storage_unavailable" } },
+    { status: 503 },
+  );
+}
 
-/**
- * API route for handling file uploads to Cloudinary
- *
- * @param request - NextRequest containing form data with file
- * @returns NextResponse with upload result or error
- */
-export async function POST(request: NextRequest) {
+export async function POST(request: Request) {
   try {
-    const formData = await request.formData();
-    const file = formData.get("file") as File;
-
-    // Validate file exists
-    if (!file) {
-      return NextResponse.json({ error: "No file provided" }, { status: 400 });
-    }
-
-    // Validate file is actually a File object
-    if (!(file instanceof File)) {
-      return NextResponse.json(
-        { error: "Invalid file format" },
-        { status: 400 },
-      );
-    }
-
-    // Validate file size
-    if (file.size > MAX_FILE_SIZE) {
-      return NextResponse.json(
-        { error: `File size exceeds ${MAX_FILE_SIZE / (1024 * 1024)}MB limit` },
-        { status: 400 },
-      );
-    }
-
-    // Validate file type
-    if (
-      !ALLOWED_IMAGE_TYPES.includes(
-        file.type as (typeof ALLOWED_IMAGE_TYPES)[number],
-      )
-    ) {
-      return NextResponse.json(
-        { error: "File type not supported. Only images are allowed." },
-        { status: 400 },
-      );
-    }
-
-    // Validate Cloudinary configuration
-    if (
-      !process.env.CLOUDINARY_CLOUD_NAME ||
-      !process.env.CLOUDINARY_API_KEY ||
-      !process.env.CLOUDINARY_API_SECRET
-    ) {
-      return NextResponse.json(
-        { error: "Cloudinary configuration missing" },
-        { status: 500 },
-      );
-    }
-
-    // Upload to Cloudinary
-    const buffer = await file.arrayBuffer();
-    const base64 = Buffer.from(buffer).toString("base64");
-    const dataURI = `data:${file.type};base64,${base64}`;
-
-    const uploadResult = await cloudinary.uploader.upload(dataURI, {
-      folder: "galaxy-chat",
-      resource_type: "auto",
-      transformation: [{ quality: "auto" }, { fetch_format: "auto" }],
-      timeout: 60000, // 60 seconds timeout
-    });
-
-    if (!uploadResult.secure_url) {
-      throw new Error("Upload failed: No URL returned from Cloudinary");
-    }
-
-    return NextResponse.json({
-      success: true,
-      url: uploadResult.secure_url,
-      service: "cloudinary",
-      publicId: uploadResult.public_id,
-    });
+    return await guardedObject(request);
   } catch (error) {
-    console.error("Upload error:", error);
-
-    // Provide more specific error messages
-    const errorMessage =
-      error instanceof Error ? error.message : "Upload failed";
-
-    return NextResponse.json(
-      { error: `Upload failed: ${errorMessage}` },
-      { status: 500 },
-    );
+    return errorResponse(error, "upload_failed");
   }
 }
 
-/**
- * API route for deleting files from Cloudinary
- *
- * @param request - NextRequest containing publicId in the body
- * @returns NextResponse with deletion result or error
- */
-export async function DELETE(request: NextRequest) {
+export async function DELETE(request: Request) {
   try {
-    const body = await request.json();
-    const { publicId } = body;
-
-    // Validate publicId exists
-    if (!publicId || typeof publicId !== "string") {
-      return NextResponse.json(
-        { error: "Public ID is required" },
-        { status: 400 },
-      );
-    }
-
-    // Validate Cloudinary configuration
-    if (
-      !process.env.CLOUDINARY_CLOUD_NAME ||
-      !process.env.CLOUDINARY_API_KEY ||
-      !process.env.CLOUDINARY_API_SECRET
-    ) {
-      return NextResponse.json(
-        { error: "Cloudinary configuration missing" },
-        { status: 500 },
-      );
-    }
-
-    // Delete from Cloudinary
-    const deleteResult = await cloudinary.uploader.destroy(publicId, {
-      resource_type: "image",
-    });
-
-    // Cloudinary returns "ok" for successful deletion or "not found" if already deleted
-    if (deleteResult.result !== "ok" && deleteResult.result !== "not found") {
-      throw new Error(`Delete failed: ${deleteResult.result}`);
-    }
-
-    return NextResponse.json({
-      success: true,
-      message:
-        deleteResult.result === "ok"
-          ? "File deleted successfully"
-          : "File was already deleted",
-      publicId,
-    });
+    return await guardedObject(request);
   } catch (error) {
-    console.error("Delete error:", error);
-
-    // Provide more specific error messages
-    const errorMessage =
-      error instanceof Error ? error.message : "Delete failed";
-
-    return NextResponse.json(
-      { error: `Delete failed: ${errorMessage}` },
-      { status: 500 },
-    );
+    return errorResponse(error, "upload_failed");
   }
 }

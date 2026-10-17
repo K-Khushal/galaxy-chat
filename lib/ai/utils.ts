@@ -7,6 +7,31 @@ import type { TypeChatMessage, TypeUIMessage } from "../types";
  * @returns A user-friendly error message
  */
 export function getChatErrorMessage(error: Error): string {
+  const messages: Record<string, string> = {
+    request_already_recorded:
+      "This request is already saved. Reload saved messages to see its status. A deliberate retry creates a new branch.",
+    idempotency_conflict:
+      "This request ID was already used. Reload the conversation before sending again.",
+    funding_busy:
+      "A request is still active or awaiting usage reconciliation. Your current message is saved.",
+    chat_busy:
+      "A saved request is still active. Wait for it to finish, then reload saved messages.",
+    daily_exhausted:
+      "Your daily allowance is used. It resets at 00:00 UTC, subject to shared funding.",
+    shared_exhausted:
+      "The shared allowance is exhausted. Platform generation is paused.",
+    provider_failed:
+      "The provider could not finish this response. Your prompt is saved. Any uncertain usage remains reserved until reconciled.",
+    context_too_large:
+      "This prompt exceeds the bounded context limit. Shorten it before sending.",
+    funded_capability_denied:
+      "This funded model supports basic text only. Files, tools and search are unavailable.",
+    branch_limit_reached:
+      "This conversation has reached its branch limit. Start a new conversation.",
+    conversation_limit_reached:
+      "This conversation has reached its message limit. Start a new conversation.",
+  };
+  if (messages[error.message]) return messages[error.message];
   // Handle specific error types based on OpenRouter error patterns
   if (error.message.includes("No endpoints found that support image input")) {
     return "The selected model doesn't support image input. Please try a different model or remove the image.";
@@ -74,8 +99,8 @@ export async function fetchWithErrorHandling(
     const response = await fetch(input, init);
 
     if (!response.ok) {
-      const { code, cause } = await response.json();
-      throw new Error(code ?? "Unknown error", { cause });
+      const body = await response.json();
+      throw new Error(body.error?.id ?? body.code ?? "chat_failed");
     }
 
     return response;

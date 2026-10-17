@@ -1,21 +1,27 @@
-import { TextShimmer } from "@/components/ui/text-shimmer";
-import type { TypeUIMessage } from "@/lib/types";
+"use client";
 import type { UseChatHelpers } from "@ai-sdk/react";
 import type { ChatStatus } from "ai";
-import { AlertCircleIcon, ArrowDownIcon } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Conversation, ConversationContent } from "../elements/conversation";
-import { Message } from "../elements/message";
-import { Response } from "../elements/response";
+import { ArrowDown, Loader2, Sparkles, TriangleAlert } from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import { ErrorActions } from "@/components/chat/message/message-action";
+import { MessagePart } from "@/components/chat/message/message-part";
 import {
   Source,
   Sources,
   SourcesContent,
   SourcesTrigger,
-} from "../elements/sources";
-import { ChatGreeting } from "./chat-greeting";
-import { ErrorActions } from "./message/message-action";
-import { MessagePart } from "./message/message-part";
+} from "@/components/elements/sources";
+import { EmptyConversation } from "@/components/shell/empty-conversation";
+import { Button } from "@/components/ui/button";
+import { getChatErrorMessage } from "@/lib/ai/utils";
+import type { TypeUIMessage } from "@/lib/types";
+import { prefersReducedMotion, scrollBehavior } from "@/lib/ui/motion";
 
 export function ChatMessages({
   messages,
@@ -23,130 +29,195 @@ export function ChatMessages({
   error,
   regenerate,
   setMessages,
+  onPrompt,
+  actionsEnabled = false,
+  onEdit,
 }: {
   messages: TypeUIMessage[];
   status: ChatStatus;
   error?: Error;
   regenerate: () => void;
   setMessages: UseChatHelpers<TypeUIMessage>["setMessages"];
+  onPrompt?: (text: string) => void;
+  actionsEnabled?: boolean;
+  onEdit?: (messageId: string, text: string) => Promise<boolean>;
 }) {
-  const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [isAtBottom, setIsAtBottom] = useState(true);
-
-  const scrollToBottom = useCallback(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, []);
-
-  const checkIfAtBottom = useCallback(() => {
-    if (!containerRef.current) return;
-    const { scrollTop, scrollHeight, clientHeight } = containerRef.current;
-    const isNearBottom = scrollTop + clientHeight >= scrollHeight - 100;
-    setIsAtBottom(isNearBottom);
-  }, []);
-
+  const contentRef = useRef<HTMLDivElement>(null);
+  const following = useRef(true);
+  const [atBottom, setAtBottom] = useState(true);
+  const previousStatus = useRef(status);
+  const [announcement, setAnnouncement] = useState("");
   useEffect(() => {
+    if (status === "submitted") setAnnouncement("Preparing a response.");
+    else if (status === "streaming") setAnnouncement("Receiving a response.");
+    else if (
+      status === "ready" &&
+      (previousStatus.current === "streaming" ||
+        previousStatus.current === "submitted")
+    )
+      setAnnouncement("Response ended.");
+    else if (status === "error") setAnnouncement("");
+    previousStatus.current = status;
+  }, [status]);
+  const scrollToBottom = useCallback((smooth = true) => {
     const container = containerRef.current;
     if (!container) return;
-
-    container.addEventListener("scroll", checkIfAtBottom);
-    checkIfAtBottom();
-
-    return () => container.removeEventListener("scroll", checkIfAtBottom);
-  }, [checkIfAtBottom]);
-
-  // Auto-scroll only when at bottom and content changes
-  useEffect(() => {
-    if (isAtBottom) {
-      scrollToBottom();
+    container.scrollTo({
+      top: container.scrollHeight,
+      behavior: smooth ? scrollBehavior(prefersReducedMotion()) : "instant",
+    });
+  }, []);
+  useLayoutEffect(() => {
+    if (messages.length === 0) {
+      containerRef.current?.scrollTo({ top: 0, behavior: "instant" });
+      return;
     }
-  }, [isAtBottom, scrollToBottom]);
-
+    if (following.current && status) scrollToBottom(false);
+  }, [messages, status, scrollToBottom]);
+  useEffect(() => {
+    const content = contentRef.current;
+    if (!content || messages.length === 0) return;
+    const observer = new ResizeObserver(() => {
+      if (following.current) scrollToBottom(false);
+    });
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [scrollToBottom, messages.length]);
   return (
-    <div
-      ref={containerRef}
-      className="overscroll-behavior-contain -webkit-overflow-scrolling-touch flex-1 touch-pan-y overflow-y-scroll"
-    >
-      <Conversation className="mx-auto flex min-w-0 max-w-4xl flex-col gap-4 md:gap-6">
-        <ConversationContent className="flex flex-col gap-4 px-2 py-4 md:gap-6 md:px-4">
-          {messages.length === 0 && <ChatGreeting />}
-          {messages.map((message) => (
-            <div key={message.id}>
-              {message.role === "assistant" &&
-                message.parts.filter((part) => part.type === "source-url")
-                  .length > 0 && (
-                  <Sources>
-                    <SourcesTrigger
-                      count={
-                        message.parts.filter(
-                          (part) => part.type === "source-url",
-                        ).length
-                      }
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      <output aria-live="polite" aria-atomic="true" className="sr-only">
+        {announcement}
+      </output>
+      <div
+        ref={containerRef}
+        role="log"
+        aria-live="off"
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: The scroll region must be keyboard-scrollable.
+        tabIndex={0}
+        aria-label="Conversation messages"
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain focus-visible:outline-2 focus-visible:outline-ring"
+        onScroll={() => {
+          const container = containerRef.current;
+          if (!container) return;
+          const near =
+            container.scrollHeight -
+              container.scrollTop -
+              container.clientHeight <
+            80;
+          following.current = near;
+          setAtBottom(near);
+        }}
+      >
+        <div
+          ref={contentRef}
+          className="mx-auto flex min-h-full w-full min-w-0 max-w-3xl flex-col gap-8 px-5 py-8 md:px-8"
+        >
+          {messages.length === 0 && <EmptyConversation onPrompt={onPrompt} />}
+          {messages.map((message) => {
+            const sources = message.parts.filter(
+              (part) => part.type === "source-url",
+            );
+            return (
+              <article
+                key={message.id}
+                aria-label={
+                  message.role === "user" ? "Your message" : "Galaxy response"
+                }
+                className="min-w-0"
+              >
+                {message.role === "assistant" && (
+                  <p className="mb-3 flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                    <Sparkles
+                      className="size-3.5 text-primary"
+                      aria-hidden="true"
                     />
-                    {message.parts
-                      .filter((part) => part.type === "source-url")
-                      .map((part, i) => (
-                        <SourcesContent key={`${message.id}-${i}`}>
-                          <Source
-                            key={`${message.id}-${i}`}
-                            href={part.url}
-                            title={part.url}
-                          />
-                        </SourcesContent>
+                    Galaxy
+                  </p>
+                )}
+                {sources.length > 0 && (
+                  <Sources>
+                    <SourcesTrigger count={sources.length} />
+                    <SourcesContent>
+                      {sources.map((part) => (
+                        <Source
+                          key={part.sourceId}
+                          href={part.url}
+                          title={part.title ?? part.url}
+                        />
                       ))}
+                    </SourcesContent>
                   </Sources>
                 )}
-              {message.parts.map((part, i) => (
-                <MessagePart
-                  key={`${message.id}-${i}`}
-                  message={message}
-                  partIndex={i}
-                  part={part}
-                  status={status}
-                  isLastMessage={message.id === messages.at(-1)?.id}
-                  regenerate={regenerate}
-                  setMessages={setMessages}
-                />
-              ))}
-            </div>
-          ))}
-          {error && (
-            <Message from="system">
-              <div className="flex flex-col max-w-[80%] gap-1">
-                <div className="text-destructive bg-destructive/10 flex flex-row gap-2 overflow-hidden rounded-lg text-sm items-center px-4 py-3">
-                  <AlertCircleIcon className="text-destructive" />
-                  <Response className="text-destructive">
-                    An error occurred.
-                  </Response>
-                </div>
-                <ErrorActions
-                  errorMessage={error.message}
-                  status={status}
-                  onRetry={regenerate || (() => {})}
-                />
-              </div>
-            </Message>
-          )}
+                {message.parts.map((part, index) => (
+                  <MessagePart
+                    key={`${message.id}-${index}`}
+                    message={message}
+                    partIndex={index}
+                    part={part}
+                    status={status}
+                    isLastMessage={message.id === messages.at(-1)?.id}
+                    regenerate={regenerate}
+                    setMessages={setMessages}
+                    onEdit={onEdit}
+                    actionsEnabled={
+                      actionsEnabled &&
+                      status !== "streaming" &&
+                      status !== "submitted"
+                    }
+                  />
+                ))}
+              </article>
+            );
+          })}
           {status === "submitted" && (
-            <div className="flex flex-row items-center justify-start ml-2">
-              <TextShimmer className="font-mono text-sm" duration={1}>
-                Generating...
-              </TextShimmer>
+            <p className="flex items-center gap-2 py-2 text-sm text-muted-foreground">
+              <Loader2 aria-hidden="true" className="size-4 animate-spin" />
+              Preparing a response…
+            </p>
+          )}
+          {status === "streaming" && (
+            <p className="text-xs text-muted-foreground">
+              Response in progress. You can stop it below.
+            </p>
+          )}
+          {error && (
+            <div
+              role="alert"
+              className="rounded-xl border border-destructive/30 bg-destructive/5 p-4"
+            >
+              <h2 className="flex items-center gap-2 text-sm font-medium">
+                <TriangleAlert
+                  className="size-4 shrink-0 text-destructive"
+                  aria-hidden="true"
+                />
+                The response could not finish
+              </h2>
+              <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                {getChatErrorMessage(error)}
+              </p>
+              <ErrorActions
+                errorMessage={error.message}
+                status={status}
+                onRetry={regenerate}
+                retryEnabled={actionsEnabled}
+              />
             </div>
           )}
-          <div ref={messagesEndRef} />
-        </ConversationContent>
-      </Conversation>
-
-      {!isAtBottom && (
-        <button
-          aria-label="Scroll to bottom"
-          className="-translate-x-1/2 absolute bottom-40 left-1/2 z-10 rounded-full border bg-background p-2 shadow-lg transition-colors hover:bg-muted"
-          onClick={scrollToBottom}
-          type="button"
+        </div>
+      </div>
+      {!atBottom && messages.length > 0 && (
+        <Button
+          variant="outline"
+          className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-popover shadow-md"
+          onClick={() => {
+            following.current = true;
+            scrollToBottom();
+          }}
         >
-          <ArrowDownIcon className="size-4" />
-        </button>
+          <ArrowDown className="size-4" />
+          Latest message
+        </Button>
       )}
     </div>
   );

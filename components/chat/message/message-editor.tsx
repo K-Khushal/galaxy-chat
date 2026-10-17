@@ -1,130 +1,78 @@
 "use client";
-
-import { deleteChatMessages } from "@/app/(chat)/action";
+import { Loader2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import { getTextMessage } from "@/lib/ai/utils";
 import type { TypeUIMessage } from "@/lib/types";
-import type { UseChatHelpers } from "@ai-sdk/react";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { toast } from "sonner";
-
-export type MessageEditorProps = {
-  message: TypeUIMessage;
-  setMode: (text: string) => void;
-  setMessages: UseChatHelpers<TypeUIMessage>["setMessages"];
-  regenerate: () => void;
-};
-
 export function MessageEditor({
   message,
   setMode,
-  setMessages,
-  regenerate,
-}: MessageEditorProps) {
-  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
-
-  const [draftContent, setDraftContent] = useState<string>(
-    getTextMessage(message),
-  );
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  const adjustHeight = useCallback(() => {
-    if (textareaRef.current) {
-      textareaRef.current.style.height = "auto";
-      textareaRef.current.style.height = `${textareaRef.current.scrollHeight + 2}px`;
-    }
-  }, []);
-
+  onSubmit,
+}: {
+  message: TypeUIMessage;
+  setMode: (mode: string) => void;
+  onSubmit: (text: string) => Promise<boolean>;
+}) {
+  const [draft, setDraft] = useState(getTextMessage(message));
+  const [pending, setPending] = useState(false);
+  const input = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
-    if (textareaRef.current) {
-      adjustHeight();
-    }
-  }, [adjustHeight]);
-
-  const handleInput = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setDraftContent(event.target.value);
-    adjustHeight();
-  };
-
-  const handleSendMessage = async () => {
-    if (draftContent.trim() === "" || isSubmitting) {
-      return;
-    }
-
-    setIsSubmitting(true);
-
+    input.current?.focus();
+  }, []);
+  function close() {
+    setMode("read");
+    requestAnimationFrame(() =>
+      document.getElementById(`edit-action-${message.id}`)?.focus(),
+    );
+  }
+  async function submit() {
+    if (pending || !draft.trim()) return;
+    setPending(true);
     try {
-      await deleteChatMessages(message.id);
-
-      setMessages((messages) => {
-        const index = messages.findIndex((m) => m.id === message.id);
-
-        if (index !== -1) {
-          const updatedMessage: TypeUIMessage = {
-            ...message,
-            parts: [{ type: "text", text: draftContent }],
-          };
-
-          return [...messages.slice(0, index), updatedMessage];
-        }
-
-        return messages;
-      });
-
-      setMode("view");
-      regenerate();
-    } catch (error) {
-      toast.error("Failed to edit message", {
-        description: error as string,
-      });
+      if (!(await onSubmit(draft.trim()))) return;
+      document.getElementById("chat-composer")?.focus();
+      setMode("read");
     } finally {
-      setIsSubmitting(false);
+      setPending(false);
     }
-  };
-
-  const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      handleSendMessage();
-    }
-  };
-
+  }
   return (
-    <div className="relative w-full">
-      {/* Light gray container with rounded corners */}
-      <div className="relative rounded-xl bg-secondary p-4">
-        <Textarea
-          className="w-full resize-none overflow-hidden bg-transparent text-base outline-none focus-visible:ring-0 border-0 shadow-none min-h-[60px]"
-          data-testid="message-editor"
-          onChange={handleInput}
-          onKeyDown={handleKeyDown}
-          ref={textareaRef}
-          value={draftContent}
-          placeholder="Type your message..."
-        />
-
-        {/* Buttons positioned at bottom-right */}
-        <div className="absolute bottom-4 right-4 flex flex-row gap-2">
-          <Button
-            className="h-8 px-3 py-2 rounded-lg cursor-pointer"
-            onClick={() => {
-              setMode("view");
-            }}
-            variant="outline"
-          >
-            Cancel
-          </Button>
-          <Button
-            className="h-8 px-3 py-2 rounded-lg cursor-pointer"
-            data-testid="message-editor-send-button"
-            disabled={isSubmitting}
-            onClick={handleSendMessage}
-            variant="default"
-          >
-            {isSubmitting ? "Sending..." : "Send"}
-          </Button>
-        </div>
+    <div className="rounded-xl border border-border bg-secondary p-4">
+      <label
+        htmlFor={`edit-${message.id}`}
+        className="mb-2 block text-sm font-medium"
+      >
+        Edit in a new branch
+      </label>
+      <textarea
+        id={`edit-${message.id}`}
+        ref={input}
+        value={draft}
+        maxLength={2000}
+        rows={4}
+        className="w-full resize-y rounded-lg bg-background p-3 text-base focus-visible:outline-ring"
+        onChange={(event) => setDraft(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") close();
+        }}
+      />
+      <p className="mt-2 text-xs text-muted-foreground">
+        The original conversation stays available in the branch selector.
+      </p>
+      <div className="mt-3 flex justify-end gap-2">
+        <Button variant="outline" disabled={pending} onClick={close}>
+          Cancel
+        </Button>
+        <Button
+          aria-busy={pending}
+          disabled={pending || !draft.trim()}
+          onClick={() => void submit()}
+        >
+          {pending && (
+            <Loader2 aria-hidden="true" className="size-4 animate-spin" />
+          )}
+          Send as new branch
+        </Button>
       </div>
     </div>
   );

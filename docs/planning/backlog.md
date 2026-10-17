@@ -2,37 +2,42 @@
 
 Created 2026-10-17. M0/M1 are actionable delivery slices; M2–M4 are roadmap scopes to refine before implementation. Every delivery requires relevant acceptance evidence, ownership checks, and no secret logging. GitHub links are recorded in github-issues.md.
 
+## Gate split
+
+Local correctness can merge and unlock the next code ticket: typecheck, focused tests, production build, and review. Live acceptance stays pending and does not block later tickets: real GitHub OAuth, provider SSE, a Cloudflare deploy, Worker CPU and upload-size acceptance, billing, and the $10/month decision. Do not check a box that mixes local work with live proof. Do not close a GitHub issue while a required live check is pending. F02 does not bypass F01.
+
 ## F01: Validate deployment and UI compatibility
 
 Phase: M0. Dependencies: none.
 
 Prove the chosen stack can support the beta within $10/month before replacing the application.
 
-- [ ] Pin mutually compatible stable Next.js, React, AI SDK and provider versions; use Bun for dependency management.
-- [ ] Deploy a minimal streaming request on the selected free hosting tier; verify cancellation, secrets, runtime compatibility and quota behavior.
-- [ ] Inspect and vendor Halaska from the official source with MIT attribution and recorded checksum; validate TypeScript, hydration, keyboard navigation, dialogs and reduced motion.
-- [ ] Prototype an AI Elements conversation/composer styled with Halaska; measure bundle size and record adaptations.
-- [ ] Document current recurring costs, commercial-use eligibility and fallback; stop the rollout if the budget cannot be met.
+- [x] Pin mutually compatible stable Next.js, React, AI SDK, and provider versions; use Bun for the lockfile. Recorded in f01-evidence.md. Live Worker acceptance is a separate unchecked item.
+- [ ] Deploy a minimal streaming request on the selected free hosting tier; verify cancellation, secrets, runtime compatibility, and quota behavior.
+- [x] Vendor Halaska from the official source with MIT attribution and a checksum-only integrity check.
+- [ ] Validate the prototype in a browser: hydration, keyboard navigation, dialog focus, contrast, and reduced motion. A loopback preview exists; it is not a signed-off browser pass.
+- [x] Prototype an AI Elements conversation/composer inside a Halaska shell and record the measured client chunk sizes.
+- [ ] Document current recurring costs, commercial-use eligibility, and fallback from fresh price pages; stop the rollout if the budget cannot be met. Earlier notes are not a budget acceptance pass.
 
 ## F02: Establish the application foundation and CI
 
-Phase: M0. Dependencies: F01.
+Phase: M0. Dependencies: F01. Local foundation work may land while F01 live checks stay open.
 
 Replace obsolete scaffolding with a reproducible, typed foundation.
 
-- [ ] Use Bun lockfile, strict TypeScript and validated server/client environment schemas; document local setup.
-- [ ] Add lint, typecheck, production build and focused test commands to CI.
-- [ ] Separate UI, chat orchestration, provider access, persistence and metering modules.
-- [ ] Remove obsolete dependencies only when their replacements are wired; retain unrelated user edits.
-- [ ] Provide structured error IDs and redacted logs without prompts, credentials or private documents.
+- [x] Use a Bun lockfile, strict TypeScript, and a fail-closed auth environment parser. `.env.example` documents names and nonfunctional placeholders.
+- [x] Add lint, typecheck, production build, and focused tests to `.github/workflows/ci.yml` on Node 22 and Bun 1.4.3. The same commands passed locally. A hosted Actions run has not been observed.
+- [x] Separate UI, chat orchestration, provider access, persistence, and auth modules. Metering remains a later ticket.
+- [x] Remove Clerk, MongoDB/Mongoose, Cloudinary, and Mem0 now that Better Auth, Drizzle, and fail-closed storage/provider paths are wired.
+- [x] Provide structured error IDs and redacted logs without prompts, credentials, or private documents.
 
 ## F03: Implement invite auth and ownership-safe persistence
 
 Phase: M1. Dependencies: F02.
 
-Provide invite-only accounts and isolate every user's data.
+Provide invite-only accounts and isolate every user's data. The local Better Auth, Drizzle schema, invite allowlist, and owner filters exist. Local route and database proof is recorded in f03-evidence.md. Live GitHub OAuth remains pending, so these boxes stay open.
 
-- [ ] Implement GitHub OAuth first, invite validation and secure session handling.
+- [ ] Implement GitHub OAuth first, invite validation, and secure session handling. Local code fails closed without credentials. A real provider login has not been exercised.
 - [ ] Create versioned database schema for profiles, conversations, messages and future usage records.
 - [ ] Enforce ownership server-side on every read/write/delete and private object operation; add database policies where supported.
 - [ ] Add pagination, chronological message retrieval and account deletion/export foundations.
@@ -172,4 +177,3 @@ Enable longer autonomous work only with separate execution funding.
 - [ ] Run isolated ephemeral sandboxes with network/secret restrictions, resource limits, idle shutdown and audit trail.
 - [ ] Require explicit approval for external messages, purchases, uploads or irreversible mutations.
 - [ ] Choose sandbox vendor after pricing validation; advanced execution stays disabled until separately funded within an approved budget.
-

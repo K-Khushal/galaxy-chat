@@ -1,8 +1,8 @@
 "use client";
 
-import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { CalendarIcon, MessageSquareIcon } from "lucide-react";
 import Image from "next/image";
+import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 
 export interface MediaMessage {
   id: string;

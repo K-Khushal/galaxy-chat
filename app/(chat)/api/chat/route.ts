@@ -1,267 +1,173 @@
 import {
-  createChat,
-  deleteChat,
-  getChat,
-  updateChatLastContext,
-} from "@/lib/actions/chat/chat";
-import {
-  createMessage,
-  createMultipleMessages,
-  getChatMessages,
-} from "@/lib/actions/chat/chat-message";
-import { addMemories, retrieveMemories } from "@/lib/actions/mem0/memory";
-import type { ChatModel } from "@/lib/ai/model";
-import type { AppUsage } from "@/lib/ai/usage";
-import { convertToUIMessages, formatTitle } from "@/lib/ai/utils";
-import {
-  type PostRequestBody,
-  postRequestBodySchema,
-} from "@/lib/schema/chat/chat";
-import type { ChatVisibility, TypeUIMessage } from "@/lib/types";
-import { auth } from "@clerk/nextjs/server";
-import { createOpenRouter } from "@openrouter/ai-sdk-provider";
-import {
-  convertToModelMessages,
+  consumeStream,
   createUIMessageStream,
-  JsonToSseTransformStream,
-  streamText,
+  createUIMessageStreamResponse,
+  type UIMessage,
 } from "ai";
-import { unstable_cache as cache } from "next/cache";
 import { NextResponse } from "next/server";
-import type { ModelCatalog } from "tokenlens/core";
-import { fetchModels } from "tokenlens/fetch";
-import { getUsage } from "tokenlens/helpers";
-import { v4 as uuidv4 } from "uuid";
-import { generateChatTitle } from "../../action";
-
-// Allow streaming responses up to 30 seconds
+import { finishRun, prepareRun } from "@/lib/actions/chat/branches";
+import {
+  deleteChat,
+  getChatForUser,
+  updateChat,
+} from "@/lib/actions/chat/chat";
+import { requireChatAccess } from "@/lib/auth/access";
+import { resolveFundingConfig } from "@/lib/credits/config";
+import { boundedJson } from "@/lib/credits/http";
+import {
+  boundContext,
+  startFundedStream,
+  type TextTurn,
+} from "@/lib/credits/service";
+import { actorFor } from "@/lib/credits/store";
+import { AppError, logErrorId } from "@/lib/errors";
+import { errorResponse } from "@/lib/http/error-response";
+import { postRequestBodySchema } from "@/lib/schema/chat/chat";
+import type { TypeUIMessage } from "@/lib/types";
 export const maxDuration = 30;
-
-const getSystemPrompt = (memories: string[] = []) => {
-  const basePrompt =
-    "You are a helpful assistant that can answer questions and help with tasks. You can see and analyze images that are shared with you. When a user shares an image, describe what you see in detail.";
-
-  if (memories.length > 0) {
-    const memoryContext = `\n\nRelevant context from previous conversations:\n${memories.join("\n")}`;
-    return basePrompt + memoryContext;
-  }
-
-  return basePrompt;
-};
-
-type LanguageModelV1Prompt = any;
-
-const getTokenlensCatalog = cache(
-  async (): Promise<ModelCatalog | undefined> => {
-    try {
-      return await fetchModels();
-    } catch (err) {
-      console.warn(
-        "TokenLens: catalog fetch failed, using default catalog",
-        err,
-      );
-      return; // tokenlens helpers will fall back to defaultCatalog
-    }
-  },
-  ["tokenlens-catalog"],
-  { revalidate: 24 * 60 * 60 }, // 24 hours
-);
-
-export async function POST(req: Request) {
-  let requestBody: PostRequestBody;
-
+export async function POST(request: Request) {
+  let run: { id: string; userId: string; branchId: string } | undefined;
   try {
-    const json = await req.json();
-    requestBody = postRequestBodySchema.parse(json);
-  } catch (_) {
-    return NextResponse.json(
-      { error: "Invalid request body" },
-      { status: 400 },
+    const access = await requireChatAccess(request.headers);
+    const parsed = postRequestBodySchema.safeParse(await boundedJson(request));
+    if (!parsed.success) throw new AppError("invalid_request", 400);
+    const body = parsed.data;
+    if (
+      body.webSearch ||
+      body.visibility !== "private" ||
+      body.message.parts.some((p) => p.type !== "text")
+    )
+      throw new AppError("funded_capability_denied", 403);
+    const config = resolveFundingConfig(process.env);
+    if (body.model !== config.price.model)
+      throw new AppError("model_not_funded", 403);
+    boundContext([
+      {
+        role: "user",
+        content: body.message.parts
+          .filter((p) => p.type === "text")
+          .map((p) => p.text)
+          .join("\n"),
+      },
+    ]);
+    const prepared = await prepareRun(
+      { ...body, message: body.message as TypeUIMessage },
+      access.userId,
     );
-  }
-
-  try {
-    const {
-      id,
-      message,
-      model,
-      webSearch,
-      visibility,
-    }: {
-      id: string;
-      message: TypeUIMessage;
-      model: ChatModel["id"];
-      webSearch: boolean;
-      visibility: ChatVisibility;
-    } = requestBody;
-
-    const { isAuthenticated, userId } = await auth();
-
-    if (!isAuthenticated) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const chat = await getChat(id);
-
-    if (chat) {
-      if (chat.userId !== userId) {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-      }
-    } else {
-      const title = await generateChatTitle({ message });
-      const formattedTitle = formatTitle(title);
-
-      await createChat({
-        id,
-        userId,
-        title: formattedTitle,
-        visibility: visibility ?? "private",
-      });
-    }
-
-    const previousMessages = await getChatMessages({ chatId: id });
-
-    const chatMessages = [...convertToUIMessages(previousMessages), message];
-
-    // Retrieve relevant memories for context
-    let memories: string[] = [];
-    try {
-      const messageText =
-        message.parts.find((part) => part.type === "text")?.text ?? "";
-      const retrievedMemories = await retrieveMemories(messageText, {
-        user_id: userId,
-      });
-
-      // retrieveMemories returns a string, so we can use it directly
-      if (retrievedMemories && retrievedMemories.trim()) {
-        memories = [retrievedMemories];
-      }
-    } catch (error) {
-      console.warn("Failed to retrieve memories:", error);
-    }
-
-    await createMessage({
-      chatId: id,
-      id: message.id,
-      role: "user",
-      parts: message.parts,
-      attachments: [],
+    run = {
+      id: body.requestId,
+      userId: access.userId,
+      branchId: prepared.branchId,
+    };
+    const turns: TextTurn[] = prepared.messages.flatMap((m) =>
+      m.role === "user" || m.role === "assistant"
+        ? [
+            {
+              role: m.role,
+              content: m.parts
+                .filter((p) => p.type === "text")
+                .map((p) => p.text)
+                .join("\n"),
+            },
+          ]
+        : [],
+    );
+    const result = await startFundedStream({
+      env: process.env,
+      actor: actorFor(
+        "user",
+        access.userId,
+        process.env.CREDIT_ACTOR_SECRET ?? "",
+      ),
+      model: body.model,
+      idempotencyKey: body.requestId,
+      turns,
+      signal: request.signal,
     });
-
-    let finalMergedUsage: AppUsage | undefined;
-
-    // Open router configuration
-    const openrouter = createOpenRouter({
-      apiKey: process.env.OPENROUTER_API_KEY,
-    });
-
-    const stream = createUIMessageStream({
-      execute: ({ writer: dataStream }) => {
-        const result = streamText({
-          model: webSearch
-            ? "perplexity/sonar"
-            : (model ?? "meta/llama-3.2-1b"),
-          system: getSystemPrompt(memories),
-          messages: convertToModelMessages(chatMessages),
-          onFinish: async ({ usage }) => {
-            try {
-              const providers = await getTokenlensCatalog();
-              const modelId = model;
-              if (!modelId) {
-                finalMergedUsage = usage;
-                dataStream.write({
-                  type: "data-usage",
-                  data: finalMergedUsage,
-                });
-                return;
-              }
-              if (!providers) {
-                finalMergedUsage = usage;
-                dataStream.write({
-                  type: "data-usage",
-                  data: finalMergedUsage,
-                });
-                return;
-              }
-
-              const summary = getUsage({ modelId, usage, providers });
-              finalMergedUsage = { ...usage, ...summary, modelId } as AppUsage;
-              dataStream.write({ type: "data-usage", data: finalMergedUsage });
-            } catch (err) {
-              console.warn("TokenLens enrichment failed", err);
-              finalMergedUsage = usage;
-              dataStream.write({ type: "data-usage", data: finalMergedUsage });
-            }
-          },
-        });
-
-        result.consumeStream();
-
-        dataStream.merge(
-          result.toUIMessageStream({
-            sendSources: true,
-            sendReasoning: true,
-          }),
-        );
-      },
-      generateId: uuidv4,
-      onFinish: async ({ messages }) => {
-        await createMultipleMessages(
-          messages.map((currentMessage) => ({
-            id: currentMessage.id,
-            chatId: id,
-            role: currentMessage.role,
-            parts: currentMessage.parts,
-            attachments: [],
-          })),
-        );
-
-        if (finalMergedUsage) {
-          try {
-            await updateChatLastContext({
-              chatId: id,
-              context: finalMergedUsage,
-            });
-          } catch (err) {
-            console.warn("Unable to persist last usage for chat", id, err);
-          }
-        }
-
-        // Store memories from the conversation
+    void result.completion.catch(() => logErrorId("credit_settlement_failed"));
+    let failed = false;
+    let stopped = false;
+    let completed = false;
+    const stream = createUIMessageStream<UIMessage>({
+      originalMessages: prepared.messages,
+      generateId: () => crypto.randomUUID(),
+      execute: async ({ writer }) => {
+        const reader = result.stream.getReader();
         try {
-          // Convert messages to LanguageModelV1Prompt format
-          const mem0Messages: LanguageModelV1Prompt = chatMessages.map(
-            (msg) => ({
-              role: msg.role as "user" | "assistant" | "system",
-              content: msg.parts.map((part) => ({
-                type: part.type as "text",
-                text: part.type === "text" ? part.text : "",
-              })),
-            }),
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (value.type === "error") failed = true;
+            if (
+              value.type === "finish" &&
+              (value.finishReason === "stop" || value.finishReason === "length")
+            )
+              completed = true;
+            if (value.type === "abort") stopped = true;
+            if (
+              value.type === "finish" &&
+              (value.finishReason === "error" ||
+                value.finishReason === "content-filter")
+            )
+              failed = true;
+            writer.write(value);
+          }
+          writer.setOutcome(
+            stopped
+              ? { status: "aborted" }
+              : failed || !completed
+                ? { status: "failed" }
+                : { status: "completed" },
           );
-          await addMemories(mem0Messages, { user_id: userId });
-        } catch (error) {
-          console.warn("Failed to store memories:", error);
+        } finally {
+          reader.releaseLock();
         }
       },
-      onError: () => {
-        return "Oops, an error occurred!";
+      onEnd: async ({ responseMessage, outcome, isAborted }) => {
+        await finishRun(
+          body.requestId,
+          access.userId,
+          isAborted || request.signal.aborted
+            ? "stopped"
+            : failed || outcome.status !== "completed"
+              ? "error"
+              : "complete",
+          {
+            id: responseMessage.id,
+            role: responseMessage.role,
+            parts: responseMessage.parts,
+          },
+        );
       },
+      onError: () => "chat_failed",
     });
-    return new Response(stream.pipeThrough(new JsonToSseTransformStream()));
+    return createUIMessageStreamResponse({
+      stream,
+      headers: {
+        "cache-control": "no-store",
+        "x-chat-branch": prepared.branchId,
+      },
+      consumeSseStream: ({ stream }) =>
+        consumeStream({
+          stream,
+          onError: () => logErrorId("chat_persistence_failed"),
+        }),
+    });
   } catch (error) {
-    console.error("Error in chat route", error);
-    return NextResponse.json({ error: error }, { status: 500 });
+    if (run)
+      await finishRun(
+        run.id,
+        run.userId,
+        request.signal.aborted ? "stopped" : "error",
+      ).catch(() => logErrorId("chat_persistence_failed"));
+    const response = errorResponse(
+      request.signal.aborted ? new AppError("request_cancelled", 499) : error,
+      "chat_failed",
+    );
+    response.headers.set("cache-control", "no-store");
+    if (run) response.headers.set("x-chat-branch", run.branchId);
+    return response;
   }
-  // return result.toUIMessageStreamResponse({
-  //   sendSources: true,
-  //   sendReasoning: true,
-  //   messageMetadata: ({ part }) => {
-  //     if (part.type === "finish") {
-  //       return { usage: part.totalUsage };
-  //     }
-  //   },
-  // });
 }
 
 export async function DELETE(request: Request) {
@@ -269,22 +175,52 @@ export async function DELETE(request: Request) {
   const id = searchParams.get("id");
 
   if (!id) {
-    return NextResponse.json({ error: "Invalid Chat" }, { status: 401 });
+    return NextResponse.json(
+      { error: { id: "invalid_chat" } },
+      { status: 400 },
+    );
   }
 
-  const { isAuthenticated, userId } = await auth();
-
-  if (!isAuthenticated) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  try {
+    const access = await requireChatAccess(request.headers);
+    const chat = await getChatForUser(id, access.userId);
+    if (!chat) {
+      return NextResponse.json({ error: { id: "forbidden" } }, { status: 403 });
+    }
+    const deletedChat = await deleteChat(id, access.userId);
+    return Response.json(deletedChat, { status: 200 });
+  } catch (error) {
+    return errorResponse(error, "chat_failed");
   }
+}
 
-  const chat = await getChat(id);
-
-  if (chat?.userId !== userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+export async function PATCH(request: Request) {
+  try {
+    const access = await requireChatAccess(request.headers);
+    const json: unknown = await request.json();
+    if (!json || typeof json !== "object") {
+      throw new AppError("invalid_request", 400);
+    }
+    const id =
+      "id" in json && typeof json.id === "string" ? json.id.trim() : "";
+    const title =
+      "title" in json && typeof json.title === "string"
+        ? json.title.trim()
+        : "";
+    if (!id || !title || title.length > 200) {
+      throw new AppError("invalid_title", 400);
+    }
+    const chat = await getChatForUser(id, access.userId);
+    if (!chat) {
+      return NextResponse.json({ error: { id: "forbidden" } }, { status: 403 });
+    }
+    const updated = await updateChat({
+      id,
+      title,
+      userId: access.userId,
+    });
+    return NextResponse.json(updated);
+  } catch (error) {
+    return errorResponse(error, "chat_failed");
   }
-
-  const deletedChat = await deleteChat(id);
-
-  return Response.json(deletedChat, { status: 200 });
 }

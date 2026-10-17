@@ -1,13 +1,12 @@
+import { and, asc, desc, eq, ilike, type SQL, sql } from "drizzle-orm";
 import type { AppUsage } from "@/lib/ai/usage";
-import { ensureDb } from "@/lib/database/db";
-import type { IChat } from "@/lib/database/models/chat";
-import { ChatModel } from "@/lib/database/models/chat";
-import { ChatMessageModel } from "@/lib/database/models/chat-message";
-import type { ChatVisibility } from "@/lib/types";
+import { requireDb } from "@/lib/db/client";
+import { chatMessage, chat as chatTable } from "@/lib/db/schema";
+import { AppError } from "@/lib/errors";
+import type { Chat as ChatRecord, ChatVisibility } from "@/lib/types";
 
-export type Chat = IChat;
+export type Chat = ChatRecord;
 
-// Input validation types
 export type CreateChatInput = {
   id: string;
   userId: string;
@@ -17,6 +16,7 @@ export type CreateChatInput = {
 
 export type UpdateChatInput = {
   id: string;
+  userId: string;
   title?: string;
   visibility?: ChatVisibility;
   lastContext?: unknown;
@@ -27,6 +27,7 @@ export type GetChatsInput = {
   limit?: number;
   startingAfter?: string;
   endingBefore?: string;
+  query?: string;
 };
 
 export type GetChatsResult = {
@@ -34,308 +35,224 @@ export type GetChatsResult = {
   hasMore: boolean;
 };
 
-/**
- * Creates a new chat with the provided details
- */
+export function boundedLimit(
+  value: number | undefined,
+  fallback: number,
+  max: number,
+) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 1) {
+    return fallback;
+  }
+  return Math.min(Math.floor(value), max);
+}
+
+function likePattern(query: string) {
+  const escaped = query.replace(/[\\%_]/g, (character) => `\\${character}`);
+  return `%${escaped}%`;
+}
+
+function definedSql(clauses: Array<SQL | undefined>) {
+  const present = clauses.filter((clause) => clause !== undefined);
+  const combined = and(...present);
+  if (!combined) {
+    throw new AppError("persistence_failed", 500);
+  }
+  return combined;
+}
+
+function toChat(row: typeof chatTable.$inferSelect): Chat {
+  return {
+    id: row.id,
+    title: row.title,
+    userId: row.userId,
+    visibility: row.visibility === "public" ? "public" : "private",
+    lastContext: (row.lastContext as AppUsage | null) ?? null,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
 export async function createChat(input: CreateChatInput): Promise<Chat> {
-  await ensureDb();
-
-  // Input validation
-  if (!input.id?.trim()) {
-    throw new Error("Chat ID is required");
+  if (!input.id.trim() || !input.userId.trim() || !input.title.trim()) {
+    throw new AppError("invalid_chat", 400);
   }
-  if (!input.userId?.trim()) {
-    throw new Error("User ID is required");
-  }
-  if (!input.title?.trim()) {
-    throw new Error("Chat title is required");
-  }
-
-  try {
-    // Check if chat already exists
-    const existingChat = await ChatModel.findOne({ id: input.id })
-      .lean<Chat>()
-      .exec();
-
-    if (existingChat) {
-      return existingChat;
-    }
-
-    const chat = new ChatModel({
+  const db = requireDb();
+  const rows = await db
+    .insert(chatTable)
+    .values({
       id: input.id.trim(),
       userId: input.userId.trim(),
       title: input.title.trim(),
       visibility: input.visibility,
-    });
-
-    const result = await chat.save();
-    return result.toObject();
-  } catch (error: unknown) {
-    // Handle MongoDB duplicate key error (code 11000)
-    if (
-      error &&
-      typeof error === "object" &&
-      "code" in error &&
-      error.code === 11000
-    ) {
-      // Chat was created by another request, fetch and return the existing chat
-      const existingChat = await ChatModel.findOne({ id: input.id })
-        .lean<Chat>()
-        .exec();
-
-      if (existingChat) {
-        return existingChat;
-      }
-    }
-
-    console.error("Failed to create chat:", error);
-    throw new Error("Failed to create chat");
+    })
+    .returning();
+  const created = rows[0];
+  if (!created) {
+    throw new AppError("persistence_failed", 500);
   }
+  return toChat(created);
 }
 
-/**
- * Updates an existing chat
- */
 export async function updateChat(input: UpdateChatInput): Promise<Chat> {
-  await ensureDb();
-
-  if (!input.id?.trim()) {
-    throw new Error("Chat ID is required");
+  const db = requireDb();
+  const existing = await getChatForUser(input.id, input.userId);
+  if (!existing) {
+    throw new AppError("not_found", 404);
   }
+  const rows = await db
+    .update(chatTable)
+    .set({
+      title: input.title ?? existing.title,
+      visibility: input.visibility ?? existing.visibility,
+      lastContext: input.lastContext ?? existing.lastContext,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(chatTable.id, input.id), eq(chatTable.userId, input.userId)))
+    .returning();
+  const updated = rows[0];
+  if (!updated) {
+    throw new AppError("not_found", 404);
+  }
+  return toChat(updated);
+}
 
-  try {
-    const updateData: Partial<UpdateChatInput> = {};
+export async function getChatForUser(
+  id: string,
+  userId: string,
+): Promise<Chat | null> {
+  const db = requireDb();
+  const rows = await db
+    .select()
+    .from(chatTable)
+    .where(and(eq(chatTable.id, id), eq(chatTable.userId, userId)))
+    .limit(1);
+  const row = rows[0];
+  return row ? toChat(row) : null;
+}
 
-    if (input.title !== undefined) {
-      updateData.title = input.title.trim();
-    }
-    if (input.visibility !== undefined) {
-      updateData.visibility = input.visibility;
-    }
-
-    const result = await ChatModel.findOneAndUpdate(
-      { id: input.id },
-      {
-        $set: updateData,
-        ...(input.lastContext !== undefined && {
-          lastContext: input.lastContext,
-        }),
-      },
-      { new: true, returnDocument: "after" },
-    )
-      .lean<Chat>()
-      .exec();
-
-    if (!result) {
-      throw new Error("Chat not found");
-    }
-
-    return result;
-  } catch (error: unknown) {
-    console.error("Failed to update chat:", error);
-    throw new Error("Failed to update chat");
+async function requireOwnedChatId(id: string, userId: string) {
+  const db = requireDb();
+  const rows = await db
+    .select({ id: chatTable.id })
+    .from(chatTable)
+    .where(and(eq(chatTable.id, id), eq(chatTable.userId, userId)))
+    .limit(1);
+  if (!rows[0]) {
+    throw new AppError("not_found", 404);
   }
 }
 
-/**
- * Retrieves a chat by its ID
- */
-export async function getChat(id: string): Promise<Chat | null> {
-  await ensureDb();
-
-  if (!id?.trim()) {
-    throw new Error("Chat ID is required");
-  }
-
-  try {
-    const chat = await ChatModel.findOne({ id: id.trim() }).lean<Chat>().exec();
-
-    return chat;
-  } catch (error: unknown) {
-    console.error("Failed to get chat:", error);
-    throw new Error("Failed to get chat");
-  }
+function chatOlderThanCursor(cursorId: string, userId: string) {
+  return sql`(${chatTable.createdAt}, ${chatTable.id}) < (
+    select created_at, id from public.chat
+    where id = ${cursorId} and user_id = ${userId}
+  )`;
 }
 
-/**
- * Retrieves all chats for a user with cursor-based pagination
- */
+function chatNewerThanCursor(cursorId: string, userId: string) {
+  return sql`(${chatTable.createdAt}, ${chatTable.id}) > (
+    select created_at, id from public.chat
+    where id = ${cursorId} and user_id = ${userId}
+  )`;
+}
+
 export async function getUserChats(
   input: GetChatsInput,
 ): Promise<GetChatsResult> {
-  await ensureDb();
-
-  if (!input.userId?.trim()) {
-    throw new Error("User ID is required");
+  if (!input.userId.trim()) {
+    throw new AppError("invalid_chat", 400);
   }
-
-  const limit = Math.min(input.limit || 50, 100); // Cap at 100
-  const extendedLimit = limit + 1; // Fetch one extra to determine hasMore
-
-  try {
-    let query = ChatModel.find({ userId: input.userId.trim() })
-      .sort({ createdAt: -1 }) // Most recent first
-      .limit(extendedLimit)
-      .lean<Chat[]>();
-
-    // Handle cursor-based pagination
-    if (input.startingAfter) {
-      // Get the chat to start after
-      const startingChat = await ChatModel.findOne({
-        id: input.startingAfter,
-        userId: input.userId.trim(),
-      })
-        .lean<Chat>()
-        .exec();
-
-      if (!startingChat) {
-        throw new Error(`Chat with id ${input.startingAfter} not found`);
-      }
-
-      // Find chats created before the starting chat
-      query = ChatModel.find({
-        userId: input.userId.trim(),
-        createdAt: { $lt: startingChat.createdAt },
-      })
-        .sort({ createdAt: -1 })
-        .limit(extendedLimit)
-        .lean<Chat[]>();
-    } else if (input.endingBefore) {
-      // Get the chat to end before
-      const endingChat = await ChatModel.findOne({
-        id: input.endingBefore,
-        userId: input.userId.trim(),
-      })
-        .lean<Chat>()
-        .exec();
-
-      if (!endingChat) {
-        throw new Error(`Chat with id ${input.endingBefore} not found`);
-      }
-
-      // Find chats created after the ending chat
-      query = ChatModel.find({
-        userId: input.userId.trim(),
-        createdAt: { $gt: endingChat.createdAt },
-      })
-        .sort({ createdAt: -1 })
-        .limit(extendedLimit)
-        .lean<Chat[]>();
-    }
-
-    const chats = await query.exec();
-    const hasMore = chats.length > limit;
-
-    return {
-      chats: hasMore ? chats.slice(0, limit) : chats,
-      hasMore,
-    };
-  } catch (error: unknown) {
-    console.error("Failed to get user chats:", error);
-    throw new Error("Failed to get user chats");
+  if (input.startingAfter && input.endingBefore) {
+    throw new AppError("invalid_cursor", 400);
   }
+  const db = requireDb();
+  const limit = boundedLimit(input.limit, 50, 100);
+  const userId = input.userId.trim();
+  const query = input.query?.trim() ?? "";
+  let cursorId: string | null = null;
+  let direction: "older" | "newer" | null = null;
+  if (input.endingBefore) {
+    cursorId = input.endingBefore;
+    direction = "older";
+  }
+  if (input.startingAfter) {
+    cursorId = input.startingAfter;
+    direction = "newer";
+  }
+  if (cursorId) {
+    await requireOwnedChatId(cursorId, userId);
+  }
+  const search =
+    query.length > 0 ? ilike(chatTable.title, likePattern(query)) : undefined;
+  let timeline: SQL | undefined;
+  if (cursorId && direction === "older") {
+    timeline = chatOlderThanCursor(cursorId, userId);
+  }
+  if (cursorId && direction === "newer") {
+    timeline = chatNewerThanCursor(cursorId, userId);
+  }
+  const newer = direction === "newer";
+  const rows = await db
+    .select()
+    .from(chatTable)
+    .where(definedSql([eq(chatTable.userId, userId), search, timeline]))
+    .orderBy(
+      newer ? asc(chatTable.createdAt) : desc(chatTable.createdAt),
+      newer ? asc(chatTable.id) : desc(chatTable.id),
+    )
+    .limit(limit + 1);
+  const hasMore = rows.length > limit;
+  const page = rows.slice(0, limit);
+  if (newer) {
+    page.reverse();
+  }
+  return {
+    chats: page.map(toChat),
+    hasMore,
+  };
 }
 
-/**
- * Retrieves all chats for a user (simple version without pagination)
- */
 export async function getAllUserChats(userId: string): Promise<Chat[]> {
-  await ensureDb();
-
-  if (!userId?.trim()) {
-    throw new Error("User ID is required");
-  }
-
-  try {
-    const chats = await ChatModel.find({ userId: userId.trim() })
-      .sort({ createdAt: -1 }) // Most recent first
-      .lean<Chat[]>()
-      .exec();
-
-    return chats;
-  } catch (error: unknown) {
-    console.error("Failed to get all user chats:", error);
-    throw new Error("Failed to get all user chats");
-  }
+  const db = requireDb();
+  const rows = await db
+    .select()
+    .from(chatTable)
+    .where(eq(chatTable.userId, userId))
+    .orderBy(desc(chatTable.createdAt), desc(chatTable.id));
+  return rows.map(toChat);
 }
 
-/**
- * Alias for getAllUserChats for backward compatibility
- */
 export const getChatsByUserId = getAllUserChats;
 
-/**
- * Deletes a chat and all its associated messages
- */
-export async function deleteChat(id: string): Promise<boolean> {
-  await ensureDb();
-
-  if (!id?.trim()) {
-    throw new Error("Chat ID is required");
-  }
-
-  try {
-    // Use transaction to ensure atomicity
-    const session = await ChatModel.startSession();
-
-    try {
-      await session.withTransaction(async () => {
-        // Delete all messages for this chat
-        await ChatMessageModel.deleteMany({ chatId: id.trim() }, { session });
-
-        // Delete the chat itself
-        const result = await ChatModel.findOneAndDelete(
-          { id: id.trim() },
-          { session },
-        );
-
-        if (!result) {
-          throw new Error("Chat not found");
-        }
-      });
-
-      return true;
-    } finally {
-      await session.endSession();
+export async function deleteChat(id: string, userId: string): Promise<boolean> {
+  const db = requireDb();
+  return db.transaction(async (tx) => {
+    const owned = await tx
+      .select({ id: chatTable.id })
+      .from(chatTable)
+      .where(and(eq(chatTable.id, id), eq(chatTable.userId, userId)))
+      .limit(1);
+    if (!owned[0]) {
+      return false;
     }
-  } catch (error: unknown) {
-    console.error("Failed to delete chat:", error);
-    throw new Error("Failed to delete chat");
-  }
+    await tx
+      .delete(chatMessage)
+      .where(and(eq(chatMessage.chatId, id), eq(chatMessage.userId, userId)));
+    await tx
+      .delete(chatTable)
+      .where(and(eq(chatTable.id, id), eq(chatTable.userId, userId)));
+    return true;
+  });
 }
 
-/**
- * Updates the lastContext field for a specific chat
- */
 export async function updateChatLastContext({
   chatId,
+  userId,
   context,
 }: {
   chatId: string;
+  userId: string;
   context: AppUsage;
 }): Promise<Chat | null> {
-  await ensureDb();
-
-  if (!chatId?.trim()) {
-    throw new Error("Chat ID is required");
-  }
-
-  if (!context) {
-    throw new Error("Context is required");
-  }
-
-  try {
-    const updatedChat = await ChatModel.findOneAndUpdate(
-      { id: chatId.trim() },
-      { lastContext: context },
-      { new: true, returnDocument: "after" },
-    )
-      .lean<Chat>()
-      .exec();
-
-    return updatedChat;
-  } catch (error: unknown) {
-    console.error("Failed to update chat last context:", error);
-    throw new Error("Failed to update chat last context");
-  }
+  return updateChat({ id: chatId, userId, lastContext: context });
 }

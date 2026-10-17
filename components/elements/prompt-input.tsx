@@ -1,22 +1,5 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
-import { useFileUpload } from "@/hooks/use-file-upload";
-import { cn } from "@/lib/utils";
 import type { ChatStatus, FileUIPart } from "ai";
 import {
   ImageIcon,
@@ -49,6 +32,23 @@ import {
   useRef,
   useState,
 } from "react";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { useFileUpload } from "@/hooks/use-file-upload";
+import { cn } from "@/lib/utils";
 
 type AttachmentFile = FileUIPart & {
   id: string;
@@ -229,6 +229,7 @@ export type PromptInputProps = Omit<
   multiple?: boolean;
   // When true, accepts drops anywhere on document. Default false (opt-in).
   globalDrop?: boolean;
+  filesEnabled?: boolean;
   // Minimal constraints
   maxFiles?: number;
   maxFileSize?: number; // bytes
@@ -247,6 +248,7 @@ export const PromptInput = ({
   accept,
   multiple,
   globalDrop,
+  filesEnabled = false,
   maxFiles,
   maxFileSize,
   onError,
@@ -259,7 +261,7 @@ export const PromptInput = ({
   const formRef = useRef<HTMLFormElement | null>(null);
 
   const { uploadFiles, deleteFile, isUploading } = useFileUpload({
-    service: "cloudinary", // Default to Cloudinary
+    service: "private",
     onProgress: (progress) => {
       setItems((prev) =>
         prev.map((item) =>
@@ -332,6 +334,9 @@ export const PromptInput = ({
 
   const add = useCallback(
     async (files: File[] | FileList) => {
+      if (!filesEnabled) {
+        return;
+      }
       const incoming = Array.from(files);
       const accepted = incoming.filter((f) => matchesAccept(f));
       if (accepted.length === 0) {
@@ -405,7 +410,7 @@ export const PromptInput = ({
         });
       }
     },
-    [matchesAccept, maxFiles, maxFileSize, onError, uploadFiles],
+    [filesEnabled, matchesAccept, maxFiles, maxFileSize, onError, uploadFiles],
   );
 
   const remove = useCallback(
@@ -416,10 +421,10 @@ export const PromptInput = ({
           URL.revokeObjectURL(found.url);
         }
 
-        // If the file has a publicId and was successfully uploaded, delete it from Cloudinary
+        // If the file has a publicId and was successfully uploaded, delete it from private storage
         if (found?.publicId && found.uploadStatus === "completed") {
           deleteFile(found.publicId).catch((error) => {
-            console.error("Failed to delete file from Cloudinary:", error);
+            console.error("Failed to delete uploaded file:", error);
           });
         }
 
@@ -436,10 +441,10 @@ export const PromptInput = ({
           URL.revokeObjectURL(file.url);
         }
 
-        // If the file has a publicId and was successfully uploaded, delete it from Cloudinary
+        // If the file has a publicId and was successfully uploaded, delete it from private storage
         if (file.publicId && file.uploadStatus === "completed") {
           deleteFile(file.publicId).catch((error) => {
-            console.error("Failed to delete file from Cloudinary:", error);
+            console.error("Failed to delete uploaded file:", error);
           });
         }
       }
@@ -528,15 +533,8 @@ export const PromptInput = ({
       ...item,
     }));
 
-    try {
-      await onSubmit({ text: event.currentTarget.message.value, files }, event);
-      // Clear attachments from UI after successful submission (but keep them in Cloudinary)
-      clearLocal();
-    } catch (error) {
-      // Preserve attachments on failure - don't clear them
-      // Re-throw the error so the caller can handle it
-      throw error;
-    }
+    await onSubmit({ text: event.currentTarget.message.value, files }, event);
+    clearLocal();
   };
 
   const ctx = useMemo<AttachmentsContext>(

@@ -1,34 +1,8 @@
 "use server";
 
-import {
-  deleteTrailingMessages,
-  getMessageById,
-} from "@/lib/actions/chat/chat-message";
-import { generateText, type UIMessage } from "ai";
-
-export async function generateChatTitle({ message }: { message: UIMessage }) {
-  const { text: title } = await generateText({
-    model: "meituan/longcat-flash-chat",
-    system: `\n
-      - you will generate a short title based on the first message a user begins a conversation with
-      - ensure it is not more than 80 characters long
-      - the title should be a summary of the user's message
-      - do not use single quotes double quotes or colons`,
-    prompt: JSON.stringify(message),
-  });
-
-  return title;
-}
+import { headers } from "next/headers";
+import { deleteOwnedTrailingFromMessage } from "@/lib/actions/chat/chat-message";
 
 export async function deleteChatMessages(id: string) {
-  const message = await getMessageById(id);
-
-  if (!message) {
-    throw new Error("Message not found");
-  }
-
-  const chatId = message.chatId;
-  const timestamp = message.createdAt;
-
-  await deleteTrailingMessages(chatId, timestamp);
+  await deleteOwnedTrailingFromMessage(await headers(), id);
 }

@@ -1,11 +1,11 @@
 "use client";
 
-import type { TypeUIMessage } from "@/lib/types";
 import type { UseChatHelpers } from "@ai-sdk/react";
 import type { ChatStatus } from "ai";
 import { PaperclipIcon } from "lucide-react";
 import Image from "next/image";
 import { Fragment, lazy, Suspense, useState } from "react";
+import type { TypeUIMessage } from "@/lib/types";
 import { Message, MessageContent } from "../../elements/message";
 import {
   Reasoning,
@@ -15,7 +15,7 @@ import {
 import { Response } from "../../elements/response";
 import { MessageActions } from "./message-action";
 
-// Lazy load MessageEditor to prevent Mongoose model access before connection
+// The editor is deferred until requested. Branch persistence is enabled by F05.
 const MessageEditor = lazy(() =>
   import("./message-editor").then((module) => ({
     default: module.MessageEditor,
@@ -37,6 +37,8 @@ interface MessagePartProps {
   isLastMessage: boolean;
   regenerate: () => void;
   setMessages: UseChatHelpers<TypeUIMessage>["setMessages"];
+  actionsEnabled?: boolean;
+  onEdit?: (messageId: string, text: string) => Promise<boolean>;
 }
 
 export function MessagePart({
@@ -46,7 +48,8 @@ export function MessagePart({
   status,
   isLastMessage,
   regenerate,
-  setMessages,
+  actionsEnabled = false,
+  onEdit,
 }: MessagePartProps) {
   const isLastPart = partIndex === message.parts.length - 1;
 
@@ -61,8 +64,9 @@ export function MessagePart({
               <MessageEditor
                 message={message}
                 setMode={setMode}
-                setMessages={setMessages}
-                regenerate={regenerate}
+                onSubmit={async (text) => {
+                  return (await onEdit?.(message.id, text)) ?? false;
+                }}
               />
             </Suspense>
           </Fragment>
@@ -81,8 +85,10 @@ export function MessagePart({
               text={part.text || ""}
               isLastMessage={isLastMessage}
               isLastPart={isLastPart}
-              onRetry={regenerate}
-              onEdit={() => setMode("edit")}
+              onRetry={actionsEnabled ? regenerate : undefined}
+              onEdit={
+                actionsEnabled && isLastPart ? () => setMode("edit") : undefined
+              }
             />
           </Fragment>
         );

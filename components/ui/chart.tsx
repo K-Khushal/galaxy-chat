@@ -71,36 +71,43 @@ function ChartContainer({
 
 const ChartStyle = ({ id, config }: { id: string; config: ChartConfig }) => {
   const colorConfig = Object.entries(config).filter(
-    ([, config]) => config.theme || config.color,
+    ([, itemConfig]) => itemConfig.theme || itemConfig.color,
   );
 
   if (!colorConfig.length) {
     return null;
   }
 
-  return (
-    <style
-      dangerouslySetInnerHTML={{
-        __html: Object.entries(THEMES)
-          .map(
-            ([theme, prefix]) => `
-${prefix} [data-chart=${id}] {
-${colorConfig
-  .map(([key, itemConfig]) => {
-    const color =
-      itemConfig.theme?.[theme as keyof typeof itemConfig.theme] ||
-      itemConfig.color;
-    return color ? `  --color-${key}: ${color};` : null;
-  })
-  .join("\n")}
-}
-`,
-          )
-          .join("\n"),
-      }}
-    />
-  );
+  const safeId = id.replace(/[^a-zA-Z0-9_-]/g, "");
+  const css = Object.entries(THEMES)
+    .map(([theme, prefix]) => {
+      const declarations = colorConfig
+        .map(([key, itemConfig]) => {
+          const color = cssColor(
+            itemConfig.theme?.[theme as keyof typeof itemConfig.theme] ||
+              itemConfig.color,
+          );
+          const token = key.replace(/[^a-zA-Z0-9_-]/g, "");
+          return color && token ? `  --color-${token}: ${color};` : null;
+        })
+        .filter((line) => line !== null)
+        .join("\n");
+      return `${prefix} [data-chart=${safeId}] {\n${declarations}\n}`;
+    })
+    .join("\n");
+
+  return <style>{css}</style>;
 };
+
+function cssColor(value: string | undefined) {
+  if (!value || value.length > 80 || /[{}<>;]/.test(value)) {
+    return null;
+  }
+  if (!/^[a-zA-Z0-9#(),.%\s-]+$/.test(value)) {
+    return null;
+  }
+  return value;
+}
 
 const ChartTooltip = RechartsPrimitive.Tooltip;
 

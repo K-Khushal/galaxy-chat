@@ -1,38 +1,52 @@
+"use client";
+import type * as React from "react";
+import type { AccountActions } from "@/components/account-settings";
+import { usePlatformAccess } from "@/components/chat/platform-access";
+import { CreditNotice } from "@/components/shell/credit-notice";
 import { SidebarActions } from "@/components/sidebar/sidebar-actions";
-import { SidebarHistory } from "@/components/sidebar/sidebar-history";
+import {
+  type HistoryPreview,
+  SidebarHistory,
+} from "@/components/sidebar/sidebar-history";
 import { SidebarUser } from "@/components/sidebar/sidebar-user";
 import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
-  SidebarGroupLabel,
   SidebarHeader,
-  SidebarRail,
 } from "@/components/ui/sidebar";
 import type { TypeUserProfile } from "@/lib/types";
-import type * as React from "react";
+import type { CreditStatus } from "@/lib/ui/credits";
 
 export function AppSidebar({
   user,
+  preview,
+  creditStatus,
+  onNewChat,
+  accountActions,
   ...props
-}: React.ComponentProps<typeof Sidebar> & { user?: TypeUserProfile }) {
+}: React.ComponentProps<typeof Sidebar> & {
+  user: TypeUserProfile;
+  preview?: HistoryPreview;
+  creditStatus?: CreditStatus;
+  onNewChat?: () => void;
+  accountActions?: AccountActions;
+}) {
+  const access = usePlatformAccess();
   return (
     <Sidebar {...props} collapsible="icon">
       <SidebarHeader>
-        <SidebarActions />
+        <SidebarActions onNewChat={onNewChat} />
       </SidebarHeader>
-
-      <SidebarGroupLabel className="text-sm text-muted-foreground px-4">
-        Chats
-      </SidebarGroupLabel>
-
       <SidebarContent>
-        <SidebarHistory />
+        <SidebarHistory preview={preview} />
       </SidebarContent>
-      <SidebarFooter>
-        <div className="pb-2">{user ? <SidebarUser user={user} /> : null}</div>
+      <SidebarFooter className="gap-3 border-t border-sidebar-border pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        <div className="group-data-[collapsible=icon]:hidden">
+          <CreditNotice status={creditStatus ?? access.creditStatus} />
+        </div>
+        <SidebarUser user={user} actions={accountActions} />
       </SidebarFooter>
-      <SidebarRail />
     </Sidebar>
   );
 }

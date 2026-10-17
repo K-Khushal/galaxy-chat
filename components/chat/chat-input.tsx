@@ -1,66 +1,37 @@
-import { ChatContext } from "@/components/chat/chat-context";
+"use client";
+import { ArrowUp, Paperclip, Square } from "lucide-react";
+import { useRef, useState } from "react";
 import { ModelSelector } from "@/components/chat/model-selector";
-import {
-  PromptInput,
-  PromptInputAttachment,
-  PromptInputAttachments,
-  PromptInputBody,
-  PromptInputButton,
-  type PromptInputMessage,
-  PromptInputSubmit,
-  PromptInputTextarea,
-  PromptInputToolbar,
-  PromptInputTools,
-  usePromptInputAttachments,
-} from "@/components/elements/prompt-input";
+import { UsageNote } from "@/components/shell/usage-note";
+import { Button } from "@/components/ui/button";
+import type { ChatModel } from "@/lib/ai/model";
 import type { AppUsage } from "@/lib/ai/usage";
-import { filterValidFiles } from "@/lib/ai/utils";
-import type { TypeUIMessage } from "@/lib/types";
-import { cn } from "@/lib/utils";
-import type { UseChatHelpers } from "@ai-sdk/react";
-import type { ChatStatus, UIMessage } from "ai";
-import { GlobeIcon, MicIcon, Paperclip } from "lucide-react";
+import {
+  type ChatAvailability,
+  defaultAvailability,
+} from "@/lib/ui/availability";
+import {
+  acceptComposerSubmission,
+  type ComposerSubmission,
+  canSendMessage,
+} from "@/lib/ui/composer";
 
-function AddAttachmentButton() {
-  const attachments = usePromptInputAttachments();
-
-  return (
-    <PromptInputButton
-      onClick={(e) => {
-        e.preventDefault();
-        attachments.openFileDialog();
-      }}
-      variant="ghost"
-    >
-      <Paperclip size={16} />
-      <span className="sr-only">Add photos</span>
-    </PromptInputButton>
-  );
-}
-
-interface ChatInputProps {
-  id: string;
-  messages: UIMessage[];
-  setMessages: UseChatHelpers<TypeUIMessage>["setMessages"];
-  sendMessage: UseChatHelpers<TypeUIMessage>["sendMessage"];
-  status: ChatStatus;
+export type ComposerProps = {
+  status: "ready" | "submitted" | "streaming" | "error";
   stop: () => void;
   usage?: AppUsage;
   text: string;
   setText: (text: string) => void;
   model: string;
   setModel: (model: string) => void;
-  useMicrophone: boolean;
-  setUseMicrophone: (useMicrophone: boolean) => void;
-  useWebSearch: boolean;
-  setUseWebSearch: (useWebSearch: boolean) => void;
-}
+  models?: ChatModel[];
+  availability?: ChatAvailability;
+  blocked?: boolean;
+  onSend: (text: string) => ComposerSubmission;
+};
 
 export function ChatInput({
-  id,
-  messages,
-  setMessages,
-  sendMessage,
+  onSend,
   status,
   stop,
   usage,
@@ -68,105 +39,128 @@ export function ChatInput({
   setText,
   model,
   setModel,
-  useMicrophone,
-  setUseMicrophone,
-  useWebSearch,
-  setUseWebSearch,
-}: ChatInputProps) {
-  const handleSubmit = async (message: PromptInputMessage) => {
-    window.history.replaceState({}, "", `/chat/${id}`);
-
-    const hasText = Boolean(message.text?.trim());
-    const hasAttachments = Boolean(message.files?.length);
-
-    if (!(hasText || hasAttachments)) {
+  models,
+  availability = defaultAvailability,
+  blocked = false,
+}: ComposerProps) {
+  const composing = useRef(false);
+  const submittingRef = useRef(false);
+  const [submitting, setSubmitting] = useState(false);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const busy = status === "streaming" || status === "submitted";
+  const ready = availability.state === "ready" && Boolean(model);
+  async function submit() {
+    if (
+      !ready ||
+      submittingRef.current ||
+      !canSendMessage(text, busy || blocked)
+    )
       return;
+    const draft = text.trim();
+    submittingRef.current = true;
+    setSubmitting(true);
+    inputRef.current?.focus();
+    try {
+      const submission = acceptComposerSubmission({
+        text,
+        blocked: busy || blocked,
+        onSend,
+        onAccepted: () => setText(""),
+      });
+      if (submission.accepted) await submission.completion;
+    } catch {
+      if (!inputRef.current?.value) setText(draft);
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
     }
-
-    // Filter out files that are still uploading or failed to upload
-    // Only include files that have been successfully uploaded to Cloudinary
-    const validFiles = filterValidFiles(message.files || []);
-
-    // Use AI SDK v5 pattern - send files directly
-    sendMessage({
-      role: "user",
-      parts: [
-        ...validFiles.map((attachment) => ({
-          type: attachment.type,
-          url: attachment.url,
-          name: attachment.filename,
-          mediaType: attachment.mediaType,
-        })),
-        {
-          type: "text",
-          text: message.text || "Sent with attachments",
-        },
-      ],
-    });
-
-    // Only clear the input on successful message sending
-    setText("");
-  };
-
+  }
   return (
-    <div className={cn("relative flex w-full flex-col gap-4")}>
-      <PromptInput
-        onSubmit={handleSubmit}
-        className="rounded-xl border border-border bg-background p-3 shadow-xs transition-all duration-200 focus-within:border-border hover:border-muted-foreground/50"
-        globalDrop
-        multiple
-        accept="image/*"
+    <div className="w-full">
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          void submit();
+        }}
+        className="rounded-2xl border border-border bg-card p-2 shadow-sm focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/15"
       >
-        <PromptInputBody>
-          <PromptInputAttachments>
-            {(attachment) => <PromptInputAttachment data={attachment} />}
-          </PromptInputAttachments>
-          <PromptInputTextarea
-            onChange={(e) => setText(e.target.value)}
-            value={text}
-          />
-        </PromptInputBody>
-        <PromptInputToolbar>
-          <PromptInputTools>
-            <AddAttachmentButton />
-            <PromptInputButton
-              disabled={true}
-              onClick={() => setUseMicrophone(!useMicrophone)}
-              variant={useMicrophone ? "default" : "ghost"}
-            >
-              <MicIcon size={16} />
-              <span className="sr-only">Microphone</span>
-            </PromptInputButton>
-            <PromptInputButton
-              disabled={true}
-              onClick={() => setUseWebSearch(!useWebSearch)}
-              variant={useWebSearch ? "default" : "ghost"}
-            >
-              <GlobeIcon size={16} />
-              <span>Search</span>
-            </PromptInputButton>
-            <ModelSelector value={model} onValueChange={setModel} />
-          </PromptInputTools>
-          <div className="flex items-center gap-2">
-            <ChatContext {...{ usage }} />
-            <PromptInputSubmit
-              disabled={
-                !(
-                  status === "streaming" ||
-                  status === "submitted" ||
-                  text?.trim()
-                )
-              }
-              status={status}
-              onClick={
-                status === "streaming" || status === "submitted"
-                  ? () => stop()
-                  : undefined
-              }
+        <label className="sr-only" htmlFor="chat-composer">
+          Message
+        </label>
+        <textarea
+          id="chat-composer"
+          ref={inputRef}
+          rows={2}
+          maxLength={2000}
+          aria-describedby="composer-status"
+          className="block max-h-48 min-h-20 w-full resize-y rounded-lg bg-transparent px-3 py-3 text-base leading-relaxed outline-none placeholder:text-muted-foreground md:text-sm"
+          placeholder="Ask anything, or think out loud…"
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+          onCompositionStart={() => {
+            composing.current = true;
+          }}
+          onCompositionEnd={() => {
+            composing.current = false;
+          }}
+          onKeyDown={(event) => {
+            if (
+              event.key === "Enter" &&
+              !event.shiftKey &&
+              !event.nativeEvent.isComposing &&
+              !composing.current
+            ) {
+              event.preventDefault();
+              void submit();
+            }
+          }}
+        />
+        <div className="flex min-w-0 items-center gap-1">
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            disabled
+            aria-label="Attachments unavailable"
+            title="Attachments are not available yet"
+          >
+            <Paperclip className="size-4" />
+          </Button>
+          <div className="min-w-0 flex-1">
+            <ModelSelector
+              value={model}
+              onValueChange={setModel}
+              models={models}
+              availability={availability}
             />
           </div>
-        </PromptInputToolbar>
-      </PromptInput>
+          <Button
+            type={busy ? "button" : "submit"}
+            size="icon"
+            className="rounded-xl"
+            aria-label={busy ? "Stop response" : "Send message"}
+            disabled={
+              !busy &&
+              (blocked || submitting || !ready || !canSendMessage(text, false))
+            }
+            onClick={busy ? stop : undefined}
+          >
+            {busy ? (
+              <Square className="size-3.5 fill-current" />
+            ) : (
+              <ArrowUp className="size-5" />
+            )}
+          </Button>
+        </div>
+      </form>
+      <div className="flex min-h-10 flex-wrap items-center justify-between gap-x-4 gap-y-1 px-2 pt-2 text-xs text-muted-foreground">
+        <p id="composer-status" className="min-w-0 flex-1 leading-relaxed">
+          {availability.state === "unavailable"
+            ? availability.reason
+            : "Enter to send · Shift + Enter for a new line"}
+        </p>
+        <UsageNote totalTokens={usage?.totalTokens} />
+      </div>
     </div>
   );
 }

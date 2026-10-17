@@ -1,12 +1,9 @@
 import Chat from "@/components/chat/chat";
-import { v4 as uuidv4 } from "uuid";
 
-export default async function Page() {
-  const id = uuidv4();
+export const dynamic = "force-dynamic";
 
-  return (
-    <>
-      <Chat id={id} chatMessages={[]} />
-    </>
-  );
+export default function Page() {
+  const id = crypto.randomUUID();
+
+  return <Chat id={id} chatMessages={[]} />;
 }
