@@ -39,3 +39,21 @@ Root review uses the explicitly enabled development `F04_UI_HARNESS=1` harness a
 ## Separate live gates
 
 Real-model tool protocol, maximum output semantics, complete input/output/reasoning usage, provider routing/price/budget enforcement, hosted execution CPU/deadline behavior and actual cancellation/billing reconciliation remain unverified. Missing configuration fails closed. No paid call or deployment is authorized by this implementation or evidence file.
+
+## Final combined verification and writer handoff
+
+Frozen application source: `b48754ab471a7b45f7f6fde6b12a9fc8923dacd8` on `codex/f13-tools`, including reviewed main `e4ec439eeb321c0a0f4ddf2aa32ce07326f2d6be`. The preceding feature checkpoint is `26bba3a`; the main inheritance merge is `0d9177c`. Only this evidence file changed after the final source pin.
+
+All commands below were serialized through the shared check runner and passed against that frozen combined source:
+
+- `bun run lint`: **284 files**, no fixes or errors.
+- `bun run typecheck`: passed with incremental output disabled.
+- `bun test`: **169 pass / 1 skip / 0 fail**, **1,780 assertions**, **170 tests across 24 files**, **119.34s**. The skip is the inherited F10/F11 native-Postgres concurrency fixture when its explicit database URL is absent; no F13 test is skipped. The actual 20-second uncooperative-provider test ran and passed.
+- `bun run build --webpack`: passed strict compilation, generated-route TypeScript, all **25/25** generated pages and final build traces. `/api/tools` and `/chat/tools` are dynamic; the existing development-only preview gate is preserved.
+- `git diff --check`: passed, and the checkout was clean before this evidence-only update.
+
+The full suite covers the inherited F10 attachment/PDF/image/payload/context/cleanup paths alongside F13. No existing BYOK image-payload, preparation or atomic owned-context validation hook was removed. Resource units default to one for ordinary chat and key metadata tests; tool runs atomically reserve three against the same shared rate limits. The regression proves 28 existing units deny a tool run before any adapter call, 27 permit a three-unit run, and a later ordinary chat reservation cannot exceed the shared limit of 30.
+
+The real OpenRouter package was also exercised with wholly intercepted local JSON responses: two SDK calls used the owner's key, explicit provider/no fallback, 170/171 output allowances and untrusted continuation results. A subsequent fake HTTP 500 generated exactly one attempt, retained its conservative hold, and leaked no provider diagnostic or key into private exports. No live inference request occurred.
+
+Writer released after this evidence-only commit. All test sockets/databases, typecheck and build processes finished; no implementation-owned server or browser was started and no host check lock remains held. Root owns independent review, browser checks, GitHub/PR/CI/merge and any remaining live gates. Original and other managed checkouts were not modified. No push, PR, deployment, provisioning, cloud login, billing change or paid call was performed by this worker.
