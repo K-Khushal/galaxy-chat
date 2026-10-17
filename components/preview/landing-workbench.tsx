@@ -10,6 +10,7 @@ const pages = [
   { path: "/privacy", label: "Privacy & data" },
   { path: "/guest", label: "Guest (public)" },
   { path: "/preview/ui?context=1", label: "Local memory & projects fixture" },
+  { path: "/preview/ui?attachments=1", label: "Local attachments fixture" },
   {
     path: "/preview/ui?guest=available",
     label: "Local guest fixture: available",

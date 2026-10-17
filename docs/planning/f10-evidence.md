@@ -8,7 +8,7 @@ Status: private storage, extraction, owned API, shared chat/context/provider int
 - `/api/attachments` accepts a saved owned conversation and raw file bytes. It never accepts arbitrary URLs, object paths, user ids, public storage links, or browser provider options. Invited session and same-origin mutation checks precede service work. Guest APIs never call this service. Temporary attachment context is explicitly denied.
 - Supported inputs: UTF-8 text and Markdown (128 KiB), PDF and PNG/JPEG/WebP (2 MiB), at most 12 PDF pages, 24,000 extracted characters, image dimensions at most 4,096 per side / 4 million pixels. HTML, SVG, executable formats, mismatched signatures and invalid text are rejected. Files are never displayed in an iframe or injected as HTML. Markdown is source text rather than executed MDX.
 - PDF extraction uses pinned `unpdf@1.9.0`, its serverless Mozilla PDF.js 6.4.299 build, and streamed page text. It does not create a viewer, render, run scripts, follow document links, load remote fonts/CMaps, or run OCR. Image-only scans return a clear no-text/no-OCR error. Password-protected or malformed PDFs fail closed.
-- PDF extraction has a 10-second abort deadline and request work a 45-second deadline; storage network work has a 20-second deadline. PDF.js runs on the isolate event loop: a timer cannot preempt a synchronous CPU/memory spike. Hosted isolate CPU/memory enforcement and hostile-document load testing remain deployment gates. Byte/page/text/pixel checks are real limits, not a claim of hard process isolation.
+- PDF extraction has a 10-second abort deadline and upload/body processing uses a 45-second abort budget; each storage network call has a 20-second deadline. Opportunistic cleanup is separate bounded maintenance (at most five jobs on upload; operator/post-cascade calls at most twenty). PDF.js runs on the isolate event loop: a timer cannot preempt a synchronous CPU/memory spike. Hosted isolate CPU/memory enforcement and hostile-document load testing remain deployment gates. Byte/page/text/pixel checks are real limits, not a claim of hard process isolation.
 - Upload metadata/quota is reserved transactionally before reading the request body. The platform maximum is 100 MiB, each user at most 20 MiB and 20 records, platform at most 1,000 records, and at most two global / one per-user processing lease. Explicit operator configuration can choose smaller limits. Capacity includes queued and unknown object liabilities, including after account cascades.
 - Daily UTC transfer reservations cap upload, download, and model-image reads; each operation reserves at least 64 KiB to bound tiny-file/request amplification. Maximum configurable cap is 100 MiB/day. A zero-to-ten-dollar operating target still requires operator review of database, storage, transfer, request, and infrastructure costs. No free-plan allowance is assumed or guaranteed. Attachments default unavailable with all capacity settings blank.
 - Downloads first check ownership, reserve transfer bytes, obtain a 60-second signed URL internally, verify origin/path and content hash, and proxy bytes with `attachment`, `application/octet-stream`, `nosniff`, sandbox CSP, and `private, no-store`. Signed URLs and server credentials are never returned to the browser/model or logged. Redirects are rejected. The model receives reviewed image bytes rather than a storage URL.
@@ -57,7 +57,7 @@ The command records a write-once association to the evidence hash and makes the 
 Repository-portable commands (run sequentially):
 
 ```sh
-bun test tests/f09.integration.test.ts tests/f10-attachments.test.tsx tests/f10.integration.test.tsx
+bun test tests/f09.integration.test.ts tests/f10-attachments.test.tsx tests/f10.integration.test.tsx tests/f10-attachment-ui.test.tsx
 bun run lint
 bun run typecheck
 bun test
@@ -69,20 +69,32 @@ The current collaboration serializes SQL/tests/typecheck/build with a machine-lo
 Latest integrated checks (2026-10-17):
 
 - Initial focused F09/F10 integration: 30 passed, zero failed, 442 assertions across three files (30.90 seconds).
-- Final combined checks: pending final run; exact results are recorded below before writer release.
+- Full combined suite at source checkpoint `cfbc2ad27797ec0e99c52135ae1062366a9b5e8d`: 132 passed, zero failed, 1,356 assertions across 17 files (83.56 seconds). Includes F09 memory claim-race regressions and F10 funded-text/BYOK-image file deletion after preparation while entry waits.
+- Final focused F10 route/inference tests: eight passed, zero failed, 93 assertions (12.09 seconds).
 - `bun run lint`: passed, 257 files checked after the local preview and claim-race tests.
-- Strict typecheck: initial integrated source passed; final check pending.
+- `bun run typecheck` (no incremental state): passed on final integrated source.
+- `bun run build --webpack`: passed at checkpoint `cfbc2ad`; Next 16.4.2 compiled in 30.5 seconds, completed its generated-route TypeScript phase in 14.9 seconds, and generated all 23 static pages. `/api/attachments`, `/api/context`, `/api/chat`, and development preview routes emitted successfully.
+- After that build, the only source addition is one development landing-workbench option for `/preview/ui?attachments=1`; this exposes the existing 390-pixel iframe for separate browser review. The build does not claim to cover that later selector-line addition. The subsequent full lint passed (257 files); existing preview-gate/composer tests passed (10 tests, 49 assertions, 166 ms). This is harness gate evidence, not browser interaction or backend acceptance.
 - Foundation baseline (before shared integration): 109 tests / 1,030 assertions passed, normal Next 16.4.2/Turbopack production build passed. This historical baseline does not substitute for final combined checks.
-- `git diff --check`: passed before final evidence update.
+- Vendor integrity: passed. Final `git diff --check`: passed.
 - Operator commands without configuration/terminal-proof confirmation: expected exit 1, redacted stable error identifiers only; no network reached.
 
 Hosted private bucket access/policy proof, scheduled cleanup provisioning, hostile PDF isolate resource/load checks, reviewed live image model bounds, real-phone interaction, browser review, hosted CI and deployment remain gates. Attachments must remain disabled until the applicable operational checks are satisfied. No free-plan cost guarantee is made.
+
+## Reviewed pending-action follow-up
+
+The independent standards review found that repeated delete clicks could issue duplicate DELETE/cleanup requests and completions could restore stale selected ids. The picker now serializes uploads/deletes with synchronous duplicate guards, identifies the pending delete, blocks send during mutation, and applies selection changes through functional updates in the production composer. A delete completion removes its id from the current selection. Upload completion consults the current image capability. Add file and Delete retain their action labels and expose a spinner plus `aria-busy`, following `docs/system/button.md`; Cancel upload remains usable.
+
+`tests/f10-attachment-ui.test.tsx` mounts the real production composer and picker in pinned dev-only `happy-dom@21.0.3`, using deferred injected client promises. It exercises same-tick A/A/B delete clicks, selection/model changes while A deletion waits, unsupported-image gating, serial B deletion and restored send readiness. It also covers the upload busy label/spinner, a model change before image completion, and cancellation. No test timeout was raised. DOM globals are narrowly installed and restored, and windows/root state are closed after each test. This is component interaction evidence, not browser security, storage authorization, or provider acceptance proof.
+
+Initial focused DOM regressions passed: two tests, 35 assertions (662 ms). Final post-follow-up full/type/lint/build results are recorded before writer release. The earlier `cfbc2ad` build/suite above remains historical evidence for that checkpoint.
 
 ## Primary API references checked
 
 - Installed Next 16.4.2 route-handler guide at `node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/route.md`.
 - Installed AI SDK 7.0.143 prompt docs/types at `node_modules/ai/docs/02-foundations/03-prompts.mdx` and its provider-utils file-part type.
 - [Supabase private downloads](https://supabase.com/docs/guides/storage/serving/downloads) and [official StorageFileApi REST implementation](https://github.com/supabase/storage-js/blob/master/src/packages/StorageFileApi.ts).
+- [Bun official DOM test guide](https://bun.sh/guides/test/happy-dom) and installed Happy DOM 21.0.3 Window types for the dev-only component regression runtime.
 - [unpdf official documentation, including untrusted PDF resource caveats](https://github.com/unjs/unpdf) and [PDF.js API documentation](https://mozilla.github.io/pdf.js/api/draft/module-pdfjsLib.html).
 
 ## Principal changed modules

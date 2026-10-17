@@ -1,6 +1,6 @@
 "use client";
-import { Paperclip, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Loader2, Paperclip, X } from "lucide-react";
+import { type SetStateAction, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   type AttachmentClient,
@@ -63,7 +63,7 @@ export type AttachmentPickerProps = {
   temporary?: boolean;
   busy?: boolean;
   selected: string[];
-  onSelection: (ids: string[]) => void;
+  onSelection: (ids: SetStateAction<string[]>) => void;
   imagesSupported?: boolean;
   onBusyChange?: (busy: boolean) => void;
   client?: AttachmentClient;
@@ -85,6 +85,11 @@ export function AttachmentPicker({
   const [loading, setLoading] = useState(false);
   const [available, setAvailable] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [deleting, setDeleting] = useState<string | null>(null);
+  // Refs close the duplicate-action window before React commits pending state.
+  const removing = useRef<string | null>(null);
+  const currentImagesSupported = useRef(imagesSupported);
+  currentImagesSupported.current = imagesSupported;
   const input = useRef<HTMLInputElement>(null);
   const upload = useRef<AbortController | null>(null);
   const mounted = useRef(true);
@@ -128,7 +133,7 @@ export function AttachmentPicker({
     return () => controller.abort();
   }, [chatId, disabled, client]);
   async function add(file: File) {
-    if (disabled || busy || uploading) return;
+    if (disabled || busy || upload.current || removing.current) return;
     const controller = new AbortController();
     upload.current = controller;
     setUploading(true);
@@ -140,13 +145,15 @@ export function AttachmentPicker({
       const attachment = await client.upload(chatId, file, controller.signal);
       if (!mounted.current) return;
       setFiles((previous) => [...previous, attachment]);
-      if (
-        selected.length < attachmentLimits.perMessage &&
-        (attachment.kind !== "image" || imagesSupported)
-      )
-        onSelection([...selected, attachment.id]);
+      if (attachment.kind !== "image" || currentImagesSupported.current)
+        onSelection((current) =>
+          current.length < attachmentLimits.perMessage &&
+          !current.includes(attachment.id)
+            ? [...current, attachment.id]
+            : current,
+        );
       setMessage(
-        attachment.kind === "image" && !imagesSupported
+        attachment.kind === "image" && !currentImagesSupported.current
           ? attachmentErrorMessage("attachment_model_unsupported")
           : "Private file ready. Select it to include it in your next message.",
       );
@@ -169,18 +176,30 @@ export function AttachmentPicker({
     }
   }
   async function remove(id: string) {
+    if (disabled || busy || upload.current || removing.current) return;
+    removing.current = id;
+    setDeleting(id);
+    onBusyChange?.(true);
     setMessage("");
     try {
       await client.remove(id);
+      if (!mounted.current) return;
       setFiles((previous) => previous.filter((file) => file.id !== id));
+      onSelection((current) => current.filter((value) => value !== id));
       setMessage(
         "File removed from the conversation. Private storage cleanup is queued; uncertain uploads may need operator reconciliation.",
       );
-      onSelection(selected.filter((value) => value !== id));
     } catch (error) {
-      setMessage(
-        attachmentErrorMessage(error instanceof Error ? error.message : ""),
-      );
+      if (mounted.current)
+        setMessage(
+          attachmentErrorMessage(error instanceof Error ? error.message : ""),
+        );
+    } finally {
+      removing.current = null;
+      if (mounted.current) {
+        setDeleting(null);
+        onBusyChange?.(false);
+      }
     }
   }
   return (
@@ -191,7 +210,7 @@ export function AttachmentPicker({
           type="file"
           accept={attachmentAccept}
           className="sr-only"
-          disabled={disabled || busy || uploading}
+          disabled={disabled || busy || uploading || deleting !== null}
           tabIndex={-1}
           aria-label="Choose a private file"
           onChange={(event) => {
@@ -203,11 +222,23 @@ export function AttachmentPicker({
           type="button"
           variant="ghost"
           size="sm"
-          disabled={disabled || busy || uploading || loading || !available}
+          disabled={
+            disabled ||
+            busy ||
+            uploading ||
+            deleting !== null ||
+            loading ||
+            !available
+          }
+          aria-busy={uploading}
           onClick={() => input.current?.click()}
           className="min-h-11 touch-manipulation"
         >
-          <Paperclip className="size-4" />
+          {uploading ? (
+            <Loader2 aria-hidden="true" className="size-4 animate-spin" />
+          ) : (
+            <Paperclip aria-hidden="true" className="size-4" />
+          )}
           Add file
         </Button>
         {uploading ? (
@@ -246,16 +277,19 @@ export function AttachmentPicker({
                     disabled={
                       busy ||
                       uploading ||
+                      deleting === file.id ||
                       file.state !== "ready" ||
                       (!checked && unsupported) ||
                       (!checked &&
                         selected.length >= attachmentLimits.perMessage)
                     }
                     onChange={() =>
-                      onSelection(
-                        checked
-                          ? selected.filter((id) => id !== file.id)
-                          : [...selected, file.id],
+                      onSelection((current) =>
+                        current.includes(file.id)
+                          ? current.filter((id) => id !== file.id)
+                          : current.length < attachmentLimits.perMessage
+                            ? [...current, file.id]
+                            : current,
                       )
                     }
                   />
@@ -281,11 +315,19 @@ export function AttachmentPicker({
                   variant="ghost"
                   size="icon"
                   className="min-h-11 min-w-11 touch-manipulation"
-                  disabled={busy || uploading}
+                  disabled={busy || uploading || deleting !== null}
+                  aria-busy={deleting === file.id}
                   aria-label={`Delete ${file.name}`}
                   onClick={() => void remove(file.id)}
                 >
-                  <X className="size-4" />
+                  {deleting === file.id ? (
+                    <Loader2
+                      aria-hidden="true"
+                      className="size-4 animate-spin"
+                    />
+                  ) : (
+                    <X aria-hidden="true" className="size-4" />
+                  )}
                 </Button>
               </li>
             );
@@ -295,9 +337,11 @@ export function AttachmentPicker({
       <output aria-live="polite" className="text-xs text-muted-foreground">
         {uploading
           ? "Uploading and extracting text…"
-          : loading
-            ? "Loading private files…"
-            : message}
+          : deleting
+            ? "Deleting private file…"
+            : loading
+              ? "Loading private files…"
+              : message}
       </output>
     </section>
   );

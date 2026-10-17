@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { type SetStateAction, useCallback, useEffect, useState } from "react";
 import {
   AttachmentPicker,
   attachmentErrorMessage,
@@ -82,7 +82,7 @@ export function AttachmentComposer({
   const [error, setError] = useState("");
   const [uploading, setUploading] = useState(false);
   const select = useCallback(
-    (next: string[]) => {
+    (next: SetStateAction<string[]>) => {
       onChange(undefined, false);
       setView(undefined);
       setIds(next);
