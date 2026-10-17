@@ -112,6 +112,23 @@ export async function runToolAgent(options: {
           params.maxOutputTokens !== allowance
         )
           throw new AppError("tool_context_limit", 400);
+        // SDK-created schema errors/denials are tool results too. They must not
+        // bypass the per-result cap simply because execute() was never called.
+        for (const message of params.prompt) {
+          if (message.role === "system") continue;
+          for (const part of message.content) {
+            if (part.type !== "tool-result") continue;
+            const result = part.output;
+            const size =
+              "value" in result
+                ? typeof result.value === "string"
+                  ? Buffer.byteLength(result.value)
+                  : bytes(result.value)
+                : bytes(result);
+            if (size > TOOL_LIMITS.resultBytes)
+              throw new AppError("tool_result_limit", 400);
+          }
+        }
         await options.hooks.beforeModel(index, inputBytes, allowance);
         signal.throwIfAborted();
         let result: Awaited<ReturnType<typeof doGenerate>>;

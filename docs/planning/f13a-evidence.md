@@ -26,7 +26,9 @@ All heavy commands use `python3 /private/tmp/galaxy-run-check.py` to serialize a
 
 - Before inheriting F10: `bun run lint` passed (260 files); `bun run typecheck` passed; full `bun test` passed **147 tests / 1,493 assertions / 103.99s**.
 - The first full run caught the exact migration manifest missing 0008; that expected version was updated before the passing run.
-- The final combined checks and strict build are recorded below after inheritance.
+- Main F10 merge `e4ec439eeb321c0a0f4ddf2aa32ce07326f2d6be` was inherited in `0d9177c`. Account export retains both tool data and attachments; attachment cleanup, image-payload preparation and atomic entry hooks remain intact. The exact migration manifest includes 0005/0006/0007/0008. Locked dependencies were installed in this checkout.
+- After inheritance, focused cap tests passed **11 tests / 85 assertions**, including the real 20-second deadline. The SDK-generated invalid-input error case was additionally pinned to the exact `tool_result_limit` rejection (**1 test / 7 assertions**). Both normal tool outputs and SDK-created tool errors/denials are capped before another model entry.
+- Combined lint passed **284 files** and standalone typecheck passed. Final combined full-suite and strict-build results follow below.
 
 Focused proof includes exactly three model dispatches; a shared 512-output-token allocation; four dispatches with a fifth denied; duplicate-call IDs; schema and accumulated-history pre-entry limits; selected-only cross-owner/immutable/deleted-revision behavior; malicious 4 KiB result handling; unknown/reasoning usage; abort and real deadline behavior; no platform reservation/fallback; durable credential replacement checks; request idempotency; exact-action expiry/revocation/replay/changed arguments; and the actual SDK signed approval protocol backed by a durable decision and inert single-use execution.
 

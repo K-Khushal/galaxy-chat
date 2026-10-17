@@ -307,3 +307,30 @@ test("F13 actual 20-second deadline ends an uncooperative provider without retry
   expect(h.terminal).toEqual([]);
   expect(h.events).toEqual([]);
 }, 25000);
+
+test("F13 SDK-generated invalid-input tool errors cannot bypass the per-result cap", async () => {
+  const h = harness();
+  const model = new MockLanguageModelV4({
+    doGenerate: receipt([
+      call("invalid", "arithmetic", {
+        operation: "add",
+        left: "x".repeat(4200),
+        right: 1,
+      }),
+    ]),
+  });
+  expect(
+    await rejectionOf(
+      runToolAgent({
+        model,
+        prompt: "Invalid schema fixture",
+        revisions: [],
+        approvalSecret: secret,
+        hooks: h.hooks,
+      }),
+    ),
+  ).toMatchObject({ id: "tool_result_limit" });
+  expect(model.doGenerateCalls).toHaveLength(1);
+  expect(h.claims).toEqual([0]);
+  expect(h.events).toEqual([]);
+});
