@@ -17,6 +17,10 @@ const partSchema = z.union([textPartSchema, filePartSchema]);
 export const postRequestBodySchema = z
   .object({
     id: z.uuid(),
+    requestId: z.uuid(),
+    branchId: z.uuid(),
+    action: z.enum(["send", "edit", "regenerate", "retry"]).default("send"),
+    anchorId: z.uuid().optional(),
     message: z
       .object({
         id: z.uuid(),

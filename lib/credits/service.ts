@@ -2,6 +2,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import {
+  createGateway,
   type LanguageModelUsage,
   type ModelMessage,
   streamText,
@@ -90,6 +91,7 @@ export function knownReceipt(
 type ProviderCallbacks = {
   complete: (usage: LanguageModelUsage, responseId?: string) => Promise<void>;
   uncertain: () => void;
+  signal?: AbortSignal;
 };
 export type FundedProvider = (
   config: FundingConfig,
@@ -125,7 +127,10 @@ export function openRouterProvider(
       messages: turns satisfies ModelMessage[],
       maxOutputTokens: LIMITS.outputTokens,
       maxRetries: 0,
-      abortSignal: AbortSignal.timeout(LIMITS.timeoutMs),
+      abortSignal: AbortSignal.any([
+        AbortSignal.timeout(LIMITS.timeoutMs),
+        ...(callbacks.signal ? [callbacks.signal] : []),
+      ]),
       onError: () => {
         callbacks.uncertain();
       },
@@ -161,6 +166,7 @@ export async function startFundedStream(options: {
   store?: CreditStore;
   provider?: FundedProvider;
   beforeProvider?: () => Promise<void>;
+  signal?: AbortSignal;
 }) {
   const config = resolveFundingConfig(options.env);
   if (options.model !== undefined && options.model !== config.price.model)
@@ -195,6 +201,7 @@ async function enterAndStart(options: {
   reservation: Reservation;
   provider?: FundedProvider;
   beforeProvider?: () => Promise<void>;
+  signal?: AbortSignal;
 }) {
   const { store, actor, reservation } = options;
   let entered = false;
@@ -202,6 +209,7 @@ async function enterAndStart(options: {
   let settled = false;
   let providerReference: string | undefined;
   try {
+    options.signal?.throwIfAborted();
     await options.beforeProvider?.();
     // Recheck the environment kill switch immediately before the durable claim.
     resolveFundingConfig(options.env);
@@ -211,6 +219,7 @@ async function enterAndStart(options: {
       options.config,
       options.turns,
       {
+        signal: options.signal,
         uncertain: () => {
           uncertain = true;
         },
@@ -264,4 +273,49 @@ async function enterAndStart(options: {
     });
     throw error;
   }
+}
+
+/** Explicit Gateway adapter. It is deliberately excluded from funded execution:
+ * Gateway raw usage is not an OpenRouter cost receipt. Never infer a zero bill.
+ */
+export function gatewayProvider(
+  env: EnvSource,
+  fetcher?: typeof fetch,
+): FundedProvider {
+  return (config, turns, callbacks) => {
+    if (!env.AI_GATEWAY_API_KEY)
+      throw new AppError("provider_unconfigured", 503);
+    const gateway = createGateway({
+      apiKey: env.AI_GATEWAY_API_KEY,
+      fetch: fetcher,
+    });
+    const result = streamText({
+      model: gateway(config.price.model),
+      instructions: INSTRUCTIONS,
+      messages: turns,
+      providerOptions: { gateway: { only: [config.price.provider] } },
+      maxOutputTokens: LIMITS.outputTokens,
+      maxRetries: 0,
+      abortSignal: AbortSignal.any([
+        AbortSignal.timeout(LIMITS.timeoutMs),
+        ...(callbacks.signal ? [callbacks.signal] : []),
+      ]),
+      onError: () => callbacks.uncertain(),
+      onAbort: () => callbacks.uncertain(),
+      onEnd: async () => {
+        callbacks.uncertain();
+      },
+    });
+    return {
+      stream: toUIMessageStream({
+        stream: result.stream,
+        sendReasoning: false,
+        sendSources: false,
+        onError: () => "provider_failed",
+      }),
+      consume: async () => {
+        await result.consumeStream();
+      },
+    };
+  };
 }

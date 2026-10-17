@@ -4,7 +4,11 @@ import { SignInPanel } from "../components/auth/sign-in";
 import { ChatInput } from "../components/chat/chat-input";
 import { getPaginatedChatHistory } from "../components/sidebar/sidebar-history";
 import { uiHarnessEnabled } from "../lib/ui/availability";
-import { canSendMessage } from "../lib/ui/composer";
+import {
+  acceptComposerSubmission,
+  type ComposerSubmission,
+  canSendMessage,
+} from "../lib/ui/composer";
 import {
   type PlatformCreditView,
   toCreditStatus,
@@ -103,7 +107,7 @@ test("streaming composer exposes stop even when the draft is empty", () => {
       setModel={() => {}}
       status="streaming"
       stop={() => {}}
-      onSend={() => {}}
+      onSend={() => ({ accepted: false })}
     />,
   );
   const stop = html.match(/<button[^>]*aria-label="Stop response"[^>]*>/)?.[0];
@@ -122,4 +126,62 @@ test("reduced motion disables programmatic smooth scroll and usage rejects inval
   expect(formatTokenUsage(-1)).toBeNull();
   expect(formatTokenUsage(undefined)).toBeNull();
   expect(formatTokenUsage(1200)).toBe("Last reply: 1,200 tokens");
+});
+
+test("composer preserves drafts through reload, rejected claims and duplicate submissions", async () => {
+  let draft = "Keep this draft";
+  let blocked = true;
+  let active = false;
+  let calls = 0;
+  let clears = 0;
+  let finish: () => void = () => {};
+  const completion = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const onSend = (): ComposerSubmission => {
+    if (active) return { accepted: false };
+    active = true;
+    calls++;
+    return { accepted: true, completion };
+  };
+  const attempt = () =>
+    acceptComposerSubmission({
+      text: draft,
+      blocked,
+      onSend,
+      onAccepted: () => {
+        draft = "";
+        clears++;
+      },
+    });
+  expect(attempt().accepted).toBe(false);
+  expect(draft).toBe("Keep this draft");
+  expect(calls).toBe(0);
+  blocked = false;
+  const accepted = attempt();
+  expect(accepted.accepted).toBe(true);
+  expect(draft).toBe("");
+  expect(clears).toBe(1);
+  draft = "Next draft";
+  expect(attempt().accepted).toBe(false);
+  expect(draft).toBe("Next draft");
+  expect(calls).toBe(1);
+  expect(clears).toBe(1);
+  finish();
+  if (accepted.accepted) await accepted.completion;
+  const html = renderToStaticMarkup(
+    <ChatInput
+      text={draft}
+      setText={() => {}}
+      model="fixture"
+      setModel={() => {}}
+      status="ready"
+      stop={() => {}}
+      availability={{ state: "ready", funding: "platform" }}
+      blocked={true}
+      onSend={onSend}
+    />,
+  );
+  expect(html).toContain("Next draft");
+  expect(html).toMatch(/<button[^>]*aria-label="Send message"[^>]*disabled/);
 });

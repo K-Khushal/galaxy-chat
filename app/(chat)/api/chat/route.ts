@@ -1,131 +1,172 @@
-import { createUIMessageStream, createUIMessageStreamResponse } from "ai";
-import { and, desc, eq } from "drizzle-orm";
-import { NextResponse } from "next/server";
 import {
-  createChat,
+  consumeStream,
+  createUIMessageStream,
+  createUIMessageStreamResponse,
+  type UIMessage,
+} from "ai";
+import { NextResponse } from "next/server";
+import { finishRun, prepareRun } from "@/lib/actions/chat/branches";
+import {
   deleteChat,
   getChatForUser,
   updateChat,
 } from "@/lib/actions/chat/chat";
-import {
-  createMessage,
-  createMultipleMessages,
-} from "@/lib/actions/chat/chat-message";
-import { generateChatTitle } from "@/lib/ai/title";
 import { requireChatAccess } from "@/lib/auth/access";
-import { LIMITS } from "@/lib/credits/config";
+import { resolveFundingConfig } from "@/lib/credits/config";
 import { boundedJson } from "@/lib/credits/http";
-import { startFundedStream, type TextTurn } from "@/lib/credits/service";
+import {
+  boundContext,
+  startFundedStream,
+  type TextTurn,
+} from "@/lib/credits/service";
 import { actorFor } from "@/lib/credits/store";
-import { requireDb } from "@/lib/db/client";
-import { chatMessage } from "@/lib/db/schema";
 import { AppError, logErrorId } from "@/lib/errors";
 import { errorResponse } from "@/lib/http/error-response";
 import { postRequestBodySchema } from "@/lib/schema/chat/chat";
+import type { TypeUIMessage } from "@/lib/types";
 export const maxDuration = 30;
-
 export async function POST(request: Request) {
+  let run: { id: string; userId: string; branchId: string } | undefined;
   try {
     const access = await requireChatAccess(request.headers);
     const parsed = postRequestBodySchema.safeParse(await boundedJson(request));
     if (!parsed.success) throw new AppError("invalid_request", 400);
-    const { id, message, model, webSearch, visibility } = parsed.data;
-    if (webSearch || message.parts.some((part) => part.type !== "text"))
+    const body = parsed.data;
+    if (
+      body.webSearch ||
+      body.visibility !== "private" ||
+      body.message.parts.some((p) => p.type !== "text")
+    )
       throw new AppError("funded_capability_denied", 403);
-    const actor = actorFor(
-      "user",
+    const config = resolveFundingConfig(process.env);
+    if (body.model !== config.price.model)
+      throw new AppError("model_not_funded", 403);
+    boundContext([
+      {
+        role: "user",
+        content: body.message.parts
+          .filter((p) => p.type === "text")
+          .map((p) => p.text)
+          .join("\n"),
+      },
+    ]);
+    const prepared = await prepareRun(
+      { ...body, message: body.message as TypeUIMessage },
       access.userId,
-      process.env.CREDIT_ACTOR_SECRET ?? "",
     );
-    const chat = await getChatForUser(id, access.userId);
-    const rows = chat
-      ? await requireDb()
-          .select()
-          .from(chatMessage)
-          .where(
-            and(
-              eq(chatMessage.chatId, id),
-              eq(chatMessage.userId, access.userId),
-            ),
-          )
-          .orderBy(desc(chatMessage.createdAt), desc(chatMessage.id))
-          .limit(LIMITS.messages)
-      : [];
-    const turns: TextTurn[] = rows.reverse().flatMap((row) => {
-      if (row.role !== "user" && row.role !== "assistant") return [];
-      const parts: unknown = row.parts;
-      if (!Array.isArray(parts)) return [];
-      const content = parts
-        .filter(
-          (part): part is { type: "text"; text: string } =>
-            part &&
-            typeof part === "object" &&
-            part.type === "text" &&
-            typeof part.text === "string",
-        )
-        .map((part) => part.text)
-        .join("\n");
-      return content ? [{ role: row.role, content }] : [];
-    });
-    turns.push({
-      role: "user",
-      content: message.parts
-        .filter((part) => part.type === "text")
-        .map((part) => part.text)
-        .join("\n"),
-    });
+    run = {
+      id: body.requestId,
+      userId: access.userId,
+      branchId: prepared.branchId,
+    };
+    const turns: TextTurn[] = prepared.messages.flatMap((m) =>
+      m.role === "user" || m.role === "assistant"
+        ? [
+            {
+              role: m.role,
+              content: m.parts
+                .filter((p) => p.type === "text")
+                .map((p) => p.text)
+                .join("\n"),
+            },
+          ]
+        : [],
+    );
     const result = await startFundedStream({
       env: process.env,
-      actor,
-      model,
-      idempotencyKey: `${id}:${message.id}`,
+      actor: actorFor(
+        "user",
+        access.userId,
+        process.env.CREDIT_ACTOR_SECRET ?? "",
+      ),
+      model: body.model,
+      idempotencyKey: body.requestId,
       turns,
-      beforeProvider: async () => {
-        if (!chat)
-          await createChat({
-            id,
-            userId: access.userId,
-            title: await generateChatTitle(request.headers, message),
-            visibility,
-          });
-        await createMessage({
-          chatId: id,
-          id: message.id,
-          userId: access.userId,
-          role: "user",
-          parts: message.parts,
-          attachments: [],
-        });
-      },
+      signal: request.signal,
     });
     void result.completion.catch(() => logErrorId("credit_settlement_failed"));
-    const stream = createUIMessageStream({
-      execute: ({ writer }) => {
-        writer.merge(result.stream);
-      },
+    let failed = false;
+    let stopped = false;
+    let completed = false;
+    const stream = createUIMessageStream<UIMessage>({
+      originalMessages: prepared.messages,
       generateId: () => crypto.randomUUID(),
-      onEnd: async ({ messages }) => {
-        await createMultipleMessages(
-          messages
-            .filter((item) => item.role === "assistant")
-            .map((item) => ({
-              id: item.id,
-              chatId: id,
-              role: "assistant",
-              parts: item.parts,
-              attachments: [],
-            })),
+      execute: async ({ writer }) => {
+        const reader = result.stream.getReader();
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (value.type === "error") failed = true;
+            if (
+              value.type === "finish" &&
+              (value.finishReason === "stop" || value.finishReason === "length")
+            )
+              completed = true;
+            if (value.type === "abort") stopped = true;
+            if (
+              value.type === "finish" &&
+              (value.finishReason === "error" ||
+                value.finishReason === "content-filter")
+            )
+              failed = true;
+            writer.write(value);
+          }
+          writer.setOutcome(
+            stopped
+              ? { status: "aborted" }
+              : failed || !completed
+                ? { status: "failed" }
+                : { status: "completed" },
+          );
+        } finally {
+          reader.releaseLock();
+        }
+      },
+      onEnd: async ({ responseMessage, outcome, isAborted }) => {
+        await finishRun(
+          body.requestId,
           access.userId,
+          isAborted || request.signal.aborted
+            ? "stopped"
+            : failed || outcome.status !== "completed"
+              ? "error"
+              : "complete",
+          {
+            id: responseMessage.id,
+            role: responseMessage.role,
+            parts: responseMessage.parts,
+          },
         );
       },
       onError: () => "chat_failed",
     });
     return createUIMessageStreamResponse({
       stream,
-      headers: { "cache-control": "no-store" },
+      headers: {
+        "cache-control": "no-store",
+        "x-chat-branch": prepared.branchId,
+      },
+      consumeSseStream: ({ stream }) =>
+        consumeStream({
+          stream,
+          onError: () => logErrorId("chat_persistence_failed"),
+        }),
     });
   } catch (error) {
-    return errorResponse(error, "chat_failed");
+    if (run)
+      await finishRun(
+        run.id,
+        run.userId,
+        request.signal.aborted ? "stopped" : "error",
+      ).catch(() => logErrorId("chat_persistence_failed"));
+    const response = errorResponse(
+      request.signal.aborted ? new AppError("request_cancelled", 499) : error,
+      "chat_failed",
+    );
+    response.headers.set("cache-control", "no-store");
+    if (run) response.headers.set("x-chat-branch", run.branchId);
+    return response;
   }
 }
 

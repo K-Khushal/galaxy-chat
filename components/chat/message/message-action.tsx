@@ -65,6 +65,7 @@ export function MessageActions({
           variant="ghost"
           size="icon"
           aria-label="Edit message"
+          id={`edit-action-${messageId}`}
           onClick={onEdit}
         >
           <Pencil />

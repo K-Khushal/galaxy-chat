@@ -9,6 +9,7 @@ import {
   SettingsDialog,
 } from "@/components/account-settings";
 import { SignInPanel } from "@/components/auth/sign-in";
+import { BranchNavigation } from "@/components/chat/branch-navigation";
 import { ChatInput } from "@/components/chat/chat-input";
 import { ChatMessages } from "@/components/chat/chat-messages";
 import { ChatHeader } from "@/components/shell/chat-header";
@@ -164,10 +165,62 @@ export function PreviewCanvas({
   const [messages, setMessages] = useState<TypeUIMessage[]>(
     scenario === "long"
       ? longMessages
-      : ["populated", "streaming", "error"].includes(scenario)
+      : ["populated", "branches", "streaming", "error"].includes(scenario)
         ? fixtureMessages
         : [],
   );
+  const [fixtureBranchId, setFixtureBranchId] = useState("original");
+  const [fixtureBranches, setFixtureBranches] = useState([
+    {
+      id: "original",
+      label: "Original",
+      parentId: null as string | null,
+      messages: fixtureMessages,
+    },
+  ]);
+  async function forkFixture(anchorId?: string, draft?: string) {
+    const index = messages.findIndex((message) => message.id === anchorId);
+    const end =
+      draft !== undefined
+        ? index
+        : messages.findLastIndex((message) => message.role === "user");
+    const originalUser = messages[Math.max(0, end)];
+    const id = crypto.randomUUID();
+    const next: TypeUIMessage[] = [
+      ...messages.slice(0, Math.max(0, end)),
+      {
+        id: crypto.randomUUID(),
+        role: "user",
+        parts:
+          draft !== undefined
+            ? [{ type: "text", text: draft }]
+            : originalUser.parts,
+      },
+      {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        parts: [
+          {
+            type: "text",
+            text: "This is a local branch fixture. No provider was called. The original remains in the branch selector.",
+          },
+        ],
+      },
+    ];
+    setFixtureBranches((items) => [
+      ...items,
+      {
+        id,
+        label: draft !== undefined ? "Edited prompt" : "Regenerated",
+        parentId: fixtureBranchId,
+        messages: next,
+      },
+    ]);
+    setFixtureBranchId(id);
+    setMessages(next);
+    document.getElementById("chat-composer")?.focus();
+    return true;
+  }
   const [text, setText] = useState("");
   const [model, setModel] = useState("fixture-text");
   const [settings, setSettings] = useState(Boolean(dialog));
@@ -277,6 +330,30 @@ export function PreviewCanvas({
                   }
                   onNewChat={newChat}
                 />
+                {scenario === "branches" && (
+                  <BranchNavigation
+                    branches={fixtureBranches}
+                    branchId={fixtureBranchId}
+                    busy={false}
+                    syncing={false}
+                    onSelect={(id) => {
+                      setFixtureBranchId(id);
+                      setMessages(
+                        fixtureBranches.find((branch) => branch.id === id)
+                          ?.messages ?? [],
+                      );
+                    }}
+                    onReload={() =>
+                      setMessages(
+                        fixtureBranches.find(
+                          (branch) => branch.id === fixtureBranchId,
+                        )?.messages ?? [],
+                      )
+                    }
+                    onRetry={() => void forkFixture()}
+                    retryEnabled={true}
+                  />
+                )}
                 <ChatMessages
                   key={activeId}
                   messages={messages}
@@ -289,8 +366,16 @@ export function PreviewCanvas({
                         )
                       : undefined
                   }
+                  actionsEnabled={scenario === "branches"}
+                  onEdit={
+                    scenario === "branches"
+                      ? (id, draft) => forkFixture(id, draft)
+                      : undefined
+                  }
                   regenerate={() =>
-                    toast.info("Preview retry: no model was called.")
+                    scenario === "branches"
+                      ? void forkFixture()
+                      : toast.info("Preview retry: no model was called.")
                   }
                   onPrompt={(prompt) => {
                     setText(prompt);
@@ -341,6 +426,7 @@ export function PreviewCanvas({
                       toast.info(
                         "Draft added to this preview. No response will be generated.",
                       );
+                      return { accepted: true, completion: Promise.resolve() };
                     }}
                   />
                 </div>

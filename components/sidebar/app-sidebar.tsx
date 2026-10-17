@@ -1,5 +1,7 @@
+"use client";
 import type * as React from "react";
 import type { AccountActions } from "@/components/account-settings";
+import { usePlatformAccess } from "@/components/chat/platform-access";
 import { CreditNotice } from "@/components/shell/credit-notice";
 import { SidebarActions } from "@/components/sidebar/sidebar-actions";
 import {
@@ -30,6 +32,7 @@ export function AppSidebar({
   onNewChat?: () => void;
   accountActions?: AccountActions;
 }) {
+  const access = usePlatformAccess();
   return (
     <Sidebar {...props} collapsible="icon">
       <SidebarHeader>
@@ -40,7 +43,7 @@ export function AppSidebar({
       </SidebarContent>
       <SidebarFooter className="gap-3 border-t border-sidebar-border pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         <div className="group-data-[collapsible=icon]:hidden">
-          <CreditNotice status={creditStatus} />
+          <CreditNotice status={creditStatus ?? access.creditStatus} />
         </div>
         <SidebarUser user={user} actions={accountActions} />
       </SidebarFooter>
