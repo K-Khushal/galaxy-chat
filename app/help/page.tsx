@@ -124,10 +124,15 @@ export default function HelpPage() {
       <section>
         <h2>What is still ahead?</h2>
         <p>
-          Saved memory and projects, attachments, artifacts, tools, search, and
-          browser work are roadmap features. This beta focuses on text chat.
-          Live guest verification, provider behavior, deployment, and the
-          release quality gate still require verification before public beta.
+          In the workspace, Memory &amp; projects lets you explicitly create,
+          edit, and delete reusable context and start grouped conversations.
+          Request context shows exactly which memories and project instructions
+          will be sent. Temporary conversation keeps its transcript out of saved
+          history; provider retention and anonymous cost records are separate.
+          Attachments, artifacts, tools, search, and browser work remain roadmap
+          features. Live guest verification, provider behavior, deployment, and
+          the release quality gate still require verification before public
+          beta.
         </p>
       </section>
     </InfoPage>

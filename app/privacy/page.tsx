@@ -23,16 +23,20 @@ export default function PrivacyPage() {
           your account; this is not end-to-end encrypted chat.
         </p>
         <p>
-          Saved memory, temporary chat, attachments, and artifact storage are
-          not available in this beta. Avoid sharing sensitive information you do
-          not want the application or your selected provider to process.
+          Memories are saved only when you explicitly add or edit them in Memory
+          &amp; projects. You choose the exact memories for each request;
+          project instructions apply only inside that project. Temporary chat
+          keeps its transcript in the tab and never creates saved conversations,
+          titles, messages, or memories. Anonymous cost and resource records
+          remain. Your provider’s retention policy still applies.
         </p>
       </section>
       <section>
         <h2>What a provider receives</h2>
         <p>
           When you send a model request, the selected provider and model host
-          receive your prompt and a bounded recent conversation context. Their
+          receive your prompt, bounded recent conversation context, and the
+          memories and project instructions shown in Request context. Their
           terms, retention, and processing policies apply. Choosing your own key
           means that provider account pays its charges.
         </p>
@@ -48,15 +52,15 @@ export default function PrivacyPage() {
         <p>
           In your workspace, open Account &amp; settings → Account to export
           account data or delete the account. Export includes your profile,
-          conversations, messages, branches, and safe usage and provider-key
-          metadata. You can also delete individual conversations from history
-          and remove provider keys in the Keys tab.
+          conversations, messages, branches, explicit memories, projects, and
+          safe usage and provider-key metadata. You can also delete individual
+          conversations from history and remove provider keys in the Keys tab.
         </p>
         <p>
-          Account deletion removes personal account records, saved chats, and
-          saved provider keys. It does not recall a request that has already
-          reached a provider, remove provider-held records, or promise immediate
-          removal from backups.
+          Account deletion removes personal account records, saved chats,
+          memories, projects, and saved provider keys. It does not recall a
+          request that has already reached a provider, remove provider-held
+          records, or promise immediate removal from backups.
         </p>
         <Link href="/chat" prefetch={false}>
           Open your workspace to manage data

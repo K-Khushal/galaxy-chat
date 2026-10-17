@@ -1,5 +1,6 @@
 "use client";
 import { PanelLeftClose, Plus, Sparkles } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
@@ -52,6 +53,24 @@ export function SidebarActions({ onNewChat }: { onNewChat?: () => void } = {}) {
           <span>New conversation</span>
         </SidebarMenuButton>
       </SidebarMenuItem>
+      {!onNewChat && (
+        <>
+          <SidebarMenuItem>
+            <SidebarMenuButton asChild className="min-h-11">
+              <Link href="/chat/temporary" onClick={() => setOpenMobile(false)}>
+                <span>Temporary conversation</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton asChild className="min-h-11">
+              <Link href="/chat/context" onClick={() => setOpenMobile(false)}>
+                <span>Memory & projects</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </>
+      )}
     </SidebarMenu>
   );
 }

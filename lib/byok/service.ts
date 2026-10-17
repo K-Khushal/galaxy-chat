@@ -11,6 +11,7 @@ import type { EnvSource } from "@/lib/auth/env";
 import { INSTRUCTIONS, LIMITS } from "@/lib/credits/config";
 import { boundedJson } from "@/lib/credits/http";
 import { boundContext, type TextTurn } from "@/lib/credits/service";
+import type { EntryValidation } from "@/lib/db/client";
 import { AppError, logErrorId } from "@/lib/errors";
 import { BYOK_LIMITS, resolveByokModel, resourceDigest } from "./config";
 import type { ByokProvider } from "./contract";
@@ -131,10 +132,14 @@ export async function startByokStream(options: {
   signal?: AbortSignal;
   store?: ByokStore;
   fetcher?: typeof fetch;
+  instructions?: string;
   beforeProvider?: () => Promise<void>;
+  prepareProvider?: () => Promise<void>;
+  validateEntry?: EntryValidation;
 }) {
   const model = resolveByokModel(options.env, options.model, options.provider);
-  const turns = boundContext(options.turns);
+  const instructions = options.instructions ?? INSTRUCTIONS;
+  const turns = boundContext(options.turns, false, instructions);
   const store = options.store ?? new ByokStore();
   const revision = await store.reserve({
     id: options.idempotencyKey,
@@ -142,7 +147,7 @@ export async function startByokStream(options: {
     provider: options.provider,
     kind: "chat",
     digest: resourceDigest(
-      JSON.stringify({ turns, model, instructions: INSTRUCTIONS }),
+      JSON.stringify({ turns, model, instructions }),
       options.env,
     ),
     env: options.env,
@@ -153,12 +158,15 @@ export async function startByokStream(options: {
   try {
     options.signal?.throwIfAborted();
     await options.beforeProvider?.();
+    await options.prepareProvider?.();
+    options.signal?.throwIfAborted();
     // Configuration and credential revocation are rechecked at the entry boundary.
     resolveByokModel(options.env, options.model, options.provider);
     const key = await store.enter(
       options.idempotencyKey,
       options.userId,
       options.env,
+      options.validateEntry,
     );
     entered = true;
     const fetcher: typeof fetch = Object.assign(
@@ -238,7 +246,7 @@ export async function startByokStream(options: {
       ...(model.adapter === "gateway"
         ? { providerOptions: { gateway: { only: [model.provider] } } }
         : {}),
-      instructions: INSTRUCTIONS,
+      instructions,
       messages: turns,
       maxOutputTokens: LIMITS.outputTokens,
       maxRetries: 0,
@@ -273,13 +281,18 @@ export async function startByokStream(options: {
       );
     void completion.catch(() => logErrorId("byok_completion_failed"));
     return { stream, completion };
-  } catch {
+  } catch (error) {
     await store.finish(
       options.idempotencyKey,
       options.userId,
       entered ? "unknown" : "before_entry",
       options.env,
     );
+    if (
+      error instanceof AppError &&
+      ["context_changed", "context_too_large"].includes(error.id)
+    )
+      throw error;
     throw new AppError(
       options.signal?.aborted ? "request_cancelled" : "byok_key_unavailable",
       options.signal?.aborted ? 499 : 503,

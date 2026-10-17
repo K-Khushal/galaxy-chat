@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { authRouteHandlers } from "../app/api/auth/[...all]/route";
+import { authRouteHandlers } from "../lib/auth/route-handlers";
 
 test("unconfigured auth routes do not create a session", async () => {
   const handlers = authRouteHandlers(null);
