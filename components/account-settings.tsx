@@ -1,204 +1,278 @@
 "use client";
-
-import { Shield, User } from "lucide-react";
+import {
+  Download,
+  Loader2,
+  Palette,
+  ShieldCheck,
+  Trash2,
+  UserRound,
+} from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb";
+import { useRef, useState } from "react";
+import { toast } from "sonner";
+import { CreditNotice } from "@/components/shell/credit-notice";
+import { ThemeControl } from "@/components/shell/theme-control";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import {
-  Sidebar,
-  SidebarContent,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarGroupLabel,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  SidebarProvider,
-} from "@/components/ui/sidebar";
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { authClient } from "@/lib/auth/client";
 import type { TypeUserProfile } from "@/lib/types";
-
-const data = {
-  nav: [
-    { name: "Profile", icon: User },
-    { name: "Security", icon: Shield },
-  ],
+export type AccountActions = {
+  deleteAccount: () => Promise<void> | void;
+  exportData: () => Promise<void> | void;
+  signOut?: () => void;
 };
-
 export function SettingsDialog({
   open,
   setOpen,
   user,
+  actions,
+  initialTab = "profile",
+  onCloseFocus,
 }: {
   open: boolean;
   setOpen: (open: boolean) => void;
   user: TypeUserProfile;
+  actions?: AccountActions;
+  initialTab?: string;
+  onCloseFocus?: () => void;
 }) {
-  const [activeTab, setActiveTab] = useState("Profile");
-
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent className="overflow-hidden p-0 md:max-h-[500px] md:max-w-[700px] lg:max-w-[800px]">
-        <SidebarProvider className="items-start">
-          <Sidebar collapsible="none" className="hidden md:flex w-[12rem]">
-            <SidebarContent>
-              <SidebarGroup>
-                <SidebarGroupLabel>
-                  <DialogTitle>Account</DialogTitle>
-                </SidebarGroupLabel>
-                <SidebarGroupContent>
-                  <SidebarMenu>
-                    {data.nav.map((item) => (
-                      <SidebarMenuItem key={item.name}>
-                        <SidebarMenuButton
-                          isActive={item.name === activeTab}
-                          onClick={() => setActiveTab(item.name)}
-                        >
-                          <item.icon />
-                          <span>{item.name}</span>
-                        </SidebarMenuButton>
-                      </SidebarMenuItem>
-                    ))}
-                  </SidebarMenu>
-                </SidebarGroupContent>
-              </SidebarGroup>
-            </SidebarContent>
-          </Sidebar>
-          <main className="flex h-[480px] flex-1 flex-col overflow-hidden">
-            <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
-              <div className="flex items-center gap-2 px-4">
-                <Breadcrumb>
-                  <BreadcrumbList>
-                    <BreadcrumbItem className="hidden md:block">
-                      Account
-                    </BreadcrumbItem>
-                    <BreadcrumbSeparator className="hidden md:block" />
-                    <BreadcrumbItem>
-                      <BreadcrumbPage>{activeTab}</BreadcrumbPage>
-                    </BreadcrumbItem>
-                  </BreadcrumbList>
-                </Breadcrumb>
-              </div>
-            </header>
-            <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-4 pt-0">
-              {activeTab === "Profile" ? <Profile user={user} /> : <Security />}
-            </div>
-          </main>
-        </SidebarProvider>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function Profile({ user }: { user: TypeUserProfile }) {
   const router = useRouter();
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [pending, setPending] = useState(false);
-
+  const deleteOpener = useRef<HTMLButtonElement>(null);
+  const [pending, setPending] = useState<"export" | "delete" | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
   async function downloadExport() {
-    const response = await fetch("/api/account/export");
-    if (!response.ok) {
-      return;
-    }
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = "galaxy-chat-export.json";
-    anchor.textContent = "Export";
-    document.body.append(anchor);
-    anchor.click();
-    anchor.remove();
-    URL.revokeObjectURL(url);
-  }
-
-  async function removeAccount() {
-    setPending(true);
+    if (pending) return;
+    setPending("export");
+    setFailure(null);
     try {
-      const response = await fetch("/api/account", { method: "DELETE" });
-      if (!response.ok) {
-        return;
+      if (actions) await actions.exportData();
+      else {
+        const response = await fetch("/api/account/export");
+        if (!response.ok) throw new Error("Export failed");
+        const url = URL.createObjectURL(await response.blob());
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = "galaxy-chat-export.json";
+        document.body.append(anchor);
+        anchor.click();
+        anchor.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        toast.success("Export downloaded");
       }
-      await authClient.signOut();
-      router.replace("/sign-in?notice=unauthenticated");
+    } catch {
+      setFailure("Your export could not be downloaded. Please try again.");
     } finally {
-      setPending(false);
+      setPending(null);
     }
   }
-
+  async function removeAccount() {
+    if (pending) return;
+    setPending("delete");
+    setFailure(null);
+    try {
+      if (actions) {
+        await actions.deleteAccount();
+        setConfirmDelete(false);
+        setOpen(false);
+      } else {
+        const response = await fetch("/api/account", { method: "DELETE" });
+        if (!response.ok) throw new Error("Delete failed");
+        await authClient.signOut();
+        router.replace("/sign-in?notice=unauthenticated");
+      }
+    } catch {
+      setFailure(
+        "Your account could not be deleted. No confirmation was received. Please try again.",
+      );
+    } finally {
+      setPending(null);
+    }
+  }
   return (
-    <div className="flex flex-col gap-4">
-      {user.name ? <p>{user.name}</p> : null}
-      {user.email ? <p>{user.email}</p> : null}
-      <p>
-        Export downloads your conversations and messages. Delete account removes
-        your user, sessions, and conversations.
-      </p>
-      <div className="flex gap-2">
-        <Button onClick={() => void downloadExport()} type="button">
-          Export data
-        </Button>
-        <Button
-          onClick={() => setConfirmDelete(true)}
-          type="button"
-          variant="destructive"
+    <>
+      <Dialog
+        open={open}
+        onOpenChange={(next) => {
+          if (!pending) setOpen(next);
+        }}
+      >
+        <DialogContent
+          className="gap-6 sm:max-w-xl"
+          onCloseAutoFocus={(event) => {
+            if (onCloseFocus) {
+              event.preventDefault();
+              onCloseFocus();
+            }
+          }}
         >
-          Delete account
-        </Button>
-      </div>
-      <AlertDialog onOpenChange={setConfirmDelete} open={confirmDelete}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete this account?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This removes your conversations and signs you out. It does not
-              delete anyone else's data.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel type="button">Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={pending}
-              onClick={() => void removeAccount()}
-              type="button"
+          <DialogHeader>
+            <DialogTitle>Account & settings</DialogTitle>
+            <DialogDescription>
+              Your workspace, appearance, and data controls.
+            </DialogDescription>
+          </DialogHeader>
+          <Tabs defaultValue={initialTab}>
+            <TabsList className="mb-5 grid h-auto w-full grid-cols-3 bg-muted p-1">
+              <TabsTrigger value="profile" className="min-h-11 gap-2">
+                <UserRound className="hidden size-4 sm:block" />
+                Account
+              </TabsTrigger>
+              <TabsTrigger value="appearance" className="min-h-11 gap-2">
+                <Palette className="hidden size-4 sm:block" />
+                Appearance
+              </TabsTrigger>
+              <TabsTrigger value="security" className="min-h-11 gap-2">
+                <ShieldCheck className="hidden size-4 sm:block" />
+                Privacy
+              </TabsTrigger>
+            </TabsList>
+            <TabsContent value="profile" className="space-y-6">
+              <div className="rounded-xl border bg-muted/30 p-4">
+                <p className="break-words font-medium">
+                  {user.name || "Your account"}
+                </p>
+                <p className="mt-1 break-all text-sm text-muted-foreground">
+                  {user.email}
+                </p>
+                <p className="mt-3 text-xs text-muted-foreground">
+                  Signed in with GitHub
+                </p>
+              </div>
+              <section>
+                <h2 className="text-sm font-medium">
+                  Your data belongs to you
+                </h2>
+                <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                  Download your conversations and messages as a JSON file.
+                </p>
+                <Button
+                  className="mt-3"
+                  variant="outline"
+                  disabled={pending !== null}
+                  aria-busy={pending === "export"}
+                  onClick={() => void downloadExport()}
+                >
+                  {pending === "export" ? (
+                    <Loader2 className="animate-spin" />
+                  ) : (
+                    <Download />
+                  )}
+                  Export data
+                </Button>
+              </section>
+              <section className="border-t pt-5">
+                <h2 className="text-sm font-medium">Delete account</h2>
+                <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                  Permanently remove your account, sessions, and conversations.
+                </p>
+                <Button
+                  className="mt-3"
+                  variant="outline"
+                  disabled={pending !== null}
+                  ref={deleteOpener}
+                  onClick={() => {
+                    setFailure(null);
+                    setConfirmDelete(true);
+                  }}
+                >
+                  <Trash2 className="text-destructive" />
+                  Delete account
+                </Button>
+              </section>
+            </TabsContent>
+            <TabsContent value="appearance" className="space-y-6">
+              <ThemeControl />
+              <CreditNotice />
+              <section className="text-sm leading-relaxed text-muted-foreground">
+                Provider keys and model access will have their own controls when
+                secure key storage is connected. No keys are collected here.
+              </section>
+            </TabsContent>
+            <TabsContent
+              value="security"
+              className="space-y-4 text-sm leading-relaxed text-muted-foreground"
             >
-              Delete account
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </div>
-  );
-}
-
-function Security() {
-  return (
-    <div className="flex flex-col gap-3">
-      <p>
-        Sign-in is GitHub only. This server does not create a local password.
-      </p>
-      <p>
-        Expired, revoked, and signed-out sessions cannot open conversations.
-        GitHub accounts that are not on the server invite list are refused.
-      </p>
-    </div>
+              <h2 className="font-medium text-foreground">
+                Private to your account
+              </h2>
+              <p>
+                Conversations are accessible through your signed-in account.
+                Expired and revoked sessions cannot open them.
+              </p>
+              <p>
+                Sign-in uses GitHub and a server-managed invite list. This app
+                does not create a local password.
+              </p>
+              <p>
+                When model access is enabled, your messages will be processed by
+                the selected provider. Avoid sharing secrets or sensitive
+                personal data.
+              </p>
+            </TabsContent>
+          </Tabs>
+          {failure && !confirmDelete && (
+            <p role="alert" className="text-sm text-destructive">
+              {failure}
+            </p>
+          )}
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={confirmDelete}
+        onOpenChange={(next) => {
+          if (!pending) setConfirmDelete(next);
+        }}
+      >
+        <DialogContent
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            if (deleteOpener.current?.isConnected) deleteOpener.current.focus();
+            else onCloseFocus?.();
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>Delete your account?</DialogTitle>
+            <DialogDescription>
+              This permanently deletes your conversations and account and signs
+              you out. Export anything you want to keep first. This cannot be
+              undone.
+            </DialogDescription>
+          </DialogHeader>
+          {failure && (
+            <p role="alert" className="text-sm text-destructive">
+              {failure}
+            </p>
+          )}
+          <DialogFooter>
+            <Button
+              variant="outline"
+              disabled={pending !== null}
+              onClick={() => setConfirmDelete(false)}
+              autoFocus
+            >
+              Keep account
+            </Button>
+            <Button
+              variant="destructive"
+              aria-busy={pending === "delete"}
+              disabled={pending !== null}
+              onClick={() => void removeAccount()}
+            >
+              {pending === "delete" && <Loader2 className="animate-spin" />}
+              Delete account permanently
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

@@ -15,7 +15,7 @@ import {
 import { Response } from "../../elements/response";
 import { MessageActions } from "./message-action";
 
-// Lazy load MessageEditor to prevent Mongoose model access before connection
+// The editor is deferred until requested. Branch persistence is enabled by F05.
 const MessageEditor = lazy(() =>
   import("./message-editor").then((module) => ({
     default: module.MessageEditor,
@@ -37,6 +37,7 @@ interface MessagePartProps {
   isLastMessage: boolean;
   regenerate: () => void;
   setMessages: UseChatHelpers<TypeUIMessage>["setMessages"];
+  actionsEnabled?: boolean;
 }
 
 export function MessagePart({
@@ -47,6 +48,7 @@ export function MessagePart({
   isLastMessage,
   regenerate,
   setMessages,
+  actionsEnabled = false,
 }: MessagePartProps) {
   const isLastPart = partIndex === message.parts.length - 1;
 
@@ -81,8 +83,8 @@ export function MessagePart({
               text={part.text || ""}
               isLastMessage={isLastMessage}
               isLastPart={isLastPart}
-              onRetry={regenerate}
-              onEdit={() => setMode("edit")}
+              onRetry={actionsEnabled ? regenerate : undefined}
+              onEdit={actionsEnabled ? () => setMode("edit") : undefined}
             />
           </Fragment>
         );

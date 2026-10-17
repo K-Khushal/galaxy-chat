@@ -8,7 +8,7 @@ export default async function SignInPage({
 }) {
   const params = await searchParams;
   return (
-    <div className="flex min-h-[80vh] w-full items-center justify-center p-4">
+    <div className="flex min-h-dvh w-full items-center justify-center px-4 py-8 pb-[max(2rem,env(safe-area-inset-bottom))]">
       <SignInPanel
         configured={resolveAuthConfig(process.env) !== null}
         notice={params.notice}

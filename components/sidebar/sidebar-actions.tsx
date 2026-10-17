@@ -1,74 +1,55 @@
 "use client";
-
-import { Image, SquarePen } from "lucide-react";
+import { PanelLeftClose, Plus, Sparkles } from "lucide-react";
 import { useRouter } from "next/navigation";
-import GalaxyChat from "@/components/svg/galaxy-chat";
+import { Button } from "@/components/ui/button";
 import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
 
-export function SidebarActions() {
+export function SidebarActions({ onNewChat }: { onNewChat?: () => void } = {}) {
   const router = useRouter();
-  const { state } = useSidebar();
-
+  const { toggleSidebar, setOpenMobile, state, isMobile } = useSidebar();
   return (
     <SidebarMenu>
-      {/* Logo and Toggle Section */}
-      <SidebarMenuItem
-        className={`flex items-center justify-between px-2 py-2 w-full group`}
-      >
-        <div className="flex items-center relative w-6 h-6 justify-center">
-          <GalaxyChat
-            className={`w-6 h-6 transition-opacity -ml-0.5 ${
-              state === "collapsed"
-                ? "opacity-100 group-hover:opacity-0"
-                : "opacity-100"
-            }`}
-          />
-          <SidebarTrigger
-            className={`absolute inset-0 w-6 h-6 transition-opacity -ml-0.5 ${
-              state === "collapsed"
-                ? "opacity-0 group-hover:opacity-100"
-                : "opacity-0"
-            }`}
-          />
+      <SidebarMenuItem className="flex min-h-14 items-center justify-between px-2">
+        <div className="flex min-w-0 items-center gap-2.5 group-data-[collapsible=icon]:hidden">
+          <Sparkles aria-hidden="true" className="size-5 text-primary" />
+          <span className="font-semibold tracking-tight">
+            Galaxy
+            <span className="ml-1 font-normal text-muted-foreground">Chat</span>
+          </span>
         </div>
-        <SidebarTrigger
-          className={`px-1 py-1 transition-opacity ${
-            state === "expanded" ? "opacity-100" : "opacity-0"
-          }`}
-        />
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label={
+            state === "collapsed" && !isMobile
+              ? "Open sidebar"
+              : "Close sidebar"
+          }
+          onClick={(event) => toggleSidebar(event.currentTarget)}
+        >
+          <PanelLeftClose className="size-4" />
+        </Button>
       </SidebarMenuItem>
-
-      {/* New Chat Button */}
       <SidebarMenuItem className="mt-2">
         <SidebarMenuButton
+          tooltip="New conversation"
+          className="min-h-11 border border-sidebar-border bg-background/60 font-medium shadow-xs"
           onClick={() => {
-            router.push("/chat");
-            router.refresh();
+            setOpenMobile(false);
+            if (onNewChat) onNewChat();
+            else {
+              router.push("/chat");
+              router.refresh();
+            }
           }}
-          className="cursor-pointer"
         >
-          <SquarePen />
-          <span>New Chat</span>
-        </SidebarMenuButton>
-      </SidebarMenuItem>
-
-      {/* Library Button */}
-      <SidebarMenuItem>
-        <SidebarMenuButton
-          onClick={() => {
-            router.push("/chat/library");
-            router.refresh();
-          }}
-          className="cursor-pointer"
-        >
-          <Image />
-          <span>Library</span>
+          <Plus />
+          <span>New conversation</span>
         </SidebarMenuButton>
       </SidebarMenuItem>
     </SidebarMenu>

@@ -1,56 +1,26 @@
 "use client";
-
-import {
-  CheckIcon,
-  CopyIcon,
-  PencilIcon,
-  RefreshCcwIcon,
-  ThumbsDownIcon,
-  ThumbsUpIcon,
-} from "lucide-react";
+import { Check, Copy, Pencil, RefreshCcw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { Action, Actions } from "../../elements/actions";
-
-// Custom hook for copy functionality
 export function useCopyToClipboard() {
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
-
-  const handleCopy = async (text: string, messageId: string) => {
+  useEffect(() => {
+    if (!copiedMessageId) return;
+    const timer = setTimeout(() => setCopiedMessageId(null), 1800);
+    return () => clearTimeout(timer);
+  }, [copiedMessageId]);
+  async function handleCopy(text: string, id: string) {
     try {
       await navigator.clipboard.writeText(text);
-      setCopiedMessageId(messageId);
-    } catch (err) {
-      console.error("Failed to copy text: ", err);
+      setCopiedMessageId(id);
+    } catch {
+      toast.error("Copy failed. Select the text and copy it manually.");
     }
-  };
-
-  // Reset copied state after 1 second
-  useEffect(() => {
-    if (copiedMessageId) {
-      const timer = setTimeout(() => {
-        setCopiedMessageId(null);
-      }, 1000);
-
-      return () => clearTimeout(timer);
-    }
-  }, [copiedMessageId]);
-
+  }
   return { copiedMessageId, handleCopy };
 }
-
-interface MessageActionProps {
-  messageRole: "user" | "assistant" | "system";
-  messageId: string;
-  text: string;
-  isLastMessage: boolean;
-  isLastPart: boolean;
-  onEdit?: () => void;
-  onRetry?: () => void;
-  className?: string;
-}
-
 export function MessageActions({
   messageRole,
   messageId,
@@ -60,121 +30,100 @@ export function MessageActions({
   onEdit,
   onRetry,
   className,
-}: MessageActionProps) {
+}: {
+  messageRole: "user" | "assistant" | "system";
+  messageId: string;
+  text: string;
+  isLastMessage: boolean;
+  isLastPart: boolean;
+  onEdit?: () => void;
+  onRetry?: () => void;
+  className?: string;
+}) {
   const { copiedMessageId, handleCopy } = useCopyToClipboard();
-
-  const onLike = () => {
-    toast.info("Liked", {
-      description: "You liked the response",
-      duration: 1000,
-    });
-  };
-
-  const onDislike = () => {
-    toast.info("Disliked", {
-      description: "You disliked the response",
-      duration: 1000,
-    });
-  };
-
   return (
-    <Actions
+    <div
       className={cn(
-        "group flex w-full",
-        messageRole !== "user" && "items-start justify-start",
-        messageRole === "user" && "items-end justify-end",
+        "mt-1 flex gap-1",
+        messageRole === "user" && "justify-end",
         className,
       )}
     >
-      {/* Copy Action - Always show */}
-      <Action
-        className={cn(
-          messageRole === "user" &&
-            "transition-opacity opacity-0 group-hover:opacity-100",
-        )}
-        onClick={() => handleCopy(text, messageId)}
-        label={copiedMessageId === messageId ? "Copied!" : "Copy"}
+      <Button
+        variant="ghost"
+        size="icon"
+        className="text-muted-foreground"
+        aria-label={
+          copiedMessageId === messageId ? "Message copied" : "Copy message"
+        }
+        onClick={() => void handleCopy(text, messageId)}
       >
-        {copiedMessageId === messageId ? (
-          <CheckIcon className="size-4" />
-        ) : (
-          <CopyIcon className="size-4" />
-        )}
-      </Action>
-
-      {/* Edit Action - Only for user messages */}
+        {copiedMessageId === messageId ? <Check /> : <Copy />}
+      </Button>
       {messageRole === "user" && onEdit && (
-        <Action
-          className="transition-opacity opacity-0 group-hover:opacity-100"
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Edit message"
           onClick={onEdit}
-          label="Edit"
         >
-          <PencilIcon className="size-4" />
-        </Action>
+          <Pencil />
+        </Button>
       )}
-
-      {/* Assistant Actions */}
-      {messageRole === "assistant" && (
-        <>
-          {/* Like Action */}
-          {onLike && (
-            <Action onClick={onLike} label="Like">
-              <ThumbsUpIcon className="size-4" />
-            </Action>
-          )}
-
-          {/* Dislike Action */}
-          {onDislike && (
-            <Action onClick={onDislike} label="Dislike">
-              <ThumbsDownIcon className="size-4" />
-            </Action>
-          )}
-
-          {/* Retry Action - Only for the last message & last part */}
-          {onRetry && isLastMessage && isLastPart && (
-            <Action onClick={onRetry} label="Retry">
-              <RefreshCcwIcon className="size-4" />
-            </Action>
-          )}
-        </>
-      )}
-    </Actions>
+      {messageRole === "assistant" &&
+        onRetry &&
+        isLastMessage &&
+        isLastPart && (
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Regenerate response"
+            onClick={onRetry}
+          >
+            <RefreshCcw />
+          </Button>
+        )}
+      <output className="sr-only">
+        {copiedMessageId === messageId ? "Copied to clipboard" : ""}
+      </output>
+    </div>
   );
 }
-
-interface ErrorActionsProps {
-  errorMessage: string;
-  status: "ready" | "error" | "streaming" | "submitted";
-  onRetry: () => void;
-}
-
 export function ErrorActions({
   errorMessage,
   status,
   onRetry,
-}: ErrorActionsProps) {
+  retryEnabled = false,
+}: {
+  errorMessage: string;
+  status: "ready" | "error" | "streaming" | "submitted";
+  onRetry: () => void;
+  retryEnabled?: boolean;
+}) {
   const { copiedMessageId, handleCopy } = useCopyToClipboard();
   return (
-    <Actions>
-      <Action onClick={onRetry} label="Retry">
-        <RefreshCcwIcon className="size-4" />
-      </Action>
-      <Action
-        onClick={() => handleCopy(errorMessage, "error")}
-        label={copiedMessageId === "error" ? "Copied!" : "Copy"}
-        disabled={!(status === "ready" || status === "error")}
+    <div className="mt-3 flex flex-wrap gap-2">
+      <Button
+        variant="outline"
+        disabled={
+          !retryEnabled || status === "streaming" || status === "submitted"
+        }
+        onClick={onRetry}
       >
-        {copiedMessageId === "error" ? (
-          <CheckIcon className="size-4" />
-        ) : (
-          <CopyIcon className="size-4" />
-        )}
-      </Action>
-    </Actions>
+        <RefreshCcw />
+        Retry response
+      </Button>
+      <Button
+        variant="ghost"
+        onClick={() => void handleCopy(errorMessage, "error")}
+      >
+        <Copy />
+        {copiedMessageId === "error" ? "Copied" : "Copy error"}
+      </Button>
+    </div>
   );
 }
 
-// Individual action components for more granular control
 export function CopyAction({
   text,
   messageId,
@@ -185,22 +134,20 @@ export function CopyAction({
   className?: string;
 }) {
   const { copiedMessageId, handleCopy } = useCopyToClipboard();
-
   return (
-    <Action
+    <Button
+      variant="ghost"
+      size="icon"
       className={className}
-      onClick={() => handleCopy(text, messageId)}
-      label={copiedMessageId === messageId ? "Copied!" : "Copy"}
+      aria-label={
+        copiedMessageId === messageId ? "Message copied" : "Copy message"
+      }
+      onClick={() => void handleCopy(text, messageId)}
     >
-      {copiedMessageId === messageId ? (
-        <CheckIcon className="size-4" />
-      ) : (
-        <CopyIcon className="size-4" />
-      )}
-    </Action>
+      {copiedMessageId === messageId ? <Check /> : <Copy />}
+    </Button>
   );
 }
-
 export function EditAction({
   onEdit,
   className,
@@ -209,47 +156,17 @@ export function EditAction({
   className?: string;
 }) {
   return (
-    <Action
-      className={cn(
-        "transition-opacity opacity-0 group-hover:opacity-100",
-        className,
-      )}
+    <Button
+      variant="ghost"
+      size="icon"
+      className={className}
+      aria-label="Edit message"
       onClick={onEdit}
-      label="Edit"
     >
-      <PencilIcon className="size-4" />
-    </Action>
+      <Pencil />
+    </Button>
   );
 }
-
-export function LikeAction({
-  onLike,
-  className,
-}: {
-  onLike: () => void;
-  className?: string;
-}) {
-  return (
-    <Action className={className} onClick={onLike} label="Like">
-      <ThumbsUpIcon className="size-4" />
-    </Action>
-  );
-}
-
-export function DislikeAction({
-  onDislike,
-  className,
-}: {
-  onDislike: () => void;
-  className?: string;
-}) {
-  return (
-    <Action className={className} onClick={onDislike} label="Dislike">
-      <ThumbsDownIcon className="size-4" />
-    </Action>
-  );
-}
-
 export function RetryAction({
   onRetry,
   className,
@@ -258,8 +175,14 @@ export function RetryAction({
   className?: string;
 }) {
   return (
-    <Action className={className} onClick={onRetry} label="Retry">
-      <RefreshCcwIcon className="size-4" />
-    </Action>
+    <Button
+      variant="ghost"
+      size="icon"
+      className={className}
+      aria-label="Retry response"
+      onClick={onRetry}
+    >
+      <RefreshCcw />
+    </Button>
   );
 }
