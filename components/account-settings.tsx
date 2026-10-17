@@ -10,6 +10,10 @@ import {
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
+import {
+  ProviderSettings,
+  type ProviderSettingsClient,
+} from "@/components/provider-settings";
 import { CreditNotice } from "@/components/shell/credit-notice";
 import { ThemeControl } from "@/components/shell/theme-control";
 import { Button } from "@/components/ui/button";
@@ -36,6 +40,7 @@ export function SettingsDialog({
   actions,
   initialTab = "profile",
   onCloseFocus,
+  providerClient,
 }: {
   open: boolean;
   setOpen: (open: boolean) => void;
@@ -43,6 +48,7 @@ export function SettingsDialog({
   actions?: AccountActions;
   initialTab?: string;
   onCloseFocus?: () => void;
+  providerClient?: ProviderSettingsClient;
 }) {
   const router = useRouter();
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -121,18 +127,33 @@ export function SettingsDialog({
             </DialogDescription>
           </DialogHeader>
           <Tabs defaultValue={initialTab}>
-            <TabsList className="mb-5 grid h-auto w-full grid-cols-3 bg-muted p-1">
-              <TabsTrigger value="profile" className="min-h-11 gap-2">
+            <TabsList className="mb-5 grid h-auto w-full grid-cols-4 bg-muted p-1">
+              <TabsTrigger
+                value="profile"
+                className="min-h-11 gap-2 px-1 text-xs sm:px-2 sm:text-sm"
+              >
                 <UserRound className="hidden size-4 sm:block" />
                 Account
               </TabsTrigger>
-              <TabsTrigger value="appearance" className="min-h-11 gap-2">
+              <TabsTrigger
+                value="appearance"
+                className="min-h-11 gap-2 px-1 text-xs sm:px-2 sm:text-sm"
+              >
                 <Palette className="hidden size-4 sm:block" />
                 Appearance
               </TabsTrigger>
-              <TabsTrigger value="security" className="min-h-11 gap-2">
+              <TabsTrigger
+                value="security"
+                className="min-h-11 gap-2 px-1 text-xs sm:px-2 sm:text-sm"
+              >
                 <ShieldCheck className="hidden size-4 sm:block" />
                 Privacy
+              </TabsTrigger>
+              <TabsTrigger
+                value="providers"
+                className="min-h-11 px-1 text-xs sm:px-2 sm:text-sm"
+              >
+                Keys
               </TabsTrigger>
             </TabsList>
             <TabsContent value="profile" className="space-y-6">
@@ -192,10 +213,9 @@ export function SettingsDialog({
             <TabsContent value="appearance" className="space-y-6">
               <ThemeControl />
               <CreditNotice />
-              <section className="text-sm leading-relaxed text-muted-foreground">
-                Provider keys and model access will have their own controls when
-                secure key storage is connected. No keys are collected here.
-              </section>
+            </TabsContent>
+            <TabsContent value="providers">
+              <ProviderSettings client={providerClient} />
             </TabsContent>
             <TabsContent
               value="security"

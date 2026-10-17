@@ -7,11 +7,14 @@ import { toast } from "sonner";
 import { BranchNavigation } from "@/components/chat/branch-navigation";
 import { ChatInput } from "@/components/chat/chat-input";
 import { ChatMessages } from "@/components/chat/chat-messages";
+import { FundingSelector } from "@/components/chat/funding-selector";
 import { usePlatformAccess } from "@/components/chat/platform-access";
 import { ChatHeader } from "@/components/shell/chat-header";
 import type { AppUsage } from "@/lib/ai/usage";
 import { getChatErrorMessage } from "@/lib/ai/utils";
+import type { FundingChoice } from "@/lib/byok/contract";
 import type { TypeUIMessage } from "@/lib/types";
+import type { ChatAvailability } from "@/lib/ui/availability";
 import type { ComposerSubmission } from "@/lib/ui/composer";
 
 type Branch = { id: string; label: string; parentId: string | null };
@@ -35,6 +38,9 @@ export default function Chat({
 }) {
   const [text, setText] = useState("");
   const [model, setModel] = useState("");
+  const [funding, setFunding] = useState<FundingChoice>("platform");
+  const fundingRef = useRef(funding);
+  fundingRef.current = funding;
   const modelRef = useRef(model);
   const [branchId, setBranchId] = useState(initialBranchId);
   const branchRef = useRef(initialBranchId);
@@ -46,6 +52,36 @@ export default function Chat({
   const persisted = useRef(initialBranches.length > 0);
   const [localStopped, setLocalStopped] = useState(false);
   const access = usePlatformAccess();
+  const byokKey = access.byok?.credentials.find(
+    (key) => key.provider === funding,
+  );
+  const models =
+    funding === "platform"
+      ? access.models
+      : (access.byok?.models ?? []).filter(
+          (model) => model.adapter === funding,
+        );
+  const availability: ChatAvailability =
+    funding === "platform"
+      ? access.availability
+      : access.byok?.configured &&
+          access.byok.state === "available" &&
+          byokKey &&
+          byokKey.testState !== "invalid" &&
+          models.length > 0
+        ? { state: "ready", funding: "byok" }
+        : {
+            state: "unavailable",
+            reason: !byokKey
+              ? "Save your provider key in Account & settings → Keys."
+              : byokKey.testState === "invalid"
+                ? "Your provider rejected this key. Replace it in Account & settings → Keys."
+                : access.byok?.state === "busy"
+                  ? "A BYOK request is active or awaiting recovery. No platform credits will be used."
+                  : access.byok?.state === "limited"
+                    ? "The BYOK service request limit has been reached. Try again later."
+                    : "BYOK generation is paused or no reviewed text models are configured for this provider.",
+          };
   const refreshRef = useRef(access.refresh);
   refreshRef.current = access.refresh;
   const {
@@ -82,6 +118,7 @@ export default function Chat({
           id: request.id,
           message: request.messages.at(-1),
           model: modelRef.current,
+          funding: fundingRef.current,
           visibility: "private",
           webSearch: false,
           ...request.body,
@@ -141,9 +178,9 @@ export default function Chat({
     modelRef.current = model;
   }, [model]);
   useEffect(() => {
-    if (!access.models.some((m) => m.id === model && m.available))
-      setModel(access.models.find((m) => m.available)?.id ?? "");
-  }, [access.models, model]);
+    if (!models.some((m) => m.id === model && m.available))
+      setModel(models.find((m) => m.available)?.id ?? "");
+  }, [models, model]);
   const searchParams = useSearchParams();
   const query = searchParams.get("query");
   const queryRead = useRef(false);
@@ -159,12 +196,7 @@ export default function Chat({
     action: "send" | "edit" | "regenerate" | "retry" = "send",
     anchorId?: string,
   ): ComposerSubmission {
-    if (
-      inFlight.current ||
-      busy ||
-      syncing ||
-      access.availability.state !== "ready"
-    )
+    if (inFlight.current || busy || syncing || availability.state !== "ready")
       return { accepted: false };
     inFlight.current = true;
     setSubmitting(true);
@@ -227,7 +259,7 @@ export default function Chat({
         onSelect={(selected) => void reload(selected)}
         onReload={() => void reload()}
         onRetry={() => retry("retry")}
-        retryEnabled={access.availability.state === "ready"}
+        retryEnabled={availability.state === "ready"}
       />
       <ChatMessages
         key={id}
@@ -243,7 +275,7 @@ export default function Chat({
           return true;
         }}
         actionsEnabled={
-          access.availability.state === "ready" && !syncing && !submitting
+          availability.state === "ready" && !syncing && !submitting
         }
         onPrompt={(prompt) => {
           setText(prompt);
@@ -251,11 +283,16 @@ export default function Chat({
         }}
       />
       <div className="mx-auto w-full max-w-3xl shrink-0 px-3 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:px-6">
+        <FundingSelector
+          value={funding}
+          onChange={setFunding}
+          disabled={busy || syncing || submitting}
+        />
         <ChatInput
           onSend={(draft) => submit(draft)}
           blocked={syncing || submitting}
-          availability={access.availability}
-          models={access.models}
+          availability={availability}
+          models={models}
           status={status}
           stop={() => {
             setLocalStopped(true);

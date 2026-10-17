@@ -3,6 +3,7 @@ export const previewScenarios = [
   "empty",
   "populated",
   "branches",
+  "byok",
   "loading",
   "streaming",
   "error",

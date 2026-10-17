@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import type { ChatModel } from "@/lib/ai/model";
+import type { ByokView } from "@/lib/byok/contract";
 import {
   type ChatAvailability,
   defaultAvailability,
@@ -18,13 +19,15 @@ import {
 } from "@/lib/ui/credit-contract";
 import { type CreditStatus, defaultCreditStatus } from "@/lib/ui/credits";
 
-type Access = {
+export type Access = {
+  byok: (ByokView & { models: ChatModel[] }) | null;
   models: ChatModel[];
   creditStatus: CreditStatus;
   availability: ChatAvailability;
   refresh: () => void;
 };
 const Context = createContext<Access>({
+  byok: null,
   models: [],
   creditStatus: defaultCreditStatus,
   availability: defaultAvailability,
@@ -39,9 +42,21 @@ export function PlatformAccessProvider({
   const [view, setView] = useState<
     (PlatformCreditView & { models: ChatModel[] }) | null
   >(null);
+  const [byok, setByok] = useState<(ByokView & { models: ChatModel[] }) | null>(
+    null,
+  );
   const sequence = useRef(0);
   const refresh = useCallback(() => {
     const current = ++sequence.current;
+    void fetch("/api/providers", { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error();
+        const next = await response.json();
+        if (current === sequence.current) setByok(next);
+      })
+      .catch(() => {
+        if (current === sequence.current) setByok(null);
+      });
     void fetch("/api/credits", { cache: "no-store" })
       .then(async (response) => {
         if (!response.ok) throw new Error("credits_failed");
@@ -55,13 +70,17 @@ export function PlatformAccessProvider({
   useEffect(() => {
     refresh();
     window.addEventListener("focus", refresh);
-    return () => window.removeEventListener("focus", refresh);
+    window.addEventListener("provider-credentials-changed", refresh);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("provider-credentials-changed", refresh);
+    };
   }, [refresh]);
   useEffect(() => {
-    if (view?.state !== "busy") return;
+    if (view?.state !== "busy" && byok?.state !== "busy") return;
     const timer = window.setTimeout(refresh, 3000);
     return () => window.clearTimeout(timer);
-  }, [view, refresh]);
+  }, [view, byok, refresh]);
   const creditStatus = view ? toCreditStatus(view) : defaultCreditStatus;
   const availability: ChatAvailability =
     view?.configured &&
@@ -80,6 +99,7 @@ export function PlatformAccessProvider({
   return (
     <Context.Provider
       value={{
+        byok,
         models: view?.models ?? [],
         creditStatus,
         availability,

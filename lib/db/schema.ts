@@ -1,4 +1,11 @@
-import { boolean, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import {
+  boolean,
+  jsonb,
+  pgTable,
+  primaryKey,
+  text,
+  timestamp,
+} from "drizzle-orm/pg-core";
 
 /**
  * Ownership is the Better Auth user id stored on each row.
@@ -134,4 +141,39 @@ export const chatRun = pgTable("chat_run", {
   digest: text("digest").notNull(),
   state: text("state").notNull(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+/** AEAD material is server-only; account exports select safe metadata explicitly. */
+export const providerCredential = pgTable(
+  "provider_credential",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    provider: text("provider").notNull(),
+    revision: text("revision").notNull(),
+    keyVersion: text("key_version").notNull(),
+    nonce: text("nonce").notNull(),
+    ciphertext: text("ciphertext").notNull(),
+    maskedKey: text("masked_key").notNull(),
+    testState: text("test_state").notNull().default("untested"),
+    testedAt: timestamp("tested_at"),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.provider] })],
+);
+export const byokOperation = pgTable("byok_operation", {
+  id: text("id").primaryKey(),
+  actorKey: text("actor_key").notNull(),
+  provider: text("provider").notNull(),
+  credentialRevision: text("credential_revision").notNull(),
+  kind: text("kind").notNull(),
+  digest: text("digest").notNull(),
+  state: text("state").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
 });

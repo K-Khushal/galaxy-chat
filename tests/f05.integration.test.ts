@@ -194,6 +194,7 @@ function body(overrides: Partial<PostRequestBody> = {}): PostRequestBody {
       role: "user",
       parts: [{ type: "text", text: "fixture question" }],
     },
+    funding: "platform",
     model: price.model,
     webSearch: false,
     visibility: "private",
@@ -538,7 +539,7 @@ test("F05 migration snapshots preserve sub-millisecond order and browser roles h
   const local = await PGlite.create();
   try {
     for (const file of readdirSync("drizzle")
-      .filter((f) => f.endsWith(".sql") && !f.startsWith("0003"))
+      .filter((f) => f.endsWith(".sql") && f < "0003")
       .sort())
       await local.exec(readFileSync(`drizzle/${file}`, "utf8"));
     await local.exec(`CREATE ROLE anon; CREATE ROLE authenticated;

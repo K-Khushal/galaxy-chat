@@ -5,6 +5,7 @@ import {
   type AccountActions,
   SettingsDialog,
 } from "@/components/account-settings";
+import type { ProviderSettingsClient } from "@/components/provider-settings";
 import SignOut from "@/components/sign-out";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -24,9 +25,11 @@ import type { TypeUserProfile } from "@/lib/types";
 export function SidebarUser({
   user,
   actions,
+  providerClient,
 }: {
   user: TypeUserProfile;
   actions?: AccountActions;
+  providerClient?: ProviderSettingsClient;
 }) {
   const { isMobile } = useSidebar();
   const [settings, setSettings] = useState(false);
@@ -88,6 +91,7 @@ export function SidebarUser({
         setOpen={setSettings}
         user={user}
         actions={actions}
+        providerClient={providerClient}
         onCloseFocus={() => opener.current?.focus()}
       />
     </>

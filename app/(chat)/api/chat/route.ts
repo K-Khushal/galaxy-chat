@@ -12,6 +12,8 @@ import {
   updateChat,
 } from "@/lib/actions/chat/chat";
 import { requireChatAccess } from "@/lib/auth/access";
+import { resolveByokModel } from "@/lib/byok/config";
+import { startByokStream } from "@/lib/byok/service";
 import { resolveFundingConfig } from "@/lib/credits/config";
 import { boundedJson } from "@/lib/credits/http";
 import {
@@ -22,6 +24,7 @@ import {
 import { actorFor } from "@/lib/credits/store";
 import { AppError, logErrorId } from "@/lib/errors";
 import { errorResponse } from "@/lib/http/error-response";
+import { assertSameOrigin } from "@/lib/http/origin";
 import { postRequestBodySchema } from "@/lib/schema/chat/chat";
 import type { TypeUIMessage } from "@/lib/types";
 export const maxDuration = 30;
@@ -29,6 +32,7 @@ export async function POST(request: Request) {
   let run: { id: string; userId: string; branchId: string } | undefined;
   try {
     const access = await requireChatAccess(request.headers);
+    assertSameOrigin(request);
     const parsed = postRequestBodySchema.safeParse(await boundedJson(request));
     if (!parsed.success) throw new AppError("invalid_request", 400);
     const body = parsed.data;
@@ -37,10 +41,17 @@ export async function POST(request: Request) {
       body.visibility !== "private" ||
       body.message.parts.some((p) => p.type !== "text")
     )
-      throw new AppError("funded_capability_denied", 403);
-    const config = resolveFundingConfig(process.env);
-    if (body.model !== config.price.model)
-      throw new AppError("model_not_funded", 403);
+      throw new AppError(
+        body.funding === "platform"
+          ? "funded_capability_denied"
+          : "byok_capability_denied",
+        403,
+      );
+    if (body.funding === "platform") {
+      const config = resolveFundingConfig(process.env);
+      if (body.model !== config.price.model)
+        throw new AppError("model_not_funded", 403);
+    } else resolveByokModel(process.env, body.model, body.funding);
     boundContext([
       {
         role: "user",
@@ -72,19 +83,32 @@ export async function POST(request: Request) {
           ]
         : [],
     );
-    const result = await startFundedStream({
-      env: process.env,
-      actor: actorFor(
-        "user",
-        access.userId,
-        process.env.CREDIT_ACTOR_SECRET ?? "",
-      ),
-      model: body.model,
-      idempotencyKey: body.requestId,
-      turns,
-      signal: request.signal,
-    });
-    void result.completion.catch(() => logErrorId("credit_settlement_failed"));
+    const result =
+      body.funding !== "platform"
+        ? await startByokStream({
+            userId: access.userId,
+            provider: body.funding,
+            model: body.model,
+            idempotencyKey: body.requestId,
+            turns,
+            env: process.env,
+            signal: request.signal,
+          })
+        : await startFundedStream({
+            env: process.env,
+            actor: actorFor(
+              "user",
+              access.userId,
+              process.env.CREDIT_ACTOR_SECRET ?? "",
+            ),
+            model: body.model,
+            idempotencyKey: body.requestId,
+            turns,
+            signal: request.signal,
+          });
+    void result.completion.catch(() =>
+      logErrorId("generation_completion_failed"),
+    );
     let failed = false;
     let stopped = false;
     let completed = false;
