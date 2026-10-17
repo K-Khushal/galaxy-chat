@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { contextSelectionSchema } from "@/lib/context/contract";
 
 const textPartSchema = z.object({
   type: z.enum(["text"]),
@@ -21,6 +22,19 @@ export const postRequestBodySchema = z
     branchId: z.uuid(),
     action: z.enum(["send", "edit", "regenerate", "retry"]).default("send"),
     anchorId: z.uuid().optional(),
+    context: contextSelectionSchema.optional(),
+    temporary: z.boolean().optional(),
+    transientMessages: z
+      .array(
+        z
+          .object({
+            role: z.enum(["user", "assistant"]),
+            content: z.string().min(1).max(32000),
+          })
+          .strict(),
+      )
+      .max(11)
+      .optional(),
     message: z
       .object({
         id: z.uuid(),

@@ -38,6 +38,7 @@ export default async function Page({
     <Chat
       id={chat.id}
       title={chat.title}
+      initialProjectId={chat.projectId ?? null}
       chatMessages={view.messages}
       initialBranchId={view.branchId}
       initialBranches={view.branches}

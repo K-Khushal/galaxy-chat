@@ -72,6 +72,9 @@ export const chat = pgTable("chat", {
     .references(() => user.id, { onDelete: "cascade" }),
   visibility: text("visibility").notNull().default("private"),
   lastContext: jsonb("last_context"),
+  projectId: text("project_id").references(() => project.id, {
+    onDelete: "set null",
+  }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -176,4 +179,26 @@ export const byokOperation = pgTable("byok_operation", {
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
+});
+
+/** Explicit user-authored context only. No inference writes to these tables. */
+export const project = pgTable("project", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  instructions: text("instructions").notNull(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+export const memory = pgTable("memory", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  projectId: text("project_id").references(() => project.id, {
+    onDelete: "cascade",
+  }),
+  content: text("content").notNull(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
