@@ -66,15 +66,15 @@ bun run build --webpack
 
 The current collaboration serializes SQL/tests/typecheck/build with a machine-local lock wrapper; that wrapper is not a repository dependency. SQL fixtures apply all migrations to real PGlite, then route all queries through the captured application postgres.js max:1 queue. Rejections use native await so the same-process socket makes progress. Tests use local fixture bytes and mocked external network; they make no live storage, OCR, or paid model requests.
 
-Latest integrated checks (2026-10-17):
+Initial integrated checkpoint checks (2026-10-17; final reviewed follow-up below):
 
 - Initial focused F09/F10 integration: 30 passed, zero failed, 442 assertions across three files (30.90 seconds).
 - Full combined suite at source checkpoint `cfbc2ad27797ec0e99c52135ae1062366a9b5e8d`: 132 passed, zero failed, 1,356 assertions across 17 files (83.56 seconds). Includes F09 memory claim-race regressions and F10 funded-text/BYOK-image file deletion after preparation while entry waits.
-- Final focused F10 route/inference tests: eight passed, zero failed, 93 assertions (12.09 seconds).
+- Focused F10 route/inference tests at that checkpoint: eight passed, zero failed, 93 assertions (12.09 seconds).
 - `bun run lint`: passed, 257 files checked after the local preview and claim-race tests.
-- `bun run typecheck` (no incremental state): passed on final integrated source.
+- `bun run typecheck` (no incremental state): passed on that integrated checkpoint.
 - `bun run build --webpack`: passed at checkpoint `cfbc2ad`; Next 16.4.2 compiled in 30.5 seconds, completed its generated-route TypeScript phase in 14.9 seconds, and generated all 23 static pages. `/api/attachments`, `/api/context`, `/api/chat`, and development preview routes emitted successfully.
-- After that build, the only source addition is one development landing-workbench option for `/preview/ui?attachments=1`; this exposes the existing 390-pixel iframe for separate browser review. The build does not claim to cover that later selector-line addition. The subsequent full lint passed (257 files); existing preview-gate/composer tests passed (10 tests, 49 assertions, 166 ms). This is harness gate evidence, not browser interaction or backend acceptance.
+- The development landing-workbench option for `/preview/ui?attachments=1` was added after that initial build, exposing the existing 390-pixel iframe. Subsequent lint passed (257 files); existing preview-gate/composer tests passed (10 tests, 49 assertions, 166 ms). The final follow-up build below includes both this selector and the reviewed pending-action fix. Harness gates do not substitute for browser interaction or backend acceptance.
 - Foundation baseline (before shared integration): 109 tests / 1,030 assertions passed, normal Next 16.4.2/Turbopack production build passed. This historical baseline does not substitute for final combined checks.
 - Vendor integrity: passed. Final `git diff --check`: passed.
 - Operator commands without configuration/terminal-proof confirmation: expected exit 1, redacted stable error identifiers only; no network reached.
@@ -87,7 +87,16 @@ The independent standards review found that repeated delete clicks could issue d
 
 `tests/f10-attachment-ui.test.tsx` mounts the real production composer and picker in pinned dev-only `happy-dom@21.0.3`, using deferred injected client promises. It exercises same-tick A/A/B delete clicks, selection/model changes while A deletion waits, unsupported-image gating, serial B deletion and restored send readiness. It also covers the upload busy label/spinner, a model change before image completion, and cancellation. No test timeout was raised. DOM globals are narrowly installed and restored, and windows/root state are closed after each test. This is component interaction evidence, not browser security, storage authorization, or provider acceptance proof.
 
-Initial focused DOM regressions passed: two tests, 35 assertions (662 ms). Final post-follow-up full/type/lint/build results are recorded before writer release. The earlier `cfbc2ad` build/suite above remains historical evidence for that checkpoint.
+Final checks on pinned source `592d04b43dd557e5c10713c1d3fede82d1cd2eb7` (only this evidence update follows):
+
+- Focused DOM regressions: two tests, 35 assertions (662 ms), no failures.
+- Full suite: 134 passed, zero failed, 1,391 assertions across 18 files (84.28 seconds). SQL/SDK tests after the DOM tests also passed with restored globals.
+- Strict nonincremental typecheck: passed.
+- Full lint: passed, 258 files checked.
+- `bun run build --webpack`: passed; Next 16.4.2 compile 13.1 seconds, generated-route TypeScript 11.0 seconds, all 23 static pages generated in 801 ms; route generation and build tracing completed.
+- Vendor integrity and final `git diff --check`: passed.
+
+The earlier `cfbc2ad` results remain historical evidence for that checkpoint. Browser interaction and operational gates remain separate; no claim of hosted acceptance or live storage/provider behavior follows from these local checks.
 
 ## Primary API references checked
 
