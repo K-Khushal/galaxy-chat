@@ -2,7 +2,7 @@
 import type { ChatStatus } from "ai";
 import { ExternalLink, Monitor, Smartphone } from "lucide-react";
 import { useTheme } from "next-themes";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
   type AccountActions,
@@ -12,11 +12,14 @@ import { SignInPanel } from "@/components/auth/sign-in";
 import { BranchNavigation } from "@/components/chat/branch-navigation";
 import { ChatInput } from "@/components/chat/chat-input";
 import { ChatMessages } from "@/components/chat/chat-messages";
+import { FundingSelector } from "@/components/chat/funding-selector";
+import type { ProviderSettingsClient } from "@/components/provider-settings";
 import { ChatHeader } from "@/components/shell/chat-header";
 import { ChatLoading } from "@/components/shell/chat-loading";
 import { AppSidebar } from "@/components/sidebar/app-sidebar";
 import { Button } from "@/components/ui/button";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
+import type { ByokView, FundingChoice } from "@/lib/byok/contract";
 import type { TypeUIMessage } from "@/lib/types";
 import type { CreditStatus } from "@/lib/ui/credits";
 import {
@@ -91,6 +94,7 @@ export function PreviewWorkbench() {
               <option value="profile">Account</option>
               <option value="appearance">Appearance</option>
               <option value="security">Privacy</option>
+              <option value="providers">Provider keys</option>
             </select>
           </label>
           <label className="flex items-center gap-2 text-xs">
@@ -221,6 +225,69 @@ export function PreviewCanvas({
     document.getElementById("chat-composer")?.focus();
     return true;
   }
+  const [funding, setFunding] = useState<FundingChoice>(
+    scenario === "byok" ? "openrouter" : "platform",
+  );
+  const providerClient = useMemo<ProviderSettingsClient>(() => {
+    let view: ByokView = {
+      configured: true,
+      state: "available",
+      credentials: [
+        {
+          provider: "openrouter",
+          maskedKey: "••••demo",
+          revision: crypto.randomUUID(),
+          testState: "valid",
+          testedAt: null,
+        },
+      ],
+    };
+    const wait = async () => {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      return structuredClone(view);
+    };
+    return {
+      load: wait,
+      save: async (provider, key) => {
+        view = {
+          ...view,
+          credentials: [
+            ...view.credentials.filter((c) => c.provider !== provider),
+            {
+              provider,
+              maskedKey: `••••${key.slice(-4)}`,
+              revision: crypto.randomUUID(),
+              testState: "untested",
+              testedAt: null,
+            },
+          ],
+        };
+        return wait();
+      },
+      test: async (provider) => {
+        view = {
+          ...view,
+          credentials: view.credentials.map((c) =>
+            c.provider === provider
+              ? {
+                  ...c,
+                  testState: c.maskedKey.endsWith("fail") ? "invalid" : "valid",
+                  testedAt: new Date().toISOString(),
+                }
+              : c,
+          ),
+        };
+        return wait();
+      },
+      delete: async (provider) => {
+        view = {
+          ...view,
+          credentials: view.credentials.filter((c) => c.provider !== provider),
+        };
+        return wait();
+      },
+    };
+  }, []);
   const [text, setText] = useState("");
   const [model, setModel] = useState("fixture-text");
   const [settings, setSettings] = useState(Boolean(dialog));
@@ -291,6 +358,7 @@ export function PreviewCanvas({
             onNewChat={newChat}
             creditStatus={creditStatus}
             accountActions={accountActions}
+            providerClient={providerClient}
             preview={{
               pages: [
                 { chats: chats.slice(0, 15), hasMore: chats.length > 15 },
@@ -383,6 +451,11 @@ export function PreviewCanvas({
                   }}
                 />
                 <div className="mx-auto w-full max-w-3xl shrink-0 px-3 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:px-6">
+                  <FundingSelector
+                    value={funding}
+                    onChange={setFunding}
+                    disabled={status === "streaming" || status === "submitted"}
+                  />
                   <ChatInput
                     text={text}
                     setText={setText}
@@ -440,6 +513,7 @@ export function PreviewCanvas({
         setOpen={setSettings}
         user={previewUser}
         actions={accountActions}
+        providerClient={providerClient}
         initialTab={dialog}
       />
     </div>

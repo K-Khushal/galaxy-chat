@@ -8,6 +8,23 @@ import type { TypeChatMessage, TypeUIMessage } from "../types";
  */
 export function getChatErrorMessage(error: Error): string {
   const messages: Record<string, string> = {
+    byok_key_invalid:
+      "Your provider rejected this key. Replace it in Account & settings → Keys. Platform credits were not used.",
+    byok_key_unavailable:
+      "Your saved key could not be used. Reload keys in Account & settings. Platform credits were not used.",
+    byok_key_changed:
+      "Your key changed on another device. Reload before trying again. Platform credits were not used.",
+    byok_key_missing: "Save a provider key in Account & settings → Keys.",
+    byok_provider_failed:
+      "The provider could not finish this response. Your prompt is saved. Platform credits were not used. Uncertain requests may require service recovery.",
+    byok_busy:
+      "A BYOK request is active or awaiting service recovery. Platform credits were not used.",
+    byok_resource_limited:
+      "The BYOK service request limit has been reached. Try again later.",
+    byok_model_unavailable:
+      "This BYOK model is unavailable. Choose a reviewed model for the selected provider.",
+    byok_capability_denied:
+      "BYOK chat supports reviewed text models only. Files, tools and search are unavailable.",
     request_already_recorded:
       "This request is already saved. Reload saved messages to see its status. A deliberate retry creates a new branch.",
     idempotency_conflict:

@@ -143,6 +143,7 @@ beforeAll(async () => {
     "0001_ownership",
     "0002_credit_ledger",
     "0003_chat_branches",
+    "0004_byok",
   ]);
 
   await db

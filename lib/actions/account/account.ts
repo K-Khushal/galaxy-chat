@@ -1,4 +1,7 @@
-import { asc, desc, eq } from "drizzle-orm";
+import { asc, desc, eq, sql } from "drizzle-orm";
+import { resourceActor } from "@/lib/byok/config";
+import type { CredentialView } from "@/lib/byok/contract";
+import { ByokStore, lockByokResources } from "@/lib/byok/store";
 import { requireDb } from "@/lib/db/client";
 import {
   account,
@@ -21,6 +24,14 @@ export type AccountProfile = {
 
 export type AccountExport = {
   profile: AccountProfile;
+  providerCredentials: CredentialView[];
+  byokOperations: Array<{
+    id: string;
+    provider: string;
+    kind: string;
+    state: string;
+    createdAt: Date;
+  }>;
   chats: Array<{
     id: string;
     title: string;
@@ -116,12 +127,49 @@ export async function exportOwnedAccount(
     .select()
     .from(chatRun)
     .where(eq(chatRun.userId, userId));
-  return { profile, chats, messages, usageRecords, branches, runs };
+  const providerCredentials = await new ByokStore(db).credentials(userId);
+  let actor: string | undefined;
+  try {
+    actor = resourceActor(userId, process.env);
+  } catch {
+    /* Unconfigured resource metadata is unavailable. */
+  }
+  const operations = actor
+    ? await db.execute<{
+        id: string;
+        provider: string;
+        kind: string;
+        state: string;
+        created_at: Date;
+      }>(
+        sql`SELECT id,provider,kind,state,created_at FROM byok_operation WHERE actor_key=${actor}`,
+      )
+    : [];
+  const byokOperations = operations.map((row) => ({
+    id: row.id,
+    provider: row.provider,
+    kind: row.kind,
+    state: row.state,
+    createdAt: row.created_at,
+  }));
+  return {
+    profile,
+    chats,
+    messages,
+    usageRecords,
+    branches,
+    runs,
+    providerCredentials,
+    byokOperations,
+  };
 }
 
 export async function deleteOwnedAccount(userId: string) {
   const db = requireDb();
   return db.transaction(async (tx) => {
+    // Serialize deletion with credential reads/provider entry. Anonymous resource
+    // leases survive the cascade and still count until remote work is terminal.
+    await lockByokResources(tx);
     const owned = await tx
       .select({ id: user.id })
       .from(user)

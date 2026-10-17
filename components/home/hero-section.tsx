@@ -1,32 +1,90 @@
-"use client";
+import {
+  ArrowUpRight,
+  CornerDownRight,
+  GitBranch,
+  Sparkles,
+} from "lucide-react";
 import Link from "next/link";
+import { Message, MessageContent } from "@/components/elements/message";
+import { Button } from "@/components/ui/button";
+import styles from "./home.module.css";
 
 export function HeroSection() {
   return (
-    <section className="pt-16 sm:pt-20 md:pt-24 lg:pt-[216px] pb-8 sm:pb-12 md:pb-16 flex flex-col justify-start items-center px-2 sm:px-4 md:px-8 lg:px-0 w-full sm:pl-0 sm:pr-0 pl-0 pr-0">
-      <div className="self-stretch rounded-[3px] flex flex-col justify-center items-center gap-4 sm:gap-5 md:gap-6 lg:gap-8">
-        <div className="w-full max-w-[748.71px] lg:w-[748.71px] text-center flex justify-center flex-col text-[#37322F] text-[24px] xs:text-[28px] sm:text-[36px] md:text-[52px] lg:text-[80px] font-normal leading-[1.1] sm:leading-[1.15] md:leading-[1.2] lg:leading-24 font-serif px-2 sm:px-4 md:px-0">
-          Chat with your galaxy
-          <br />
-          with AI
+    <section
+      className={`${styles.container} ${styles.hero}`}
+      aria-labelledby="hero-title"
+    >
+      <div className={styles.heroCopy}>
+        <h1 id="hero-title">A clear space for complex thoughts.</h1>
+        <p className={styles.intro}>
+          Work through code, shape a plan, or follow a question. Keep your
+          conversations together and choose how each request is funded.
+        </p>
+        <div className={styles.heroActions}>
+          <Button asChild size="lg" className="rounded-full px-6">
+            <Link href="/chat" prefetch={false}>
+              Open your workspace <ArrowUpRight aria-hidden="true" />
+            </Link>
+          </Button>
+          <a className={styles.textLink} href="#workspace">
+            Take a look around
+          </a>
         </div>
-        <div className="w-full max-w-[506.08px] lg:w-[506.08px] text-center flex justify-center flex-col text-[rgba(55,50,47,0.80)] sm:text-lg md:text-xl leading-[1.4] sm:leading-[1.45] md:leading-[1.5] lg:leading-7 font-sans px-2 sm:px-4 md:px-0 lg:text-lg font-medium text-sm">
-          Chat with your galaxy with AI
-          <br className="hidden sm:block" />
-          for every galaxy, tailored by AI.
-        </div>
+        <p className={styles.entryNote}>
+          An invite-only beta. Sign in with your invited GitHub account.
+        </p>
       </div>
-
-      <div className="w-full max-w-[497px] lg:w-[497px] flex flex-col justify-center items-center gap-6 sm:gap-8 md:gap-10 lg:gap-12 relative z-10 mt-6 sm:mt-8 md:mt-10 lg:mt-12">
-        <div className="backdrop-blur-[8.25px] flex justify-start items-center gap-4">
-          <Link
-            href="/chat"
-            className="h-10 sm:h-11 md:h-12 px-6 sm:px-8 md:px-10 lg:px-12 py-2 sm:py-[6px] relative bg-[#37322f] hover:bg-[#37322f]/90 shadow-[0px_0px_0px_2.5px_rgba(255,255,255,0.08)_inset] overflow-hidden rounded-full flex justify-center items-center text-white text-sm sm:text-base md:text-[15px] font-medium leading-5 font-sans cursor-pointer"
-          >
-            Start for free
-          </Link>
+      <figure className={styles.previewFigure}>
+        <div className={styles.preview}>
+          <div className={styles.previewBar}>
+            <span className={styles.previewTitle}>
+              <Sparkles aria-hidden="true" className="size-4 text-primary" /> A
+              project worth finishing
+            </span>
+            <span className={styles.previewBadge}>Example preview</span>
+          </div>
+          <div className={styles.previewBody}>
+            <Message from="user" className="pt-0 pb-5">
+              <MessageContent variant="flat">
+                Help me scope a weekend API project. I tend to overbuild.
+              </MessageContent>
+            </Message>
+            <div className={styles.answerHeading}>
+              <Sparkles aria-hidden="true" className="size-4 text-primary" />
+              <span>Galaxy</span>
+            </div>
+            <Message from="assistant" className="py-0">
+              <MessageContent variant="flat" className="w-full">
+                <p className={styles.previewLead}>
+                  Start with one useful endpoint.
+                </p>
+                <p>
+                  Pick a problem you have today. Build the smallest API that
+                  solves it, then stop and use it.
+                </p>
+                <ul className={styles.previewList}>
+                  <li>One input. One clear response.</li>
+                  <li>A happy path and a helpful error.</li>
+                  <li>A README your future self can follow.</li>
+                </ul>
+              </MessageContent>
+            </Message>
+            <div className={styles.branchNote}>
+              <GitBranch aria-hidden="true" className="size-4" />
+              <span>A different angle can become a new branch.</span>
+            </div>
+            <div className={styles.previewComposer}>
+              <CornerDownRight aria-hidden="true" className="size-4" />
+              <span>What would you explore next?</span>
+            </div>
+          </div>
         </div>
-      </div>
+        <figcaption>
+          Illustrative conversation using shared message components. Written for
+          this preview; no model request or live response.
+        </figcaption>
+      </figure>
     </section>
   );
 }

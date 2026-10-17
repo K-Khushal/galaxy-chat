@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { GuestPreview } from "@/components/guest/guest-preview";
 import {
   PreviewCanvas,
   PreviewWorkbench,
@@ -13,6 +14,7 @@ export default async function PreviewPage({
 }) {
   if (!uiHarnessEnabled(process.env)) notFound();
   const params = await searchParams;
+  if (params.guest) return <GuestPreview scenario={params.guest} />;
   if (params.canvas !== "1") return <PreviewWorkbench />;
   const scenario =
     params.state && isPreviewScenario(params.state) ? params.state : "empty";
@@ -22,7 +24,9 @@ export default async function PreviewPage({
       scenario={scenario}
       theme={params.theme ?? "system"}
       dialog={
-        ["profile", "appearance", "security"].includes(params.dialog ?? "")
+        ["profile", "appearance", "security", "providers"].includes(
+          params.dialog ?? "",
+        )
           ? params.dialog
           : undefined
       }

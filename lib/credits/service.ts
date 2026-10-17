@@ -9,6 +9,7 @@ import {
   toUIMessageStream,
   type UIMessageChunk,
 } from "ai";
+import { redactedFundedModel } from "@/lib/ai/redacted-model";
 import type { EnvSource } from "@/lib/auth/env";
 import { AppError } from "@/lib/errors";
 import {
@@ -109,20 +110,22 @@ export function openRouterProvider(
       fetch: fetcher,
     });
     const result = streamText({
-      model: openrouter.chat(price.model, {
-        reasoning: { enabled: false, effort: "none" },
-        usage: { include: true },
-        provider: {
-          only: [price.provider],
-          allow_fallbacks: false,
-          require_parameters: true,
-          max_price: {
-            prompt: price.inputMicrodollarsPerMillion / 1_000_000,
-            completion: price.outputMicrodollarsPerMillion / 1_000_000,
-            request: 0,
+      model: redactedFundedModel(
+        openrouter.chat(price.model, {
+          reasoning: { enabled: false, effort: "none" },
+          usage: { include: true },
+          provider: {
+            only: [price.provider],
+            allow_fallbacks: false,
+            require_parameters: true,
+            max_price: {
+              prompt: price.inputMicrodollarsPerMillion / 1_000_000,
+              completion: price.outputMicrodollarsPerMillion / 1_000_000,
+              request: 0,
+            },
           },
-        },
-      }),
+        }),
+      ),
       instructions: INSTRUCTIONS,
       messages: turns satisfies ModelMessage[],
       maxOutputTokens: LIMITS.outputTokens,
@@ -290,7 +293,7 @@ export function gatewayProvider(
       fetch: fetcher,
     });
     const result = streamText({
-      model: gateway(config.price.model),
+      model: redactedFundedModel(gateway(config.price.model)),
       instructions: INSTRUCTIONS,
       messages: turns,
       providerOptions: { gateway: { only: [config.price.provider] } },

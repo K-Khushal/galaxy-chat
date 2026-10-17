@@ -28,6 +28,7 @@ export const postRequestBodySchema = z
         parts: z.array(partSchema).min(1).max(8),
       })
       .strict(),
+    funding: z.enum(["platform", "openrouter", "gateway"]),
     model: z.string().min(1).max(100),
     webSearch: z.boolean(),
     visibility: z.enum(["public", "private"]).default("private"),

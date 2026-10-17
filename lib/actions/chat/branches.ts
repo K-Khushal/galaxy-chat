@@ -15,6 +15,7 @@ export type BranchInput = {
   anchorId?: string;
   message: TypeUIMessage;
   model: string;
+  funding: "platform" | "openrouter" | "gateway";
 };
 export async function readBranches(
   chatId: string,

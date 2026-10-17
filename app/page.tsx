@@ -1,24 +1,59 @@
+import type { Metadata } from "next";
+import { Footer } from "@/components/home/footer";
 import { Header } from "@/components/home/header";
 import { HeroSection } from "@/components/home/hero-section";
+import styles from "@/components/home/home.module.css";
+import { HomeSections } from "@/components/home/home-sections";
+import { publicSiteOrigin } from "@/lib/ui/public-site";
+
+const origin = publicSiteOrigin(process.env.SITE_URL);
+const title = "Galaxy Chat — a clear space for complex thoughts";
+const description =
+  "Work through code, shape a plan, or explore a question in a calm AI chat workspace. Saved conversations, branching, and an explicit choice of funding.";
+
+export const metadata: Metadata = {
+  title,
+  description,
+  ...(origin ? { alternates: { canonical: origin } } : {}),
+  openGraph: {
+    title,
+    description,
+    type: "website",
+    siteName: "Galaxy Chat",
+    ...(origin
+      ? {
+          url: origin,
+          images: [
+            {
+              url: `${origin}/galaxy-social.png`,
+              width: 1200,
+              height: 630,
+              alt: "Galaxy Chat. A clear space for complex thoughts.",
+            },
+          ],
+        }
+      : {}),
+  },
+  twitter: {
+    card: origin ? "summary_large_image" : "summary",
+    title,
+    description,
+    ...(origin ? { images: [`${origin}/galaxy-social.png`] } : {}),
+  },
+};
 
 export default function Home() {
   return (
-    <div className="w-full min-h-screen relative bg-background overflow-x-hidden flex flex-col justify-start items-center">
-      <div className="relative flex flex-col justify-start items-center w-full">
-        {/* Main container with proper margins */}
-        <div className="w-full max-w-none px-4 sm:px-6 md:px-8 lg:px-0 lg:max-w-[1060px] lg:w-[1060px] relative flex flex-col justify-start items-start min-h-screen">
-          {/* Left vertical line */}
-          <div className="w-[1px] h-full absolute left-4 sm:left-6 md:left-8 lg:left-0 top-0 bg-[rgba(55,50,47,0.12)] shadow-[1px_0px_0px_white] z-0"></div>
-
-          {/* Right vertical line */}
-          <div className="w-[1px] h-full absolute right-4 sm:right-6 md:right-8 lg:right-0 top-0 bg-[rgba(55,50,47,0.12)] shadow-[1px_0px_0px_white] z-0"></div>
-
-          <div className="self-stretch pt-[9px] overflow-hidden border-b border-[rgba(55,50,47,0.06)] flex flex-col justify-center items-center gap-4 sm:gap-6 md:gap-8 lg:gap-[66px] relative z-10">
-            <Header />
-            <HeroSection />
-          </div>
-        </div>
-      </div>
+    <div className={styles.site}>
+      <a className={styles.skipLink} href="#main">
+        Skip to content
+      </a>
+      <Header />
+      <main id="main">
+        <HeroSection />
+        <HomeSections />
+      </main>
+      <Footer />
     </div>
   );
 }
