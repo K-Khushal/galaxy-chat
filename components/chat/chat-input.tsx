@@ -1,3 +1,6 @@
+import type { UseChatHelpers } from "@ai-sdk/react";
+import type { ChatStatus, UIMessage } from "ai";
+import { GlobeIcon, MicIcon, Paperclip } from "lucide-react";
 import { ChatContext } from "@/components/chat/chat-context";
 import { ModelSelector } from "@/components/chat/model-selector";
 import {
@@ -17,9 +20,6 @@ import type { AppUsage } from "@/lib/ai/usage";
 import { filterValidFiles } from "@/lib/ai/utils";
 import type { TypeUIMessage } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import type { UseChatHelpers } from "@ai-sdk/react";
-import type { ChatStatus, UIMessage } from "ai";
-import { GlobeIcon, MicIcon, Paperclip } from "lucide-react";
 
 function AddAttachmentButton() {
   const attachments = usePromptInputAttachments();
@@ -58,8 +58,6 @@ interface ChatInputProps {
 
 export function ChatInput({
   id,
-  messages,
-  setMessages,
   sendMessage,
   status,
   stop,

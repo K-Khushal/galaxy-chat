@@ -1,5 +1,4 @@
 "use client";
-import { cn } from "@/lib/utils";
 import type {
   TargetAndTransition,
   Transition,
@@ -8,6 +7,7 @@ import type {
 } from "framer-motion";
 import { AnimatePresence, motion } from "framer-motion";
 import React from "react";
+import { cn } from "@/lib/utils";
 
 export type PresetType = "blur" | "fade-in-blur" | "scale" | "fade" | "slide";
 
@@ -108,6 +108,15 @@ const presetVariants: Record<
   },
 };
 
+function characterKeys(segment: string) {
+  const seen = new Map<string, number>();
+  return Array.from(segment, (char) => {
+    const count = (seen.get(char) ?? 0) + 1;
+    seen.set(char, count);
+    return { char, key: `${char}-${count}` };
+  });
+}
+
 const AnimationComponent: React.FC<{
   segment: string;
   variants: Variants;
@@ -129,14 +138,14 @@ const AnimationComponent: React.FC<{
       </motion.span>
     ) : (
       <motion.span className="inline-block whitespace-pre">
-        {segment.split("").map((char, charIndex) => (
+        {characterKeys(segment).map((entry) => (
           <motion.span
-            key={`char-${charIndex}`}
             aria-hidden="true"
-            variants={variants}
             className="inline-block whitespace-pre"
+            key={entry.key}
+            variants={variants}
           >
-            {char}
+            {entry.char}
           </motion.span>
         ))}
       </motion.span>

@@ -1,5 +1,7 @@
 "use client";
 
+import { BadgeCheck, ChevronsUpDown } from "lucide-react";
+import { useState } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -17,8 +19,6 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import type { TypeUserProfile } from "@/lib/types";
-import { BadgeCheck, ChevronsUpDown } from "lucide-react";
-import { useState } from "react";
 import { SettingsDialog } from "../account-settings";
 import SignOut from "../sign-out";
 

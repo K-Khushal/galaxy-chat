@@ -1,7 +1,6 @@
-"use client"; // Error boundaries must be Client Components
+"use client";
 
 import { Button } from "@/components/ui/button";
-import { useEffect } from "react";
 
 export default function ChatError({
   error,
@@ -10,21 +9,11 @@ export default function ChatError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
-  useEffect(() => {
-    // Log the error to an error reporting service
-    console.error(error);
-  }, [error]);
-
   return (
-    <div className="flex flex-col items-center justify-center h-screen gap-4">
-      <h2>Something went wrong!</h2>
-      <Button
-        className="cursor-pointer"
-        onClick={
-          // Attempt to recover by trying to re-render the segment
-          () => reset()
-        }
-      >
+    <div className="flex h-screen flex-col items-center justify-center gap-4">
+      <h2>Something went wrong</h2>
+      <p>Error ID: {error.digest ?? "chat_failed"}</p>
+      <Button className="cursor-pointer" onClick={() => reset()} type="button">
         Try again
       </Button>
     </div>

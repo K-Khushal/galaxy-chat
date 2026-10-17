@@ -1,17 +1,17 @@
 "use client";
 
+import { useChat } from "@ai-sdk/react";
+import { DefaultChatTransport } from "ai";
+import { nanoid } from "nanoid";
+import { useSearchParams } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { ChatInput } from "@/components/chat/chat-input";
 import { ChatMessages } from "@/components/chat/chat-messages";
 import { chatModels } from "@/lib/ai/model";
 import type { AppUsage } from "@/lib/ai/usage";
 import { fetchWithErrorHandling, getChatErrorMessage } from "@/lib/ai/utils";
 import type { TypeUIMessage } from "@/lib/types";
-import { useChat } from "@ai-sdk/react";
-import { DefaultChatTransport } from "ai";
-import { useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
-import { toast } from "sonner";
-import { v4 as uuidv4 } from "uuid";
 
 export default function Chat({
   id,
@@ -43,10 +43,10 @@ export default function Chat({
     id,
     messages: chatMessages,
     experimental_throttle: 100,
-    generateId: uuidv4,
+    generateId: nanoid,
     transport: new DefaultChatTransport({
       api: "/api/chat",
-      fetch: fetchWithErrorHandling,
+      fetch: fetchWithErrorHandling as typeof fetch,
       prepareSendMessagesRequest: (request) => {
         return {
           body: {

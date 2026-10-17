@@ -20,7 +20,7 @@ export interface UploadProgress {
 export interface UploadResult {
   success: boolean;
   url: string;
-  service: "cloudinary";
+  service: "private";
   fileId: string;
   publicId?: string;
 }
@@ -38,7 +38,7 @@ export interface DeleteResult {
  * Options for the useFileUpload hook
  */
 export interface UseFileUploadOptions {
-  service?: "cloudinary";
+  service?: "private";
   onProgress?: (progress: UploadProgress) => void;
   onComplete?: (result: UploadResult) => void;
   onError?: (error: { fileId: string; error: string }) => void;
@@ -47,9 +47,8 @@ export interface UseFileUploadOptions {
 }
 
 /**
- * Custom hook for handling file uploads with progress tracking
- * Supports Cloudinary service
- *
+ * Custom hook for handling file uploads with progress tracking.
+ * The server refuses uploads until private storage is configured.
  * @param options - Configuration options for the upload hook
  * @returns Object containing upload functions and state
  */
@@ -125,11 +124,14 @@ export const useFileUpload = (options: UseFileUploadOptions = {}) => {
               }
             } else {
               try {
-                const errorResponse = JSON.parse(xhr.responseText);
+                const body = JSON.parse(xhr.responseText) as {
+                  error?: string | { id?: string };
+                };
+                const errorId =
+                  typeof body.error === "string" ? body.error : body.error?.id;
                 reject(
                   new Error(
-                    errorResponse.error ||
-                      `Upload failed with status ${xhr.status}`,
+                    errorId ?? `Upload failed with status ${xhr.status}`,
                   ),
                 );
               } catch {
@@ -214,8 +216,14 @@ export const useFileUpload = (options: UseFileUploadOptions = {}) => {
         });
 
         if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.error || "Delete failed");
+          const errorData = (await response.json()) as {
+            error?: string | { id?: string };
+          };
+          const errorId =
+            typeof errorData.error === "string"
+              ? errorData.error
+              : errorData.error?.id;
+          throw new Error(errorId ?? "Delete failed");
         }
 
         const result: DeleteResult = await response.json();

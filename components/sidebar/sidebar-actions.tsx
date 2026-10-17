@@ -1,5 +1,7 @@
 "use client";
 
+import { Image, SquarePen } from "lucide-react";
+import { useRouter } from "next/navigation";
 import GalaxyChat from "@/components/svg/galaxy-chat";
 import {
   SidebarMenu,
@@ -8,8 +10,6 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { Image, SquarePen } from "lucide-react";
-import { useRouter } from "next/navigation";
 
 export function SidebarActions() {
   const router = useRouter();

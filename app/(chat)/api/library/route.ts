@@ -1,22 +1,23 @@
-import { getChatMessagesWithMedia } from "@/lib/actions/chat/chat-message";
-import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
+import { getChatMessagesWithMedia } from "@/lib/actions/chat/chat-message";
+import { requireChatAccess } from "@/lib/auth/access";
+import { AppError, logErrorId } from "@/lib/errors";
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const { isAuthenticated, userId } = await auth();
-
-    if (!isAuthenticated || !userId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const mediaMessages = await getChatMessagesWithMedia(userId);
-
+    const access = await requireChatAccess(request.headers);
+    const mediaMessages = await getChatMessagesWithMedia(access.userId);
     return NextResponse.json({ mediaMessages });
   } catch (error) {
-    console.error("Error fetching media messages:", error);
+    if (error instanceof AppError) {
+      return NextResponse.json(
+        { error: { id: error.id } },
+        { status: error.status },
+      );
+    }
+    logErrorId("library_failed");
     return NextResponse.json(
-      { error: "Failed to fetch media messages" },
+      { error: { id: "library_failed" } },
       { status: 500 },
     );
   }

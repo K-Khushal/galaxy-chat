@@ -17,7 +17,9 @@ const subscribers = new Set<Subscriber>();
 let idCounter = 1;
 
 export const toast = (msg: Omit<ToastMessage, "id">) => {
-  subscribers.forEach((cb) => cb(msg));
+  for (const subscriber of subscribers) {
+    subscriber(msg);
+  }
 };
 
 export function Toaster() {
@@ -49,25 +51,26 @@ export function Toaster() {
 
   return (
     <div className="pointer-events-none fixed inset-0 z-50 flex flex-col items-end gap-2 p-4">
-      {messages.map((m) => (
-        <div
-          key={m.id}
+      {messages.map((message) => (
+        <output
+          aria-live="polite"
           className={
-            "pointer-events-auto w-full max-w-sm rounded border px-4 py-3 shadow-md bg-white text-gray-900 " +
-            (m.variant === "destructive"
+            "pointer-events-auto block w-full max-w-sm rounded border px-4 py-3 text-gray-900 shadow-md bg-white " +
+            (message.variant === "destructive"
               ? "border-red-300"
-              : m.variant === "success"
+              : message.variant === "success"
                 ? "border-green-300"
                 : "border-gray-200")
           }
-          role="status"
-          aria-live="polite"
+          key={message.id}
         >
-          {m.title ? <div className="font-medium">{m.title}</div> : null}
-          {m.description ? (
-            <div className="text-sm text-gray-700">{m.description}</div>
+          {message.title ? (
+            <div className="font-medium">{message.title}</div>
           ) : null}
-        </div>
+          {message.description ? (
+            <div className="text-sm text-gray-700">{message.description}</div>
+          ) : null}
+        </output>
       ))}
     </div>
   );
