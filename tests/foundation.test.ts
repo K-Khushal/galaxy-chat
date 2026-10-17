@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { insertOwnedMessageBatch } from "../lib/actions/chat/chat-message";
+import { runAuthorizedFundedModelCall } from "../lib/ai/authorized-model";
 import { runFundedModelCall } from "../lib/ai/funded";
 import { assertOwner } from "../lib/auth/access";
 import {
@@ -92,6 +93,25 @@ test("disabled funded inference does not reach the provider", async () => {
   await expect(rejected).rejects.toMatchObject({
     id: "funded_inference_disabled",
   });
+  expect(called).toBe(false);
+});
+
+test("rejected auth cannot reach a funded title provider", async () => {
+  let called = false;
+  const rejected = runAuthorizedFundedModelCall({
+    authorize: () => {
+      throw new AppError("unauthenticated", 401);
+    },
+    env: {
+      FUNDED_INFERENCE: "1",
+      OPENROUTER_API_KEY: "present",
+    },
+    run: () => {
+      called = true;
+      return Promise.resolve("title");
+    },
+  });
+  await expect(rejected).rejects.toMatchObject({ id: "unauthenticated" });
   expect(called).toBe(false);
 });
 

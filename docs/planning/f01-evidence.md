@@ -78,7 +78,7 @@ Outcomes:
 
 - `bun install` exit 0. Lockfile saved.
 - Integrity exit 0.
-- `bun test` exit 0. Seven tests: auth configuration, invites, owner mismatch, mixed message batch rejected before insert, funded inference staying disabled, and baseline SQL lockdown.
+- `bun test` exit 0. Ten tests, including a rejected auth check that does not reach the title provider, and migration rollback plus serialized concurrent apply.
 - `bun run typecheck` (`tsc --noEmit --pretty false --incremental false`) exit 0.
 - `bun run build` (Next.js 16.4.2) exit 0. Static pages generated. `/`, `/forgot-password`, and `/sign-up` are static. Chat, auth API, and `/spike/f01` are dynamic. No Clerk key is required.
 - `bun run build:workers` exit 0 after the proxy file was removed. OpenNext printed `Worker saved in .open-next/worker.js` and `OpenNext build complete.` It warned that `compatibility_date` `2024-12-30` is old, and esbuild warned about a duplicate `database` key inside bundled Better Auth message strings. `.open-next/worker.js` is 2,278 bytes raw and 735 gzip. The server function `handler.mjs` is 23,449,308 bytes raw and 5,267,704 gzip. No Wrangler upload ran, so the deployed script size is unknown. This does not show that the Free tier accepts the bundle.

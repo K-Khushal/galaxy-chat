@@ -24,6 +24,7 @@ import {
 } from "@/lib/actions/chat/chat-message";
 import { runFundedModelCall } from "@/lib/ai/funded";
 import type { ChatModel } from "@/lib/ai/model";
+import { generateChatTitle } from "@/lib/ai/title";
 import type { AppUsage } from "@/lib/ai/usage";
 import { convertToUIMessages, formatTitle } from "@/lib/ai/utils";
 import { requireChatAccess } from "@/lib/auth/access";
@@ -33,7 +34,6 @@ import {
   postRequestBodySchema,
 } from "@/lib/schema/chat/chat";
 import type { ChatVisibility, TypeUIMessage } from "@/lib/types";
-import { generateChatTitle } from "../../action";
 
 // Allow streaming responses up to 30 seconds
 export const maxDuration = 30;
@@ -110,7 +110,7 @@ export async function POST(req: Request) {
         );
       }
     } else {
-      const title = await generateChatTitle({ message });
+      const title = await generateChatTitle(req.headers, message);
       const formattedTitle = formatTitle(title);
 
       await createChat({
