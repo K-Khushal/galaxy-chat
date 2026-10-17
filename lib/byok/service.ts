@@ -7,10 +7,16 @@ import {
   toUIMessageStream,
   wrapLanguageModel,
 } from "ai";
+import {
+  type AttachmentImagePlan,
+  boundImageContext,
+  imageModelMessages,
+  loadImagePayload,
+} from "@/lib/attachments/model-payload";
 import type { EnvSource } from "@/lib/auth/env";
 import { INSTRUCTIONS, LIMITS } from "@/lib/credits/config";
 import { boundedJson } from "@/lib/credits/http";
-import { boundContext, type TextTurn } from "@/lib/credits/service";
+import type { TextTurn } from "@/lib/credits/service";
 import type { EntryValidation } from "@/lib/db/client";
 import { AppError, logErrorId } from "@/lib/errors";
 import { BYOK_LIMITS, resolveByokModel, resourceDigest } from "./config";
@@ -136,10 +142,16 @@ export async function startByokStream(options: {
   beforeProvider?: () => Promise<void>;
   prepareProvider?: () => Promise<void>;
   validateEntry?: EntryValidation;
+  attachmentImages?: AttachmentImagePlan;
 }) {
   const model = resolveByokModel(options.env, options.model, options.provider);
   const instructions = options.instructions ?? INSTRUCTIONS;
-  const turns = boundContext(options.turns, false, instructions);
+  const turns = boundImageContext(
+    options.turns,
+    instructions,
+    options.attachmentImages,
+    model.capabilities,
+  );
   const store = options.store ?? new ByokStore();
   const revision = await store.reserve({
     id: options.idempotencyKey,
@@ -147,7 +159,17 @@ export async function startByokStream(options: {
     provider: options.provider,
     kind: "chat",
     digest: resourceDigest(
-      JSON.stringify({ turns, model, instructions }),
+      JSON.stringify({
+        turns,
+        model,
+        instructions,
+        ...(options.attachmentImages
+          ? {
+              attachmentDigest: options.attachmentImages.preview.digest,
+              imageTokens: options.attachmentImages.preview.imageTokens,
+            }
+          : {}),
+      }),
       options.env,
     ),
     env: options.env,
@@ -159,6 +181,12 @@ export async function startByokStream(options: {
     options.signal?.throwIfAborted();
     await options.beforeProvider?.();
     await options.prepareProvider?.();
+    // Private image I/O is budgeted and completed while reserved, outside the
+    // final claim transaction. Never fetch URLs or await bytes after the claim.
+    const files = options.attachmentImages
+      ? await loadImagePayload(options.attachmentImages)
+      : [];
+    const messages = imageModelMessages(turns, files);
     options.signal?.throwIfAborted();
     // Configuration and credential revocation are rechecked at the entry boundary.
     resolveByokModel(options.env, options.model, options.provider);
@@ -166,7 +194,15 @@ export async function startByokStream(options: {
       options.idempotencyKey,
       options.userId,
       options.env,
-      options.validateEntry,
+      async (tx) => {
+        await options.validateEntry?.(tx);
+        if (
+          JSON.stringify(
+            resolveByokModel(options.env, options.model, options.provider),
+          ) !== JSON.stringify(model)
+        )
+          throw new AppError("byok_model_unavailable", 403);
+      },
     );
     entered = true;
     const fetcher: typeof fetch = Object.assign(
@@ -247,7 +283,7 @@ export async function startByokStream(options: {
         ? { providerOptions: { gateway: { only: [model.provider] } } }
         : {}),
       instructions,
-      messages: turns,
+      messages,
       maxOutputTokens: LIMITS.outputTokens,
       maxRetries: 0,
       abortSignal: AbortSignal.any([
@@ -290,7 +326,19 @@ export async function startByokStream(options: {
     );
     if (
       error instanceof AppError &&
-      ["context_changed", "context_too_large"].includes(error.id)
+      [
+        "context_changed",
+        "context_too_large",
+        "attachment_context_changed",
+        "attachment_context_limit",
+        "attachment_model_unsupported",
+        "attachment_integrity_failed",
+        "attachment_not_ready",
+        "attachments_unavailable",
+        "storage_unavailable",
+        "storage_download_failed",
+        "not_found",
+      ].includes(error.id)
     )
       throw error;
     throw new AppError(

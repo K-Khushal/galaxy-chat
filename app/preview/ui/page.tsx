@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { GuestPreview } from "@/components/guest/guest-preview";
+import { AttachmentPreview } from "@/components/preview/attachment-preview";
 import { ContextPreview } from "@/components/preview/context-preview";
 import {
   PreviewCanvas,
@@ -15,6 +16,7 @@ export default async function PreviewPage({
 }) {
   if (!uiHarnessEnabled(process.env)) notFound();
   const params = await searchParams;
+  if (params.attachments === "1") return <AttachmentPreview />;
   if (params.context === "1") return <ContextPreview />;
   if (params.guest) return <GuestPreview scenario={params.guest} />;
   if (params.canvas !== "1") return <PreviewWorkbench />;
