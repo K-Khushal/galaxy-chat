@@ -4,6 +4,7 @@ import { PGLiteSocketServer } from "@electric-sql/pglite-socket";
 import { makeSignature } from "better-auth/crypto";
 import { eq, sql } from "drizzle-orm";
 import { NextRequest } from "next/server";
+import { rejectionOf } from "./helpers/rejection";
 
 mock.module("server-only", () => ({}));
 
@@ -140,6 +141,7 @@ beforeAll(async () => {
   expect(versions.map((row) => row.version).sort()).toEqual([
     "0000_baseline",
     "0001_ownership",
+    "0002_credit_ledger",
   ]);
 
   await db
@@ -326,6 +328,31 @@ function idsOf(json: unknown) {
     return typeof chat.id === "string" ? chat.id : "";
   });
 }
+
+test("credits derive identity from the real invited session and return a private disabled view", async () => {
+  const { GET } = await import("../app/api/credits/route");
+  const anonymous = await GET(
+    request("/api/credits?userId=user-alice", new Headers()),
+  );
+  expect(anonymous.status).toBe(401);
+  expect(anonymous.headers.get("cache-control")).toBe("no-store");
+  const alice = await cookieHeader("alice-token");
+  const own = await GET(request("/api/credits?userId=user-bob", alice));
+  expect(own.status).toBe(200);
+  expect(own.headers.get("cache-control")).toBe("no-store");
+  const body = await own.json();
+  expect(body).toMatchObject({
+    funding: "platform",
+    state: "disabled",
+    configured: false,
+    allowanceMicrodollars: 500000,
+    remainingMicrodollars: 0,
+    creditMicrodollars: 100000,
+  });
+  expect(JSON.stringify(body)).not.toContain("user-bob");
+  expect(JSON.stringify(body)).not.toContain("user-alice");
+  expect(JSON.stringify(body)).not.toContain("monthly");
+});
 
 test("history pages tied timestamps without another user's titles", async () => {
   const headers = await cookieHeader("alice-token");
@@ -600,7 +627,7 @@ test("message cursors and trailing delete keep sub-millisecond neighbors", async
   expect((await bodyOf(foreign)).text).not.toContain("bob-micro-keep");
 
   currentHeaders = await cookieHeader("bob-token");
-  await expect(deleteChatMessages("n1")).rejects.toMatchObject({
+  expect(await rejectionOf(deleteChatMessages("n1"))).toMatchObject({
     id: "not_found",
   });
   currentHeaders = alice;
@@ -746,7 +773,7 @@ test("rename and delete refuse another user's conversation", async () => {
 test("trailing delete uses the session and keeps the other user's messages", async () => {
   const bob = await cookieHeader("bob-token");
   currentHeaders = bob;
-  await expect(deleteChatMessages("t-b")).rejects.toMatchObject({
+  expect(await rejectionOf(deleteChatMessages("t-b"))).toMatchObject({
     id: "not_found",
   });
   const before = await db
