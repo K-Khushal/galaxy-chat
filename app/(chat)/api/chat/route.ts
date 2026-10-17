@@ -15,6 +15,7 @@ import {
   createChat,
   deleteChat,
   getChatForUser,
+  updateChat,
   updateChatLastContext,
 } from "@/lib/actions/chat/chat";
 import {
@@ -29,6 +30,7 @@ import type { AppUsage } from "@/lib/ai/usage";
 import { convertToUIMessages, formatTitle } from "@/lib/ai/utils";
 import { requireChatAccess } from "@/lib/auth/access";
 import { AppError, logErrorId } from "@/lib/errors";
+import { errorResponse } from "@/lib/http/error-response";
 import {
   type PostRequestBody,
   postRequestBodySchema,
@@ -242,15 +244,46 @@ export async function DELETE(request: Request) {
     );
   }
 
-  const access = await requireChatAccess(request.headers);
-
-  const chat = await getChatForUser(id, access.userId);
-
-  if (!chat) {
-    return NextResponse.json({ error: { id: "forbidden" } }, { status: 403 });
+  try {
+    const access = await requireChatAccess(request.headers);
+    const chat = await getChatForUser(id, access.userId);
+    if (!chat) {
+      return NextResponse.json({ error: { id: "forbidden" } }, { status: 403 });
+    }
+    const deletedChat = await deleteChat(id, access.userId);
+    return Response.json(deletedChat, { status: 200 });
+  } catch (error) {
+    return errorResponse(error, "chat_failed");
   }
+}
 
-  const deletedChat = await deleteChat(id, access.userId);
-
-  return Response.json(deletedChat, { status: 200 });
+export async function PATCH(request: Request) {
+  try {
+    const access = await requireChatAccess(request.headers);
+    const json: unknown = await request.json();
+    if (!json || typeof json !== "object") {
+      throw new AppError("invalid_request", 400);
+    }
+    const id =
+      "id" in json && typeof json.id === "string" ? json.id.trim() : "";
+    const title =
+      "title" in json && typeof json.title === "string"
+        ? json.title.trim()
+        : "";
+    if (!id || !title || title.length > 200) {
+      throw new AppError("invalid_title", 400);
+    }
+    const chat = await getChatForUser(id, access.userId);
+    if (!chat) {
+      return NextResponse.json({ error: { id: "forbidden" } }, { status: 403 });
+    }
+    const updated = await updateChat({
+      id,
+      title,
+      userId: access.userId,
+    });
+    return NextResponse.json(updated);
+  } catch (error) {
+    return errorResponse(error, "chat_failed");
+  }
 }

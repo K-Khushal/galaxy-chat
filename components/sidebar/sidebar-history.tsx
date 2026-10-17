@@ -7,6 +7,14 @@ import { useParams, usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import useSWRInfinite from "swr/infinite";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -14,6 +22,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
 import {
   SidebarGroup,
   SidebarGroupContent,
@@ -44,6 +53,10 @@ export function SidebarHistory() {
   const pathname = usePathname();
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [query, setQuery] = useState("");
+  const [renameId, setRenameId] = useState<string | null>(null);
+  const [renameTitle, setRenameTitle] = useState("");
+  const [renamePending, setRenamePending] = useState(false);
   const { isMobile } = useSidebar();
 
   const {
@@ -52,9 +65,14 @@ export function SidebarHistory() {
     isValidating,
     isLoading,
     mutate,
-  } = useSWRInfinite<ChatHistory>(getPaginatedChatHistory, fetchJson, {
-    fallbackData: [] as ChatHistory[],
-  });
+  } = useSWRInfinite<ChatHistory>(
+    (pageIndex, previousPageData) =>
+      getPaginatedChatHistory(pageIndex, previousPageData, query),
+    fetchJson,
+    {
+      fallbackData: [] as ChatHistory[],
+    },
+  );
 
   const hasReachedEnd = paginatedChatHistory
     ? paginatedChatHistory.some((page) => page.hasMore === false)
@@ -107,10 +125,45 @@ export function SidebarHistory() {
     }
   };
 
+  async function saveRename() {
+    if (!renameId || renameTitle.trim().length === 0) {
+      return;
+    }
+    setRenamePending(true);
+    try {
+      const response = await fetch("/api/chat", {
+        body: JSON.stringify({ id: renameId, title: renameTitle.trim() }),
+        headers: { "content-type": "application/json" },
+        method: "PATCH",
+      });
+      if (!response.ok) {
+        toast.error("Could not rename conversation");
+        return;
+      }
+      setRenameId(null);
+      await mutate();
+    } catch {
+      toast.error("Could not rename conversation");
+    } finally {
+      setRenamePending(false);
+    }
+  }
+
   return (
     <>
       <SidebarGroup className="group-data-[collapsible=icon]:hidden">
         <SidebarGroupContent>
+          <div className="px-2 pb-2">
+            <label className="sr-only" htmlFor="history-search">
+              Search conversations
+            </label>
+            <Input
+              id="history-search"
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search titles"
+              value={query}
+            />
+          </div>
           <SidebarMenu>
             {isLoading &&
               [1, 2, 3, 4, 5].map((index) => (
@@ -154,6 +207,14 @@ export function SidebarHistory() {
                         <DropdownMenuItem>
                           <Forward className="text-muted-foreground" />
                           <span>Share</span>
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onSelect={() => {
+                            setRenameId(item.id);
+                            setRenameTitle(item.title);
+                          }}
+                        >
+                          <span>Rename</span>
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem
@@ -219,6 +280,35 @@ export function SidebarHistory() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <Dialog
+        onOpenChange={(open) => {
+          if (!open) {
+            setRenameId(null);
+          }
+        }}
+        open={renameId !== null}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rename conversation</DialogTitle>
+          </DialogHeader>
+          <label htmlFor="conversation-title">Title</label>
+          <Input
+            id="conversation-title"
+            onChange={(event) => setRenameTitle(event.target.value)}
+            value={renameTitle}
+          />
+          <DialogFooter>
+            <Button
+              disabled={renamePending || renameTitle.trim().length === 0}
+              onClick={() => void saveRename()}
+              type="button"
+            >
+              Save title
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
@@ -227,21 +317,30 @@ const PAGE_SIZE = 15;
 
 export function getPaginatedChatHistory(
   pageIndex: number,
-  previousPageData: ChatHistory,
+  previousPageData: ChatHistory | null,
+  query = "",
 ) {
   if (previousPageData && previousPageData.hasMore === false) {
     return null;
   }
 
-  if (pageIndex === 0) {
-    return `/api/history?limit=${PAGE_SIZE}`;
+  const search = new URLSearchParams();
+  search.set("limit", String(PAGE_SIZE));
+  const trimmed = query.trim();
+  if (trimmed.length > 0) {
+    search.set("q", trimmed);
   }
 
-  const firstChatFromPage = previousPageData.chats.at(-1);
+  if (pageIndex === 0) {
+    return `/api/history?${search.toString()}`;
+  }
+
+  const firstChatFromPage = previousPageData?.chats.at(-1);
 
   if (!firstChatFromPage) {
     return null;
   }
 
-  return `/api/history?ending_before=${firstChatFromPage.id}&limit=${PAGE_SIZE}`;
+  search.set("ending_before", firstChatFromPage.id);
+  return `/api/history?${search.toString()}`;
 }

@@ -35,7 +35,7 @@ Replace obsolete scaffolding with a reproducible, typed foundation.
 
 Phase: M1. Dependencies: F02.
 
-Provide invite-only accounts and isolate every user's data. The local Better Auth, Drizzle schema, invite allowlist, and owner filters exist. Live GitHub OAuth and cross-user proof remain pending, so these boxes stay open.
+Provide invite-only accounts and isolate every user's data. The local Better Auth, Drizzle schema, invite allowlist, and owner filters exist. Local route and database proof is recorded in f03-evidence.md. Live GitHub OAuth remains pending, so these boxes stay open.
 
 - [ ] Implement GitHub OAuth first, invite validation, and secure session handling. Local code fails closed without credentials. A real provider login has not been exercised.
 - [ ] Create versioned database schema for profiles, conversations, messages and future usage records.
