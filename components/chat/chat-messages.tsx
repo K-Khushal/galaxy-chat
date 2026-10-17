@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { ConversationArtifacts } from "@/components/artifacts/artifact-workbench";
 import { ErrorActions } from "@/components/chat/message/message-action";
 import { MessagePart } from "@/components/chat/message/message-part";
 import {
@@ -31,6 +32,7 @@ export function ChatMessages({
   setMessages,
   onPrompt,
   actionsEnabled = false,
+  artifactChatId,
   onEdit,
 }: {
   messages: TypeUIMessage[];
@@ -40,6 +42,7 @@ export function ChatMessages({
   setMessages: UseChatHelpers<TypeUIMessage>["setMessages"];
   onPrompt?: (text: string) => void;
   actionsEnabled?: boolean;
+  artifactChatId?: string;
   onEdit?: (messageId: string, text: string) => Promise<boolean>;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -167,6 +170,18 @@ export function ChatMessages({
                     }
                   />
                 ))}
+                {artifactChatId &&
+                  message.role === "assistant" &&
+                  status !== "streaming" &&
+                  status !== "submitted" &&
+                  message.parts.some(
+                    (part) => part.type === "text" && part.text.trim(),
+                  ) && (
+                    <ConversationArtifacts
+                      chatId={artifactChatId}
+                      messageId={message.id}
+                    />
+                  )}
               </article>
             );
           })}

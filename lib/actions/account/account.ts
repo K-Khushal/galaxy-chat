@@ -5,6 +5,8 @@ import { ByokStore, lockByokResources } from "@/lib/byok/store";
 import { requireDb } from "@/lib/db/client";
 import {
   account,
+  artifact,
+  artifactRevision,
   chatBranch,
   chatMessage,
   chatRun,
@@ -24,6 +26,8 @@ export type AccountProfile = {
 
 export type AccountExport = {
   profile: AccountProfile;
+  artifacts: Array<typeof artifact.$inferSelect>;
+  artifactRevisions: Array<typeof artifactRevision.$inferSelect>;
   providerCredentials: CredentialView[];
   byokOperations: Array<{
     id: string;
@@ -127,6 +131,14 @@ export async function exportOwnedAccount(
     .select()
     .from(chatRun)
     .where(eq(chatRun.userId, userId));
+  const artifacts = await db
+    .select()
+    .from(artifact)
+    .where(eq(artifact.userId, userId));
+  const artifactRevisions = await db
+    .select()
+    .from(artifactRevision)
+    .where(eq(artifactRevision.userId, userId));
   const providerCredentials = await new ByokStore(db).credentials(userId);
   let actor: string | undefined;
   try {
@@ -154,6 +166,8 @@ export async function exportOwnedAccount(
   }));
   return {
     profile,
+    artifacts,
+    artifactRevisions,
     chats,
     messages,
     usageRecords,
