@@ -1,7 +1,7 @@
 import { expect, mock, test } from "bun:test";
 
 import { artifactLimits } from "../lib/artifacts/contract";
-import { betaFixture } from "./helpers/beta-fixture";
+import { betaFixture, chatBody, env, secret } from "./helpers/beta-fixture";
 import { rejectionOf } from "./helpers/rejection";
 
 mock.module("server-only", () => ({}));
@@ -340,4 +340,62 @@ test("F11 account export includes owned source and revisions; account/chat casca
   expect(
     await f.db.$client.unsafe(`SELECT artifact_id FROM artifact_revision`),
   ).toHaveLength(0);
+});
+
+test("F11 guest cookies and actual temporary assistant responses cannot create persisted artifacts", async () => {
+  const f = await betaFixture();
+  const { signedGuest } = await import("../lib/credits/guest");
+  const guestRequest = new Request(`${env.BETTER_AUTH_URL}/api/artifacts`, {
+    method: "POST",
+    headers: {
+      origin: env.BETTER_AUTH_URL,
+      "content-type": "application/json",
+      cookie: `__Host-galaxy-guest=${signedGuest(secret)}`,
+    },
+    body: JSON.stringify(creation),
+  });
+  expect((await POST(guestRequest)).status).toBe(401);
+  const { POST: chatPost } = await import("../app/(chat)/api/chat/route");
+  const temporary = chatBody({ temporary: true });
+  const response = await chatPost(await f.request("/api/chat", temporary));
+  expect(response.status).toBe(200);
+  const wire = await response.text();
+  const start = wire
+    .split("\n")
+    .filter((line) => line.startsWith("data: ") && !line.includes("[DONE]"))
+    .map((line) => JSON.parse(line.slice(6)))
+    .find((part) => part.type === "start");
+  expect(typeof start?.messageId).toBe("string");
+  expect(
+    (
+      await POST(
+        await f.request("/api/artifacts", {
+          ...creation,
+          chatId: temporary.id,
+          messageId: start.messageId,
+        }),
+      )
+    ).status,
+  ).toBe(404);
+  expect(
+    (
+      await POST(
+        await f.request("/api/artifacts", {
+          ...creation,
+          chatId: temporary.id,
+          messageId: start.messageId,
+          temporary: true,
+        }),
+      )
+    ).status,
+  ).toBe(400);
+  expect(await f.db.$client.unsafe("SELECT id FROM chat")).toHaveLength(0);
+  expect(await f.db.$client.unsafe("SELECT id FROM chat_message")).toHaveLength(
+    0,
+  );
+  expect(await f.db.$client.unsafe("SELECT id FROM artifact")).toHaveLength(0);
+  expect(
+    await f.db.$client.unsafe("SELECT artifact_id FROM artifact_revision"),
+  ).toHaveLength(0);
+  expect(f.seen).toHaveLength(1);
 });

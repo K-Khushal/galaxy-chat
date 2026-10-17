@@ -14,6 +14,7 @@ import {
 import { requireChatAccess } from "@/lib/auth/access";
 import { resolveByokModel } from "@/lib/byok/config";
 import { startByokStream } from "@/lib/byok/service";
+import { assertTemporaryId, resolveContext } from "@/lib/context/service";
 import { resolveFundingConfig } from "@/lib/credits/config";
 import { boundedJson } from "@/lib/credits/http";
 import {
@@ -61,15 +62,29 @@ export async function POST(request: Request) {
           .join("\n"),
       },
     ]);
-    const prepared = await prepareRun(
-      { ...body, message: body.message as TypeUIMessage },
-      access.userId,
-    );
-    run = {
-      id: body.requestId,
-      userId: access.userId,
-      branchId: prepared.branchId,
+    if (
+      body.temporary
+        ? body.action !== "send" || body.anchorId || body.branchId !== body.id
+        : body.transientMessages !== undefined
+    )
+      throw new AppError("invalid_request", 400);
+    const context = await resolveContext(access.userId, body.context);
+    const beforeProvider = async () => {
+      await resolveContext(access.userId, body.context);
     };
+    if (body.temporary) await assertTemporaryId(body.id);
+    const prepared = body.temporary
+      ? { branchId: body.id, messages: [body.message as TypeUIMessage] }
+      : await prepareRun(
+          { ...body, message: body.message as TypeUIMessage },
+          access.userId,
+        );
+    if (!body.temporary)
+      run = {
+        id: body.requestId,
+        userId: access.userId,
+        branchId: prepared.branchId,
+      };
     const turns: TextTurn[] = prepared.messages.flatMap((m) =>
       m.role === "user" || m.role === "assistant"
         ? [
@@ -83,6 +98,9 @@ export async function POST(request: Request) {
           ]
         : [],
     );
+    if (body.temporary) turns.unshift(...(body.transientMessages ?? []));
+    // Context is resolved from owned rows, never accepted as caller-authored instructions.
+    boundContext(turns, false, context.instructions);
     const result =
       body.funding !== "platform"
         ? await startByokStream({
@@ -91,11 +109,14 @@ export async function POST(request: Request) {
             model: body.model,
             idempotencyKey: body.requestId,
             turns,
+            instructions: context.instructions,
+            beforeProvider,
             env: process.env,
             signal: request.signal,
           })
         : await startFundedStream({
             env: process.env,
+            retainProviderReference: !body.temporary,
             actor: actorFor(
               "user",
               access.userId,
@@ -104,6 +125,8 @@ export async function POST(request: Request) {
             model: body.model,
             idempotencyKey: body.requestId,
             turns,
+            instructions: context.instructions,
+            beforeProvider,
             signal: request.signal,
           });
     void result.completion.catch(() =>
@@ -148,6 +171,7 @@ export async function POST(request: Request) {
         }
       },
       onEnd: async ({ responseMessage, outcome, isAborted }) => {
+        if (body.temporary) return;
         await finishRun(
           body.requestId,
           access.userId,
@@ -169,7 +193,7 @@ export async function POST(request: Request) {
       stream,
       headers: {
         "cache-control": "no-store",
-        "x-chat-branch": prepared.branchId,
+        ...(body.temporary ? {} : { "x-chat-branch": prepared.branchId }),
       },
       consumeSseStream: ({ stream }) =>
         consumeStream({

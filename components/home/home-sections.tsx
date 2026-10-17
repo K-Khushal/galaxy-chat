@@ -24,7 +24,7 @@ const features = [
   {
     icon: TextCursorInput,
     title: "Stay with the substance",
-    text: "Read Markdown and code, copy an answer, or stop a response. A quiet interface keeps the work in view.",
+    text: "Turn a saved response into a Markdown or HTML artifact. Edit its source, restore a revision, and download a copy.",
   },
 ];
 
@@ -57,9 +57,10 @@ export function HomeSections() {
           ))}
         </div>
         <p className={styles.roadmap}>
-          <span>Here today:</span> text conversations and account controls.{" "}
-          <span>Still ahead:</span> saved memory, attachments, artifacts, tools,
-          and browser work.
+          <span>Implemented for the gated beta:</span> text conversations,
+          explicit memory, projects, temporary chat, versioned Markdown and HTML
+          artifacts, and account controls. <span>Still ahead:</span>{" "}
+          attachments, tools, search, and browser work.
         </p>
       </section>
       <section

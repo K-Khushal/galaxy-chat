@@ -120,6 +120,9 @@ test("F11 editor exposes labels and history, UTF-8 bounds and safe downloads; on
   expect(html).toContain("HTML source");
   expect(html).toContain("Save revision");
   expect(html).toContain("History");
+  expect(html).toContain('role="tablist"');
+  expect(html).toContain('role="tab"');
+  expect(html).not.toContain("Saving…");
   expect(html).toContain("Download saved HTML source (.txt)");
   expect(html).not.toContain("<script>");
   expect(artifactFilename('../../unsafe"\r\n<script>', "html")).toBe(

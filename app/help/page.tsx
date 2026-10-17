@@ -105,6 +105,28 @@ export default function HelpPage() {
           retained-record limitations.
         </p>
       </section>
+      <section id="artifacts">
+        <h2>Save an answer as an artifact</h2>
+        <p>
+          Under a saved assistant response, choose Create artifact, add a title,
+          and select Markdown or HTML. You can also reopen saved documents with
+          Artifacts in the conversation header. Guest and temporary
+          conversations cannot save artifacts.
+        </p>
+        <p>
+          Edit the source and choose Save revision. History lets you restore a
+          saved version as a new revision. The reading preview disables links,
+          scripts, images, custom styles, and external resources. Download saves
+          Markdown or HTML source as a text file; Galaxy does not run it.
+        </p>
+        <p>
+          Each artifact allows 128 KiB of source per revision and 40 revisions.
+          Your account can store 50 artifacts and 8 MiB of revision source in
+          total. Download a copy before deleting an artifact; deletion removes
+          all of its revisions. Deleting its originating message, conversation,
+          or account also removes the artifact.
+        </p>
+      </section>
       <section>
         <h2>Report a problem</h2>
         <p>
@@ -124,8 +146,12 @@ export default function HelpPage() {
       <section>
         <h2>What is still ahead?</h2>
         <p>
-          Saved memory and projects, attachments, artifacts, tools, search, and
-          browser work are roadmap features. This beta focuses on text chat.
+          In the workspace, Memory &amp; projects lets you explicitly create,
+          edit, and delete reusable context and start grouped conversations.
+          Request context shows exactly which memories and project instructions
+          will be sent. Temporary conversation keeps its transcript out of saved
+          history; provider retention and anonymous cost records are separate.
+          Attachments, tools, search, and browser work remain roadmap features.
           Live guest verification, provider behavior, deployment, and the
           release quality gate still require verification before public beta.
         </p>

@@ -1,5 +1,13 @@
 "use client";
-import { FileCode2, FileText, FolderOpen, Save, Trash2 } from "lucide-react";
+import {
+  FileCode2,
+  FileText,
+  FolderOpen,
+  Loader2,
+  RotateCcw,
+  Save,
+  Trash2,
+} from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,6 +19,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import {
   type ArtifactDocument,
@@ -104,7 +113,16 @@ export function ArtifactEditor({
   const [selected, setSelected] = useState(
     String(document.revisions[0]?.version ?? document.version),
   );
-  const [busy, setBusy] = useState(false);
+  const [operation, setOperation] = useState<ArtifactMutation["action"] | null>(
+    null,
+  );
+  const busy = operation !== null;
+  const titleInput = useRef<HTMLInputElement>(null);
+  const sourceInput = useRef<HTMLTextAreaElement>(null);
+  const revisionInput = useRef<HTMLSelectElement>(null);
+  useEffect(() => {
+    titleInput.current?.focus();
+  }, []);
   const pending = useRef(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -133,7 +151,7 @@ export function ArtifactEditor({
   async function commit(input: ArtifactMutation) {
     if (pending.current) return;
     pending.current = true;
-    setBusy(true);
+    setOperation(input.action);
     setError("");
     setNotice("");
     try {
@@ -156,7 +174,15 @@ export function ArtifactEditor({
       setError(artifactError(error instanceof Error ? error.message : ""));
     } finally {
       pending.current = false;
-      setBusy(false);
+      setOperation(null);
+      if (input.action !== "delete")
+        requestAnimationFrame(() => {
+          const target =
+            input.action === "restore"
+              ? revisionInput.current
+              : (sourceInput.current ?? titleInput.current);
+          target?.focus();
+        });
     }
   }
   return (
@@ -166,6 +192,7 @@ export function ArtifactEditor({
           Artifact title
         </label>
         <Input
+          ref={titleInput}
           id={`${uid}-title`}
           value={title}
           maxLength={120}
@@ -174,36 +201,38 @@ export function ArtifactEditor({
           className="text-base"
         />
       </div>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <fieldset className="flex gap-1">
-          <legend className="sr-only">Artifact view</legend>
-          {(["source", "preview", "history"] as const).map((view) => (
-            <Button
-              key={view}
-              size="sm"
-              variant={tab === view ? "secondary" : "ghost"}
-              aria-pressed={tab === view}
-              onClick={() => setTab(view)}
-            >
-              {view === "source"
-                ? "Edit source"
-                : view === "preview"
-                  ? "Preview"
-                  : "History"}
-            </Button>
-          ))}
-        </fieldset>
-        <span className="text-xs text-muted-foreground">
-          Revision {document.version} of 40{dirty ? " · Unsaved changes" : ""}
-        </span>
-      </div>
-      {tab === "source" && (
-        <div className="flex min-h-0 flex-1 flex-col gap-2">
+      <Tabs
+        value={tab}
+        onValueChange={(value) => setTab(value as typeof tab)}
+        className="min-h-0 flex-1"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <TabsList aria-label="Artifact view" className="h-auto min-h-11">
+            {(["source", "preview", "history"] as const).map((view) => (
+              <TabsTrigger key={view} value={view} className="min-h-11 px-3">
+                {view === "source"
+                  ? "Edit source"
+                  : view === "preview"
+                    ? "Preview"
+                    : "History"}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+          <span className="text-xs text-muted-foreground">
+            Revision {document.version} of 40{dirty ? " · Unsaved changes" : ""}
+          </span>
+        </div>
+        <TabsContent
+          value="source"
+          className="flex min-h-0 flex-1 flex-col gap-2"
+        >
           <label htmlFor={`${uid}-source`} className="text-sm font-medium">
             {document.kind === "html" ? "HTML source" : "Markdown source"}
           </label>
           <Textarea
+            ref={sourceInput}
             id={`${uid}-source`}
+            maxLength={artifactLimits.contentBytes}
             spellCheck={false}
             disabled={busy}
             value={content}
@@ -220,19 +249,21 @@ export function ArtifactEditor({
             {bytes.toLocaleString()} /{" "}
             {artifactLimits.contentBytes.toLocaleString()} bytes
           </span>
-        </div>
-      )}
-      {tab === "preview" && (
-        <div className="flex min-h-0 flex-1 flex-col gap-3">
+        </TabsContent>
+        <TabsContent
+          value="preview"
+          className="flex min-h-0 flex-1 flex-col gap-3"
+        >
           <p className="text-sm text-muted-foreground">
             Safe reading preview. Links, scripts, images, external resources,
             and custom styles are disabled.
           </p>
           <ArtifactPreview source={content} kind={document.kind} />
-        </div>
-      )}
-      {tab === "history" && (
-        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain">
+        </TabsContent>
+        <TabsContent
+          value="history"
+          className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain"
+        >
           <p className="text-sm text-muted-foreground">
             Each save is permanent in history. Restore adds a new revision.
             Download before deleting an artifact; deletion removes all its
@@ -245,6 +276,7 @@ export function ArtifactEditor({
             Saved revision
           </label>
           <select
+            ref={revisionInput}
             id={`${uid}-revision`}
             value={selected}
             disabled={busy}
@@ -268,6 +300,7 @@ export function ArtifactEditor({
           )}
           <Button
             variant="outline"
+            aria-busy={operation === "restore"}
             disabled={
               busy ||
               dirty ||
@@ -283,10 +316,15 @@ export function ArtifactEditor({
               })
             }
           >
+            {operation === "restore" ? (
+              <Loader2 aria-hidden="true" className="animate-spin" />
+            ) : (
+              <RotateCcw aria-hidden="true" />
+            )}
             Restore as new revision
           </Button>
-        </div>
-      )}
+        </TabsContent>
+      </Tabs>
       {document.version >= artifactLimits.revisions && (
         <p className="text-sm text-muted-foreground">
           The 40 revision limit is reached. You can still preview, download, or
@@ -303,6 +341,7 @@ export function ArtifactEditor({
       </output>
       <div className="flex flex-wrap items-center gap-2 border-t pt-4">
         <Button
+          aria-busy={operation === "save"}
           disabled={busy || !canSave}
           onClick={() =>
             void commit({
@@ -314,8 +353,12 @@ export function ArtifactEditor({
             })
           }
         >
-          <Save />
-          {busy ? "Saving…" : "Save revision"}
+          {operation === "save" ? (
+            <Loader2 aria-hidden="true" className="animate-spin" />
+          ) : (
+            <Save aria-hidden="true" />
+          )}
+          Save revision
         </Button>
         {dirty && (
           <Button
@@ -325,6 +368,8 @@ export function ArtifactEditor({
               setTitle(document.title);
               setContent(document.content);
               setError("");
+              setNotice("Unsaved changes discarded.");
+              titleInput.current?.focus();
             }}
           >
             Discard changes
@@ -360,9 +405,15 @@ export function ArtifactEditor({
           </p>
           <Button
             variant="destructive"
+            aria-busy={operation === "delete"}
             disabled={busy}
             onClick={() => void commit({ action: "delete", id: document.id })}
           >
+            {operation === "delete" ? (
+              <Loader2 aria-hidden="true" className="animate-spin" />
+            ) : (
+              <Trash2 aria-hidden="true" />
+            )}
             Delete all revisions
           </Button>
           <Button
@@ -398,6 +449,18 @@ function ArtifactPanel({
   const [title, setTitle] = useState("Untitled artifact");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const [openingId, setOpeningId] = useState<string | null>(null);
+  const listHeading = useRef<HTMLHeadingElement>(null);
+  const hadDocument = useRef(false);
+  useEffect(() => {
+    if (document) hadDocument.current = true;
+    else if (hadDocument.current) {
+      listHeading.current?.focus();
+      hadDocument.current = false;
+    }
+  }, [document]);
   const pending = useRef(false);
   useEffect(() => {
     onDirtyChange?.(dirty || busy);
@@ -406,6 +469,7 @@ function ArtifactPanel({
   const uid = useId();
   useEffect(() => {
     let active = true;
+    setLoading(true);
     api
       .list(chatId)
       .then((list) => {
@@ -413,6 +477,9 @@ function ArtifactPanel({
       })
       .catch((error) => {
         if (active) setError(artifactError(error.message));
+      })
+      .finally(() => {
+        if (active) setLoading(false);
       });
     return () => {
       active = false;
@@ -421,6 +488,7 @@ function ArtifactPanel({
   async function open(id: string) {
     if (pending.current) return;
     pending.current = true;
+    setOpeningId(id);
     setBusy(true);
     setError("");
     try {
@@ -430,11 +498,14 @@ function ArtifactPanel({
     } finally {
       pending.current = false;
       setBusy(false);
+      setCreating(false);
+      setOpeningId(null);
     }
   }
   async function create() {
-    if (!messageId || pending.current) return;
+    if (!messageId || pending.current || loading) return;
     pending.current = true;
+    setCreating(true);
     setBusy(true);
     setError("");
     try {
@@ -445,13 +516,19 @@ function ArtifactPanel({
         kind,
         title,
       });
-      setDocument(await api.read(result.id));
-      setDocuments(await api.list(chatId));
+      const created = await api.read(result.id);
+      setDocument(created);
+      setDocuments((list) => [
+        created,
+        ...list.filter((item) => item.id !== created.id),
+      ]);
     } catch (error) {
       setError(artifactError(error instanceof Error ? error.message : ""));
     } finally {
       pending.current = false;
       setBusy(false);
+      setCreating(false);
+      setOpeningId(null);
     }
   }
   return (
@@ -545,23 +622,52 @@ function ArtifactPanel({
                 <option value="markdown">Markdown document</option>
                 <option value="html">HTML document</option>
               </select>
-              <Button type="submit" disabled={busy || !title.trim()}>
-                {busy ? "Creating…" : "Create artifact"}
+              <Button
+                type="submit"
+                aria-busy={creating}
+                disabled={loading || busy || !title.trim()}
+              >
+                {creating ? (
+                  <Loader2 aria-hidden="true" className="animate-spin" />
+                ) : (
+                  <FileText aria-hidden="true" />
+                )}
+                Create artifact
               </Button>
             </form>
           )}
-          <div className="space-y-2">
-            <h3 className="text-sm font-medium">Saved in this conversation</h3>
-            {documents.length ? (
+          <div className="space-y-2" aria-busy={loading}>
+            <h3
+              ref={listHeading}
+              tabIndex={-1}
+              className="text-sm font-medium focus-visible:outline-ring"
+            >
+              Saved in this conversation
+            </h3>
+            {loading ? (
+              <output
+                aria-live="polite"
+                className="flex items-center gap-2 text-sm text-muted-foreground"
+              >
+                <Loader2 aria-hidden="true" className="size-4 animate-spin" />
+                Loading artifacts
+              </output>
+            ) : documents.length ? (
               documents.map((item) => (
                 <Button
                   key={item.id}
                   variant="outline"
                   className="h-auto min-h-12 w-full justify-start whitespace-normal text-left"
                   disabled={busy}
+                  aria-busy={openingId === item.id}
                   onClick={() => void open(item.id)}
                 >
-                  {item.kind === "html" ? (
+                  {openingId === item.id ? (
+                    <Loader2
+                      aria-hidden="true"
+                      className="shrink-0 animate-spin"
+                    />
+                  ) : item.kind === "html" ? (
                     <FileCode2 className="shrink-0" />
                   ) : (
                     <FileText className="shrink-0" />
@@ -605,6 +711,9 @@ export function ConversationArtifacts({
   const [open, setOpen] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [closeBlocked, setCloseBlocked] = useState(false);
+  useEffect(() => {
+    if (!dirty) setCloseBlocked(false);
+  }, [dirty]);
   return (
     <Sheet
       open={open}

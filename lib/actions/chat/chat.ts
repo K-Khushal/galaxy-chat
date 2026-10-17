@@ -64,6 +64,7 @@ function toChat(row: typeof chatTable.$inferSelect): Chat {
   return {
     id: row.id,
     title: row.title,
+    projectId: row.projectId,
     userId: row.userId,
     visibility: row.visibility === "public" ? "public" : "private",
     lastContext: (row.lastContext as AppUsage | null) ?? null,

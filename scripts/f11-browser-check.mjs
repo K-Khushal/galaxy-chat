@@ -58,7 +58,7 @@ try {
       ),
       true,
     );
-    await page.getByRole("button", { name: "Preview", exact: true }).click();
+    await page.getByRole("tab", { name: "Preview", exact: true }).click();
     const iframe = page.frameLocator('iframe[title="HTML artifact preview"]');
     await iframe.getByRole("heading", { name: "Launch notes" }).waitFor();
     const frame = page
@@ -97,9 +97,7 @@ try {
     assert.equal(context.pages().length, 1);
     assert.deepEqual(remote, []);
     await page.screenshot({ path: `${output}/preview-${width}.png` });
-    await page
-      .getByRole("button", { name: "Edit source", exact: true })
-      .click();
+    await page.getByRole("tab", { name: "Edit source", exact: true }).click();
     const source = page.getByRole("textbox", {
       name: "HTML source",
       exact: true,
@@ -113,7 +111,7 @@ try {
       .getByRole("button", { name: "Save revision", exact: true })
       .click();
     await page.getByText("Saved revision 2.", { exact: true }).waitFor();
-    await page.getByRole("button", { name: "History", exact: true }).click();
+    await page.getByRole("tab", { name: "History", exact: true }).click();
     await page.getByLabel("Saved revision", { exact: true }).selectOption("1");
     await page
       .getByRole("button", { name: "Restore as new revision", exact: true })
@@ -122,12 +120,10 @@ try {
       .getByText("Revision 1 restored as revision 3.", { exact: true })
       .waitFor();
     await page.screenshot({ path: `${output}/history-${width}.png` });
-    await page
-      .getByRole("button", { name: "Edit source", exact: true })
-      .click();
+    await page.getByRole("tab", { name: "Edit source", exact: true }).click();
     assert.ok((await source.inputValue()).includes("<h1>Launch notes</h1>"));
     await source.fill(`<p>${"unbreakable".repeat(10000)}</p>`);
-    await page.getByRole("button", { name: "Preview", exact: true }).click();
+    await page.getByRole("tab", { name: "Preview", exact: true }).click();
     await iframe
       .getByText("unbreakable".repeat(10000), { exact: true })
       .waitFor();
