@@ -52,6 +52,7 @@ export function guestHandlers(options: {
         const db = store();
         const status = await creditStatus(options.env, actor, db);
         const used = await db.guestUsed(actor);
+        const siteKey = config.siteKey;
         const state = used
           ? "used"
           : status.state === "available"
@@ -64,10 +65,13 @@ export function guestHandlers(options: {
         return Response.json(
           {
             state,
-            remainingGenerations: used ? 0 : 1,
+            remainingGenerations: state === "available" ? 1 : 0,
+            ...(state === "available" ? { siteKey } : {}),
             limitations,
             ...(state === "disabled"
-              ? { reason: status.reason ?? status.state }
+              ? {
+                  reason: status.reason ?? status.state,
+                }
               : {}),
           },
           { headers },
@@ -121,6 +125,7 @@ export function guestHandlers(options: {
           turns: [{ role: "user", content: text }],
           store: db,
           provider: options.provider,
+          signal: request.signal,
         });
         void result.completion.catch(() =>
           logErrorId("credit_settlement_failed"),
