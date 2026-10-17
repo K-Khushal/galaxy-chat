@@ -229,6 +229,7 @@ export type PromptInputProps = Omit<
   multiple?: boolean;
   // When true, accepts drops anywhere on document. Default false (opt-in).
   globalDrop?: boolean;
+  filesEnabled?: boolean;
   // Minimal constraints
   maxFiles?: number;
   maxFileSize?: number; // bytes
@@ -247,6 +248,7 @@ export const PromptInput = ({
   accept,
   multiple,
   globalDrop,
+  filesEnabled = false,
   maxFiles,
   maxFileSize,
   onError,
@@ -332,6 +334,9 @@ export const PromptInput = ({
 
   const add = useCallback(
     async (files: File[] | FileList) => {
+      if (!filesEnabled) {
+        return;
+      }
       const incoming = Array.from(files);
       const accepted = incoming.filter((f) => matchesAccept(f));
       if (accepted.length === 0) {
@@ -405,7 +410,7 @@ export const PromptInput = ({
         });
       }
     },
-    [matchesAccept, maxFiles, maxFileSize, onError, uploadFiles],
+    [filesEnabled, matchesAccept, maxFiles, maxFileSize, onError, uploadFiles],
   );
 
   const remove = useCallback(
