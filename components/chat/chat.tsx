@@ -8,28 +8,27 @@ import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ChatInput } from "@/components/chat/chat-input";
 import { ChatMessages } from "@/components/chat/chat-messages";
-import { chatModels } from "@/lib/ai/model";
+import { ChatHeader } from "@/components/shell/chat-header";
 import type { AppUsage } from "@/lib/ai/usage";
 import { fetchWithErrorHandling, getChatErrorMessage } from "@/lib/ai/utils";
 import type { TypeUIMessage } from "@/lib/types";
+import { defaultAvailability } from "@/lib/ui/availability";
 
 export default function Chat({
   id,
   chatMessages,
   lastContext,
+  title,
 }: {
   id: string;
   chatMessages: TypeUIMessage[];
   lastContext?: AppUsage;
+  title?: string;
 }) {
   const [text, setText] = useState<string>("");
   const [usage, setUsage] = useState<AppUsage | undefined>(lastContext);
-  const [model, setModel] = useState<string>(
-    chatModels.find((m) => m.available)?.id || "",
-  );
+  const [model, setModel] = useState("");
   const modelRef = useRef(model);
-  const [useMicrophone, setUseMicrophone] = useState<boolean>(false);
-  const [useWebSearch, setUseWebSearch] = useState<boolean>(false);
 
   const {
     messages,
@@ -54,7 +53,7 @@ export default function Chat({
             message: request.messages.at(-1),
             model: modelRef.current,
             visibility: "private",
-            webSearch: useWebSearch,
+            webSearch: false,
             ...request.body,
           },
         };
@@ -90,35 +89,45 @@ export default function Chat({
 
   useEffect(() => {
     if (query && !hasAppendedQuery) {
-      sendMessage({
-        role: "user" as const,
-        parts: [{ type: "text", text: query }],
-      });
-
+      setText(query);
       setHasAppendedQuery(true);
       window.history.replaceState({}, "", `/chat/${id}`);
     }
-  }, [query, sendMessage, hasAppendedQuery, id]);
+  }, [query, hasAppendedQuery, id]);
 
   useEffect(() => {
     modelRef.current = model;
   }, [model]);
 
   return (
-    <div className="overscroll-behavior-contain flex h-dvh min-w-0 touch-pan-y flex-col bg-background">
+    <div className="flex h-dvh min-h-0 min-w-0 flex-col bg-background">
+      <ChatHeader
+        title={title ?? "New conversation"}
+        onNewChat={() => {
+          window.location.assign("/chat");
+        }}
+      />
       <ChatMessages
+        key={id}
         setMessages={setMessages}
         messages={messages}
         status={status}
         error={error}
         regenerate={regenerate}
+        onPrompt={(prompt) => {
+          setText(prompt);
+          document.getElementById("chat-composer")?.focus();
+        }}
       />
-      <div className="sticky bottom-0 z-1 mx-auto flex w-full max-w-4xl gap-2 border-t-0 bg-background px-2 pb-3 md:px-4 md:pb-4">
+      <div className="mx-auto w-full max-w-3xl shrink-0 px-3 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:px-6">
         <ChatInput
-          id={id}
-          messages={messages}
-          setMessages={setMessages}
-          sendMessage={sendMessage}
+          onSend={async (draft) => {
+            await sendMessage({
+              role: "user",
+              parts: [{ type: "text", text: draft }],
+            });
+          }}
+          availability={defaultAvailability}
           status={status}
           stop={stop}
           usage={usage}
@@ -126,10 +135,6 @@ export default function Chat({
           setText={setText}
           model={model}
           setModel={setModel}
-          useMicrophone={useMicrophone}
-          setUseMicrophone={setUseMicrophone}
-          useWebSearch={useWebSearch}
-          setUseWebSearch={setUseWebSearch}
         />
       </div>
     </div>

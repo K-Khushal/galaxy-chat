@@ -36,6 +36,7 @@ export default async function Page({
   return (
     <Chat
       id={chat.id}
+      title={chat.title}
       chatMessages={convertToUIMessages(messages)}
       lastContext={chat.lastContext ?? undefined}
     />
