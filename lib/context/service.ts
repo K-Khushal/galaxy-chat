@@ -2,7 +2,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { INSTRUCTIONS } from "@/lib/credits/config";
-import { requireDb } from "@/lib/db/client";
+import { type DatabaseTransaction, requireDb } from "@/lib/db/client";
 import { chat, memory, project } from "@/lib/db/schema";
 import { AppError } from "@/lib/errors";
 import {
@@ -11,8 +11,19 @@ import {
   type ContextView,
   contextMutationSchema,
 } from "./contract";
-export async function contextLibrary(userId: string, includeChats = true) {
-  const db = requireDb();
+
+type ContextReader = Pick<ReturnType<typeof requireDb>, "select" | "execute">;
+/** Order after resource locks when an operation also acquires those locks. */
+export async function lockContext(tx: ContextReader, userId: string) {
+  await tx.execute(
+    sql`select pg_advisory_xact_lock(hashtext(${`context:${userId}`}))`,
+  );
+}
+export async function contextLibrary(
+  userId: string,
+  includeChats = true,
+  db: ContextReader = requireDb(),
+) {
   const memories = await db
     .select()
     .from(memory)
@@ -36,8 +47,9 @@ export async function resolveContext(
   userId: string,
   selection?: ContextSelection,
   verify = true,
+  db: ContextReader = requireDb(),
 ): Promise<ContextView> {
-  const library = await contextLibrary(userId, false);
+  const library = await contextLibrary(userId, false, db);
   const projectId = selection?.projectId ?? null;
   const selectedProject = projectId
     ? library.projects.find((p) => p.id === projectId)
@@ -92,6 +104,18 @@ export async function resolveContext(
     limits: CONTEXT_LIMITS,
   };
 }
+/** Final validation is part of the durable claim, using only its transaction queue.
+ * READ COMMITTED readers see mutations committed while resource entry waited.
+ * The owner lock serializes context mutations through the accepted claim commit.
+ */
+export async function validateContextEntry(
+  tx: DatabaseTransaction,
+  userId: string,
+  selection?: ContextSelection,
+) {
+  await lockContext(tx, userId);
+  await resolveContext(userId, selection, true, tx);
+}
 export async function mutateContext(userId: string, json: unknown) {
   const parsed = contextMutationSchema.safeParse(json);
   if (!parsed.success) throw new AppError("invalid_context", 400);
@@ -100,9 +124,7 @@ export async function mutateContext(userId: string, json: unknown) {
     return resolveContext(userId, input.selection, false);
   const db = requireDb();
   return db.transaction(async (tx) => {
-    await tx.execute(
-      sql`select pg_advisory_xact_lock(hashtext(${`context:${userId}`}))`,
-    );
+    await lockContext(tx, userId);
     if (input.action === "memory.save") {
       if (new TextEncoder().encode(input.content).length > 1800)
         throw new AppError("context_too_large", 400);

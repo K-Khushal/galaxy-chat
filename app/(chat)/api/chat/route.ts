@@ -14,7 +14,11 @@ import {
 import { requireChatAccess } from "@/lib/auth/access";
 import { resolveByokModel } from "@/lib/byok/config";
 import { startByokStream } from "@/lib/byok/service";
-import { assertTemporaryId, resolveContext } from "@/lib/context/service";
+import {
+  assertTemporaryId,
+  resolveContext,
+  validateContextEntry,
+} from "@/lib/context/service";
 import { resolveFundingConfig } from "@/lib/credits/config";
 import { boundedJson } from "@/lib/credits/http";
 import {
@@ -69,9 +73,6 @@ export async function POST(request: Request) {
     )
       throw new AppError("invalid_request", 400);
     const context = await resolveContext(access.userId, body.context);
-    const beforeProvider = async () => {
-      await resolveContext(access.userId, body.context);
-    };
     if (body.temporary) await assertTemporaryId(body.id);
     const prepared = body.temporary
       ? { branchId: body.id, messages: [body.message as TypeUIMessage] }
@@ -110,7 +111,8 @@ export async function POST(request: Request) {
             idempotencyKey: body.requestId,
             turns,
             instructions: context.instructions,
-            beforeProvider,
+            validateEntry: (tx) =>
+              validateContextEntry(tx, access.userId, body.context),
             env: process.env,
             signal: request.signal,
           })
@@ -126,7 +128,8 @@ export async function POST(request: Request) {
             idempotencyKey: body.requestId,
             turns,
             instructions: context.instructions,
-            beforeProvider,
+            validateEntry: (tx) =>
+              validateContextEntry(tx, access.userId, body.context),
             signal: request.signal,
           });
     void result.completion.catch(() =>

@@ -1,7 +1,7 @@
 import "server-only";
 import { createHmac } from "node:crypto";
 import { sql } from "drizzle-orm";
-import { requireDb } from "@/lib/db/client";
+import { type EntryValidation, requireDb } from "@/lib/db/client";
 import { AppError } from "@/lib/errors";
 import {
   DAILY_MICRODOLLARS,
@@ -172,7 +172,7 @@ export class CreditStore {
       return reservation;
     });
   }
-  async enter(id: string, actor: Actor) {
+  async enter(id: string, actor: Actor, validateEntry?: EntryValidation) {
     await this.transaction(async (tx) => {
       await lock(tx);
       const [control] = await tx.execute<{ stopped: boolean }>(
@@ -180,6 +180,9 @@ export class CreditStore {
       );
       if (!control || control.stopped)
         throw new AppError("funded_inference_disabled", 503);
+      // Fresh validation follows the awaited global lock in this transaction.
+      // Failure rolls back before any entered state or provider_entered audit.
+      await validateEntry?.(tx);
       const rows = await tx.execute(
         sql`UPDATE public.credit_reservation SET state = 'entered', updated_at = now() WHERE id = ${id} AND actor_key = ${actor.key} AND state = 'reserved' RETURNING id`,
       );

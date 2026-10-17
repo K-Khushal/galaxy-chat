@@ -11,6 +11,7 @@ import {
 } from "ai";
 import { redactedFundedModel } from "@/lib/ai/redacted-model";
 import type { EnvSource } from "@/lib/auth/env";
+import type { EntryValidation } from "@/lib/db/client";
 import { AppError } from "@/lib/errors";
 import {
   type FundingConfig,
@@ -176,6 +177,8 @@ export async function startFundedStream(options: {
   instructions?: string;
   retainProviderReference?: boolean;
   beforeProvider?: () => Promise<void>;
+  prepareProvider?: () => Promise<void>;
+  validateEntry?: EntryValidation;
   signal?: AbortSignal;
 }) {
   const config = resolveFundingConfig(options.env);
@@ -218,6 +221,8 @@ async function enterAndStart(options: {
   instructions?: string;
   retainProviderReference?: boolean;
   beforeProvider?: () => Promise<void>;
+  prepareProvider?: () => Promise<void>;
+  validateEntry?: EntryValidation;
   signal?: AbortSignal;
 }) {
   const { store, actor, reservation } = options;
@@ -228,9 +233,11 @@ async function enterAndStart(options: {
   try {
     options.signal?.throwIfAborted();
     await options.beforeProvider?.();
+    await options.prepareProvider?.();
+    options.signal?.throwIfAborted();
     // Recheck the environment kill switch immediately before the durable claim.
     resolveFundingConfig(options.env);
-    await store.enter(reservation.id, actor);
+    await store.enter(reservation.id, actor, options.validateEntry);
     entered = true;
     const result = (options.provider ?? openRouterProvider(options.env))(
       options.config,
