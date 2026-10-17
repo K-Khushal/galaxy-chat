@@ -638,3 +638,231 @@ test("F09 temporary spend counts toward the same saved-chat daily allowance and 
     await f.db.$client.unsafe("SELECT id FROM credit_reservation"),
   ).toHaveLength(5);
 });
+
+function pausedEntry() {
+  let arrived = () => {};
+  let release = () => {};
+  const waiting = new Promise<void>((resolve) => {
+    arrived = resolve;
+  });
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return {
+    waiting,
+    release,
+    pause: async () => {
+      arrived();
+      await held;
+    },
+  };
+}
+for (const funding of ["platform", "openrouter"] as const) {
+  for (const mutation of ["edit", "delete"] as const) {
+    test(`F09 ${funding} entry waiting before its claim rejects a committed memory ${mutation} with no dispatch`, async () => {
+      const f = await betaFixture();
+      await mutateContext("alice", {
+        action: "memory.save",
+        content: "Memory visible at initial validation",
+      });
+      const memoryId = (await library(f)).memories[0].id;
+      const initial = await resolveContext(
+        "alice",
+        { projectId: null, memoryIds: [memoryId] },
+        false,
+      );
+      const selection = {
+        projectId: null,
+        memoryIds: [memoryId],
+        digest: initial.digest,
+      };
+      const gate = pausedEntry();
+      const { CreditStore, actorFor } = await import("../lib/credits/store");
+      const { startFundedStream } = await import("../lib/credits/service");
+      const { startByokStream } = await import("../lib/byok/service");
+      const { validateContextEntry } = await import("../lib/context/service");
+      // A deterministic gate reproduces the awaited entry/global-lock boundary.
+      // The real store transaction, SQL mutation, validator and SDK dispatch remain intact.
+      class WaitingCreditStore extends CreditStore {
+        override async enter(
+          ...args: Parameters<InstanceType<typeof CreditStore>["enter"]>
+        ) {
+          await gate.pause();
+          return super.enter(...args);
+        }
+      }
+      class WaitingByokStore extends ByokStore {
+        override async enter(
+          ...args: Parameters<InstanceType<typeof ByokStore>["enter"]>
+        ) {
+          await gate.pause();
+          return super.enter(...args);
+        }
+      }
+      if (funding === "openrouter")
+        await new ByokStore(f.db).save(
+          "alice",
+          "openrouter",
+          privateKey,
+          env,
+          null,
+        );
+      let prepared = false;
+      let validated = false;
+      const common = {
+        env,
+        idempotencyKey: crypto.randomUUID(),
+        turns: [
+          {
+            role: "user" as const,
+            content: "Context revocation must prevent dispatch",
+          },
+        ],
+        instructions: initial.instructions,
+        // Optional payload I/O finishes before the entry transaction starts.
+        prepareProvider: async () => {
+          prepared = true;
+          await resolveContext("alice", selection);
+        },
+        validateEntry: async (
+          tx: import("../lib/db/client").DatabaseTransaction,
+        ) => {
+          validated = true;
+          // This resolver must use tx; falling back to the pool's max:1 queue deadlocks.
+          await validateContextEntry(tx, "alice", selection);
+        },
+      };
+      const run =
+        funding === "platform"
+          ? startFundedStream({
+              ...common,
+              actor: actorFor("user", "alice", env.CREDIT_ACTOR_SECRET),
+              store: new WaitingCreditStore(f.db),
+            })
+          : startByokStream({
+              ...common,
+              userId: "alice",
+              provider: "openrouter",
+              model: "f08-private",
+              store: new WaitingByokStore(f.db),
+            });
+      try {
+        await gate.waiting;
+        expect(prepared).toBe(true);
+        expect(validated).toBe(false);
+        const table =
+          funding === "platform" ? "credit_reservation" : "byok_operation";
+        expect(
+          (await f.db.$client.unsafe(`SELECT state FROM ${table}`))[0]?.state,
+        ).toBe("reserved");
+        await mutateContext(
+          "alice",
+          mutation === "edit"
+            ? {
+                action: "memory.save",
+                id: memoryId,
+                content: "Edited while provider entry waited",
+                projectId: null,
+              }
+            : { action: "memory.delete", id: memoryId },
+        );
+        // Mutation committed while the claim was waiting, after preparation completed.
+        expect(
+          (await library(f)).memories.some(
+            (item: { content: string }) =>
+              item.content === "Memory visible at initial validation",
+          ),
+        ).toBe(false);
+        gate.release();
+        expect(await rejectionOf(run)).toMatchObject({ id: "context_changed" });
+        expect(validated).toBe(true);
+        expect(f.seen).toHaveLength(0);
+        expect(
+          (await f.db.$client.unsafe(`SELECT state FROM ${table}`))[0]?.state,
+        ).toBe("released");
+        if (funding === "platform") {
+          expect(
+            (
+              await f.db.$client.unsafe<
+                {
+                  charged_microdollars: number;
+                  incurred_microdollars: number;
+                }[]
+              >(
+                "SELECT charged_microdollars,incurred_microdollars FROM credit_reservation",
+              )
+            )[0],
+          ).toEqual({ charged_microdollars: 0, incurred_microdollars: 0 });
+          expect(
+            (
+              await f.db.$client.unsafe(
+                "SELECT event FROM credit_ledger ORDER BY created_at,id",
+              )
+            )
+              .map((row) => row.event)
+              .sort(),
+          ).toEqual(["released", "reserved"]);
+        } else {
+          expect(
+            await f.db.$client.unsafe("SELECT id FROM credit_reservation"),
+          ).toHaveLength(0);
+          expect(
+            await f.db.$client.unsafe("SELECT id FROM credit_ledger"),
+          ).toHaveLength(0);
+        }
+      } finally {
+        gate.release();
+        await run.catch(() => {});
+      }
+    });
+  }
+}
+
+test("F09 an accepted validated claim is the context cutoff; later edits do not recall dispatched work", async () => {
+  const f = await betaFixture();
+  f.cost(0);
+  await mutateContext("alice", {
+    action: "project.save",
+    name: "Claim cutoff",
+    instructions: "Initial instructions",
+  });
+  const projectId = (await library(f)).projects[0].id;
+  const initial = await resolveContext(
+    "alice",
+    { projectId, memoryIds: [] },
+    false,
+  );
+  const { validateContextEntry } = await import("../lib/context/service");
+  const { CreditStore, actorFor } = await import("../lib/credits/store");
+  const { startFundedStream, openRouterProvider } = await import(
+    "../lib/credits/service"
+  );
+  let validated = false;
+  const selection = { projectId, memoryIds: [], digest: initial.digest };
+  const result = await startFundedStream({
+    env,
+    actor: actorFor("user", "alice", env.CREDIT_ACTOR_SECRET),
+    store: new CreditStore(f.db),
+    idempotencyKey: crypto.randomUUID(),
+    turns: [{ role: "user", content: "Accepted claim" }],
+    instructions: initial.instructions,
+    validateEntry: async (tx) => {
+      await validateContextEntry(tx, "alice", selection);
+      validated = true;
+    },
+    provider: (config, turns, callbacks) => {
+      expect(validated).toBe(true);
+      return openRouterProvider(env)(config, turns, callbacks);
+    },
+  });
+  await mutateContext("alice", {
+    action: "project.save",
+    id: projectId,
+    name: "Claim cutoff",
+    instructions: "Later instruction",
+  });
+  await result.completion;
+  expect(f.seen).toHaveLength(1);
+  expect(JSON.stringify(f.seen[0].body)).toContain("Initial instructions");
+  expect(JSON.stringify(f.seen[0].body)).not.toContain("Later instruction");
+});

@@ -1,4 +1,5 @@
 "use client";
+import { Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChatHeader } from "@/components/shell/chat-header";
@@ -15,6 +16,12 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { type ContextClient, contextClient } from "@/lib/context/client";
 import type { ContextLibrary } from "@/lib/context/contract";
+
+type PendingAction =
+  | "memory.save"
+  | "project.save"
+  | "memory.delete"
+  | "project.delete";
 export function ContextManager({
   client = contextClient,
   embedded = false,
@@ -24,7 +31,10 @@ export function ContextManager({
 } = {}) {
   const [data, setData] = useState<ContextLibrary>();
   const [error, setError] = useState("");
-  const [pending, setPending] = useState(false);
+  const [pendingAction, setPendingAction] = useState<PendingAction | null>(
+    null,
+  );
+  const pending = pendingAction !== null;
   const pendingRef = useRef(false);
   const deletedFocus = useRef<"memory" | "project" | null>(null);
   const [notice, setNotice] = useState("");
@@ -56,10 +66,13 @@ export function ContextManager({
       deletedFocus.current = null;
     }
   }, [pending, deleting]);
-  async function save(body: unknown, done: () => void) {
+  async function save(
+    body: { action: PendingAction } & Record<string, unknown>,
+    done: () => void,
+  ) {
     if (pendingRef.current) return;
     pendingRef.current = true;
-    setPending(true);
+    setPendingAction(body.action);
     setError("");
     setNotice("");
     try {
@@ -75,7 +88,7 @@ export function ContextManager({
       );
     } finally {
       pendingRef.current = false;
-      setPending(false);
+      setPendingAction(null);
     }
   }
   return (
@@ -165,10 +178,18 @@ export function ContextManager({
               <div className="flex gap-2">
                 <Button
                   disabled={pending || !data || !memory.content.trim()}
-                  aria-busy={pending}
+                  aria-busy={pendingAction === "memory.save"}
                   type="submit"
                 >
-                  {pending ? "Saving…" : "Save memory"}
+                  <span
+                    className="flex size-4 items-center justify-center"
+                    aria-hidden="true"
+                  >
+                    {pendingAction === "memory.save" && (
+                      <Loader2 className="size-4 animate-spin" />
+                    )}
+                  </span>
+                  Save memory
                 </Button>
                 {memory.id && (
                   <Button
@@ -286,9 +307,17 @@ export function ContextManager({
                 <Button
                   type="submit"
                   disabled={pending || !data || !project.name.trim()}
-                  aria-busy={pending}
+                  aria-busy={pendingAction === "project.save"}
                 >
-                  {pending ? "Saving…" : "Save project"}
+                  <span
+                    className="flex size-4 items-center justify-center"
+                    aria-hidden="true"
+                  >
+                    {pendingAction === "project.save" && (
+                      <Loader2 className="size-4 animate-spin" />
+                    )}
+                  </span>
+                  Save project
                 </Button>
                 {project.id && (
                   <Button
@@ -378,7 +407,7 @@ export function ContextManager({
             <DialogDescription>
               {deleting?.kind === "project"
                 ? "This removes its instructions and project memories. Saved conversations remain, without a project."
-                : "This removes the memory from future prompts. Previous conversation answers remain."}
+                : "New requests cannot select this memory. Already accepted requests may still finish; previous answers remain."}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -393,7 +422,7 @@ export function ContextManager({
             <Button
               variant="destructive"
               disabled={pending}
-              aria-busy={pending}
+              aria-busy={pendingAction === `${deleting?.kind}.delete`}
               onClick={() => {
                 if (deleting)
                   void save(
@@ -415,7 +444,15 @@ export function ContextManager({
                   );
               }}
             >
-              {pending ? "Deleting…" : `Delete ${deleting?.kind}`}
+              <span
+                className="flex size-4 items-center justify-center"
+                aria-hidden="true"
+              >
+                {pendingAction === `${deleting?.kind}.delete` && (
+                  <Loader2 className="size-4 animate-spin" />
+                )}
+              </span>
+              Delete {deleting?.kind}
             </Button>
           </DialogFooter>
         </DialogContent>

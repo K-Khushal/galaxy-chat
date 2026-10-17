@@ -11,6 +11,7 @@ import type { EnvSource } from "@/lib/auth/env";
 import { INSTRUCTIONS, LIMITS } from "@/lib/credits/config";
 import { boundedJson } from "@/lib/credits/http";
 import { boundContext, type TextTurn } from "@/lib/credits/service";
+import type { EntryValidation } from "@/lib/db/client";
 import { AppError, logErrorId } from "@/lib/errors";
 import { BYOK_LIMITS, resolveByokModel, resourceDigest } from "./config";
 import type { ByokProvider } from "./contract";
@@ -133,6 +134,8 @@ export async function startByokStream(options: {
   fetcher?: typeof fetch;
   instructions?: string;
   beforeProvider?: () => Promise<void>;
+  prepareProvider?: () => Promise<void>;
+  validateEntry?: EntryValidation;
 }) {
   const model = resolveByokModel(options.env, options.model, options.provider);
   const instructions = options.instructions ?? INSTRUCTIONS;
@@ -155,12 +158,15 @@ export async function startByokStream(options: {
   try {
     options.signal?.throwIfAborted();
     await options.beforeProvider?.();
+    await options.prepareProvider?.();
+    options.signal?.throwIfAborted();
     // Configuration and credential revocation are rechecked at the entry boundary.
     resolveByokModel(options.env, options.model, options.provider);
     const key = await store.enter(
       options.idempotencyKey,
       options.userId,
       options.env,
+      options.validateEntry,
     );
     entered = true;
     const fetcher: typeof fetch = Object.assign(
