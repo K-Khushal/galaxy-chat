@@ -32,13 +32,40 @@ export default function PrivacyPage() {
         </p>
       </section>
       <section>
+        <h2>Private files and extracted context</h2>
+        <p>
+          When enabled, files uploaded to a saved conversation live in a private
+          storage bucket. Galaxy stores owned metadata and bounded extracted
+          text. Downloads require an invited account and ownership checks;
+          short-lived signed access stays inside the server. Files are
+          downloaded as attachments, without an inline active-content viewer.
+          This is not end-to-end encrypted storage.
+        </p>
+        <p>
+          Only checked files are included with a model request. Review the exact
+          text excerpts, filenames, attachment ids, and PDF page labels in the
+          composer. Images are sent as original bytes only to an explicitly
+          reviewed image-capable model. No automatic OCR runs. Files are
+          unavailable to guests and temporary conversations.
+        </p>
+        <p>
+          Deleting a file or conversation queues the underlying private objects
+          for cleanup. Prior answers, quotations, and source references in saved
+          messages remain until those messages or conversations are deleted.
+          Interrupted writes can retain anonymous object and capacity records
+          until a confirmed terminal outcome or operator reconciliation. Storage
+          outages can delay cleanup; no immediate deletion deadline is promised.
+        </p>
+      </section>
+      <section>
         <h2>What a provider receives</h2>
         <p>
           When you send a model request, the selected provider and model host
           receive your prompt, bounded recent conversation context, and the
-          memories and project instructions shown in Request context. Their
-          terms, retention, and processing policies apply. Choosing your own key
-          means that provider account pays its charges.
+          memories and project instructions shown in Request context, plus
+          checked file excerpts or approved image bytes shown in Exact file
+          context. Their terms, retention, and processing policies apply.
+          Choosing your own key means that provider account pays its charges.
         </p>
         <p>
           Provider keys are encrypted on the server and shown only as masked
@@ -53,14 +80,19 @@ export default function PrivacyPage() {
           In your workspace, open Account &amp; settings → Account to export
           account data or delete the account. Export includes your profile,
           conversations, messages, branches, explicit memories, projects, and
-          safe usage and provider-key metadata. You can also delete individual
+          attachment metadata and extracted text, and safe usage and
+          provider-key metadata. Original file bytes are downloaded separately
+          through the owned file controls. Exports never include storage
+          credentials or signed URLs. You can also delete individual
           conversations from history and remove provider keys in the Keys tab.
         </p>
         <p>
           Account deletion removes personal account records, saved chats,
-          memories, projects, and saved provider keys. It does not recall a
-          request that has already reached a provider, remove provider-held
-          records, or promise immediate removal from backups.
+          memories, projects, and saved provider keys, and queues private file
+          deletion. Anonymous cleanup records can remain while a remote write is
+          unresolved. It does not recall a request that has already reached a
+          provider, remove provider-held records, or promise immediate removal
+          from backups.
         </p>
         <Link href="/chat" prefetch={false}>
           Open your workspace to manage data

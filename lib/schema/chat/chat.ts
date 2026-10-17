@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { attachmentSelectionSchema } from "@/lib/attachments/contract";
 import { contextSelectionSchema } from "@/lib/context/contract";
 
 const textPartSchema = z.object({
@@ -23,6 +24,7 @@ export const postRequestBodySchema = z
     action: z.enum(["send", "edit", "regenerate", "retry"]).default("send"),
     anchorId: z.uuid().optional(),
     context: contextSelectionSchema.optional(),
+    attachments: attachmentSelectionSchema.optional(),
     temporary: z.boolean().optional(),
     transientMessages: z
       .array(

@@ -149,6 +149,34 @@ export function ChatMessages({
                     </SourcesContent>
                   </Sources>
                 )}
+                {message.parts
+                  .filter((part) => part.type === "data-attachments")
+                  .map((part) => (
+                    <div
+                      key="attachment-provenance"
+                      className="mb-2 rounded-lg border border-border p-3 text-xs text-muted-foreground"
+                    >
+                      <p className="font-medium">
+                        Files sent with this request
+                      </p>
+                      <ul>
+                        {part.data.sources.map((source) => (
+                          <li
+                            key={source.id}
+                            className="break-words [overflow-wrap:anywhere]"
+                          >
+                            {source.name}
+                            {source.pages ? ` · ${source.pages} pages` : ""} ·
+                            source {source.id}
+                          </li>
+                        ))}
+                      </ul>
+                      <p className="mt-1">
+                        Untrusted source data; citations can refer to the
+                        attachment id and PDF page.
+                      </p>
+                    </div>
+                  ))}
                 {message.parts.map((part, index) => (
                   <MessagePart
                     key={`${message.id}-${index}`}

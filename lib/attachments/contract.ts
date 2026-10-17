@@ -1,3 +1,4 @@
+import { z } from "zod";
 export const attachmentLimits = {
   fileBytes: 2 * 1024 * 1024,
   textBytes: 128 * 1024,
@@ -23,3 +24,33 @@ export type AttachmentView = {
   createdAt: string;
 };
 export const attachmentAccept = ".txt,.md,.markdown,.pdf,.png,.jpg,.jpeg,.webp";
+
+export const attachmentSelectionSchema = z
+  .object({
+    ids: z.array(z.uuid()).max(attachmentLimits.perMessage),
+    digest: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
+export const attachmentPreviewSchema = z
+  .object({
+    chatId: z.uuid(),
+    ids: z.array(z.uuid()).max(attachmentLimits.perMessage),
+    funding: z.enum(["platform", "openrouter", "gateway"]),
+    model: z.string().min(1).max(100),
+  })
+  .strict();
+export type AttachmentSource = {
+  id: string;
+  name: string;
+  pages: number | null;
+  kind: string;
+  sha256: string;
+};
+export type AttachmentContextView = {
+  digest: string;
+  estimatedTokens: number;
+  imageTokens: number;
+  provenance: AttachmentSource[];
+  excerpts: Array<{ id: string; text: string }>;
+};
+export type AttachmentSelection = z.infer<typeof attachmentSelectionSchema>;

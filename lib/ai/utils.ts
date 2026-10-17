@@ -1,4 +1,4 @@
-import type { FileUIPart, UIDataTypes, UIMessagePart, UITools } from "ai";
+import type { FileUIPart } from "ai";
 import type { TypeChatMessage, TypeUIMessage } from "../types";
 
 /**
@@ -8,6 +8,20 @@ import type { TypeChatMessage, TypeUIMessage } from "../types";
  */
 export function getChatErrorMessage(error: Error): string {
   const messages: Record<string, string> = {
+    attachments_unavailable:
+      "Private files are unavailable. Clear selected files to continue with ordinary text.",
+    temporary_attachments_unavailable:
+      "Files are unavailable in temporary conversations.",
+    attachment_context_changed:
+      "A selected file changed or was deleted. Refresh Exact file context and try again.",
+    attachment_not_ready:
+      "A selected file is no longer ready. Refresh or clear your file selection.",
+    attachment_context_limit:
+      "Selected file excerpts and images exceed the input limit. Select fewer files or a shorter excerpt.",
+    attachment_model_unsupported:
+      "This model cannot read the selected images. Choose a reviewed image-capable BYOK model or clear images.",
+    attachment_integrity_failed:
+      "A private file could not be verified. Delete it and upload a fresh copy.",
     context_changed:
       "Memory or project instructions changed. Refresh Request context and review the exact selection before sending again.",
     project_mismatch:
@@ -30,7 +44,7 @@ export function getChatErrorMessage(error: Error): string {
     byok_model_unavailable:
       "This BYOK model is unavailable. Choose a reviewed model for the selected provider.",
     byok_capability_denied:
-      "BYOK chat supports reviewed text models only. Files, tools and search are unavailable.",
+      "Use reviewed model capabilities and owned file selections. Direct file URLs, tools and search are unavailable.",
     request_already_recorded:
       "This request is already saved. Reload saved messages to see its status. A deliberate retry creates a new branch.",
     idempotency_conflict:
@@ -48,7 +62,7 @@ export function getChatErrorMessage(error: Error): string {
     context_too_large:
       "This prompt exceeds the bounded context limit. Shorten it before sending.",
     funded_capability_denied:
-      "This funded model supports basic text only. Files, tools and search are unavailable.",
+      "This funded model supports basic text and bounded extracted text. Direct file URLs, images, tools and search are unavailable.",
     branch_limit_reached:
       "This conversation has reached its branch limit. Start a new conversation.",
     conversation_limit_reached:
@@ -110,7 +124,7 @@ export function convertToUIMessages(
   return messages.map((message) => ({
     id: message.id,
     role: message.role,
-    parts: message.parts as UIMessagePart<UIDataTypes, UITools>[],
+    parts: message.parts as TypeUIMessage["parts"],
   }));
 }
 

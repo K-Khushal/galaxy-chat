@@ -32,6 +32,17 @@ const entry = z
         reasoning: z.boolean(),
         sources: z.boolean(),
         files: z.literal(false),
+        images: z
+          .object({
+            verified: z.literal(true),
+            mediaTypes: z
+              .array(z.enum(["image/png", "image/jpeg", "image/webp"]))
+              .min(1)
+              .max(3),
+            maxTokensPerImage: z.number().int().min(4096).max(16384),
+          })
+          .strict()
+          .optional(),
         tools: z.literal(false),
         search: z.literal(false),
       })
@@ -87,7 +98,7 @@ export function byokCatalog(env: EnvSource): ChatModel[] {
     name: m.name,
     adapter: m.adapter,
     available: true,
-    description: `Text${m.capabilities.reasoning ? " · reasoning" : ""}${m.capabilities.sources ? " · supplied sources" : ""} · your ${m.adapter === "gateway" ? "Vercel Gateway" : "OpenRouter"} key · no files, tools or search`,
+    description: `Text${m.capabilities.reasoning ? " · reasoning" : ""}${m.capabilities.sources ? " · supplied sources" : ""} · your ${m.adapter === "gateway" ? "Vercel Gateway" : "OpenRouter"} key${m.capabilities.images ? " · reviewed images" : ""} · no native documents, tools or search`,
     capabilities: m.capabilities,
   }));
 }

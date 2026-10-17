@@ -91,6 +91,36 @@ export default function HelpPage() {
           guarantee a maximum provider bill.
         </p>
       </section>
+      <section id="files">
+        <h2>Ground a saved conversation in private files</h2>
+        <p>
+          After the first saved message, choose Add file in the composer. Text,
+          Markdown, PNG, JPEG, WebP, and text PDFs are supported when private
+          storage is enabled. Files are limited to 2 MiB each (text and
+          Markdown: 128 KiB), PDFs to 12 pages, and extracted text to 24,000
+          characters. Choose at most three files, then review Exact file
+          context. Large selections may exceed the smaller request context
+          limit; upload a shorter excerpt.
+        </p>
+        <p>
+          Only checked files are sent with a request. Text and PDF excerpts
+          include filename, attachment id, and page labels; they are untrusted
+          source data, and answers can still be wrong. Images require an
+          explicitly reviewed image-capable BYOK model. Platform funding
+          supports text excerpts only. Scanned PDFs do not trigger OCR or paid
+          extraction. Guests and temporary conversations cannot upload or use
+          files.
+        </p>
+        <p>
+          Cancel upload stops processing where possible. Delete removes the file
+          from selection and queues its private object for cleanup. An uncertain
+          upload can retain a storage reservation until the operator confirms
+          that the remote write ended; a timeout or successful delete alone does
+          not prove cancellation. Storage and daily transfer limits may pause
+          new files. If private storage is unavailable, ordinary text chat still
+          works when files are cleared.
+        </p>
+      </section>
       <section>
         <h2>Find, branch, export, or delete</h2>
         <p>
@@ -129,10 +159,11 @@ export default function HelpPage() {
           Request context shows exactly which memories and project instructions
           will be sent. Temporary conversation keeps its transcript out of saved
           history; provider retention and anonymous cost records are separate.
-          Attachments, artifacts, tools, search, and browser work remain roadmap
-          features. Live guest verification, provider behavior, deployment, and
-          the release quality gate still require verification before public
-          beta.
+          Private attachment support requires configured storage and reviewed
+          model capabilities. Artifacts, tools, search, and browser work remain
+          roadmap features. Live guest verification, provider behavior,
+          deployment, and the release quality gate still require verification
+          before public beta.
         </p>
       </section>
     </InfoPage>

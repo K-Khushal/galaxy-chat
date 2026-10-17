@@ -145,3 +145,19 @@ export class AttachmentService {
     return { name: row.name, bytes };
   }
 }
+
+/** Post-cascade best effort: the durable queue retains failures/unknown liabilities. */
+export async function cleanupAfterDeletion() {
+  try {
+    const { attachmentCleanupConfig } = await import(
+      "@/lib/attachments/config"
+    );
+    const service = new AttachmentService(attachmentCleanupConfig());
+    const result = await service.cleanup(20);
+    return result.held
+      ? ("reconciliation_required" as const)
+      : ("complete_or_queued" as const);
+  } catch {
+    return "pending" as const;
+  }
+}

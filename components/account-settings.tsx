@@ -173,7 +173,9 @@ export function SettingsDialog({
                   Your data belongs to you
                 </h2>
                 <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-                  Download your conversations and messages as a JSON file.
+                  Download conversations, memories, projects, file metadata and
+                  extracted text as JSON. Download original files separately
+                  before deleting them.
                 </p>
                 <Button
                   className="mt-3"
@@ -193,7 +195,9 @@ export function SettingsDialog({
               <section className="border-t pt-5">
                 <h2 className="text-sm font-medium">Delete account</h2>
                 <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-                  Permanently remove your account, sessions, and conversations.
+                  Remove your account, sessions, and conversations and queue
+                  private file cleanup. Uncertain remote writes may need
+                  operator reconciliation.
                 </p>
                 <Button
                   className="mt-3"
@@ -264,7 +268,8 @@ export function SettingsDialog({
             <DialogDescription>
               This permanently deletes your conversations and account and signs
               you out. Export anything you want to keep first. This cannot be
-              undone.
+              undone. Private files are queued for deletion; unfinished remote
+              writes may retain anonymous cleanup records until reconciled.
             </DialogDescription>
           </DialogHeader>
           {failure && (

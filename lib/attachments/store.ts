@@ -13,6 +13,7 @@ import { requireDb } from "@/lib/db/client";
 import { AppError } from "@/lib/errors";
 
 type Db = ReturnType<typeof requireDb>;
+export type AttachmentExecutor = Pick<Db, "execute">;
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 export type AttachmentRow = {
   id: string;
@@ -47,8 +48,19 @@ export function attachmentView(row: AttachmentRow): AttachmentView {
   };
 }
 /** Shared lock is also used by account deletion/context entry integration. */
-export async function lockAttachments(tx: Tx) {
+export async function lockAttachments(tx: AttachmentExecutor) {
   await tx.execute(sql`SELECT pg_advisory_xact_lock(41021410)`);
+}
+export async function readOwnedAttachment(
+  db: AttachmentExecutor,
+  userId: string,
+  id: string,
+) {
+  const rows = await db.execute<AttachmentRow>(
+    sql`SELECT a.* FROM attachment a JOIN chat c ON c.id=a.chat_id AND c.user_id=a.user_id WHERE a.user_id=${userId} AND a.id=${id}`,
+  );
+  if (!rows[0]) throw new AppError("not_found", 404);
+  return rows[0];
 }
 function ownerKey(userId: string) {
   return createHash("sha256")
@@ -70,11 +82,7 @@ export class AttachmentStore {
     );
   }
   async owned(userId: string, id: string) {
-    const rows = await this.db.execute<AttachmentRow>(
-      sql`SELECT a.* FROM attachment a JOIN chat c ON c.id=a.chat_id AND c.user_id=a.user_id WHERE a.user_id=${userId} AND a.id=${id}`,
-    );
-    if (!rows[0]) throw new AppError("not_found", 404);
-    return rows[0];
+    return readOwnedAttachment(this.db, userId, id);
   }
   private async transfer(tx: Tx, bytes: number, config: AttachmentConfig) {
     // Bill a minimum per operation to bound tiny-file request/metadata amplification.

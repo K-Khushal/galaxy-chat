@@ -144,7 +144,7 @@ beforeAll(async () => {
     "0002_credit_ledger",
     "0003_chat_branches",
     "0004_byok",
-    "0005_context_memory",
+    "0005_explicit_context",
     "0006_attachments",
   ]);
 

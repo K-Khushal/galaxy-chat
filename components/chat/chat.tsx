@@ -4,6 +4,7 @@ import { DefaultChatTransport } from "ai";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { AttachmentComposer } from "@/components/chat/attachment-composer";
 import { BranchNavigation } from "@/components/chat/branch-navigation";
 import { ChatInput } from "@/components/chat/chat-input";
 import { ChatMessages } from "@/components/chat/chat-messages";
@@ -13,6 +14,7 @@ import { usePlatformAccess } from "@/components/chat/platform-access";
 import { ChatHeader } from "@/components/shell/chat-header";
 import type { AppUsage } from "@/lib/ai/usage";
 import { getChatErrorMessage } from "@/lib/ai/utils";
+import type { AttachmentSelection } from "@/lib/attachments/contract";
 import type { FundingChoice } from "@/lib/byok/contract";
 import type { ContextSelection } from "@/lib/context/contract";
 import { temporaryHistory } from "@/lib/context/transient";
@@ -44,12 +46,25 @@ export default function Chat({
   temporary?: boolean;
 }) {
   const contextRef = useRef<ContextSelection | undefined>(undefined);
+  const [contextSelection, setContextSelection] = useState<ContextSelection>();
+  const attachmentRef = useRef<AttachmentSelection | undefined>(undefined);
+  const attachmentReadyRef = useRef(true);
+  const [attachmentReady, setAttachmentReady] = useState(true);
+  const onAttachmentsChange = useCallback(
+    (selection: AttachmentSelection | undefined, ready: boolean) => {
+      attachmentRef.current = selection;
+      attachmentReadyRef.current = ready;
+      setAttachmentReady(ready);
+    },
+    [],
+  );
   const [contextReady, setContextReady] = useState(false);
   const contextReadyRef = useRef(false);
   const onContextChange = useCallback(
     (selection: ContextSelection | undefined, ready: boolean) => {
       contextReadyRef.current = ready;
       contextRef.current = selection;
+      setContextSelection(selection);
       setContextReady(ready);
     },
     [],
@@ -140,6 +155,9 @@ export default function Chat({
           visibility: "private",
           webSearch: false,
           ...(contextRef.current ? { context: contextRef.current } : {}),
+          ...(attachmentRef.current
+            ? { attachments: attachmentRef.current }
+            : {}),
           ...(temporary
             ? {
                 temporary: true,
@@ -227,6 +245,7 @@ export default function Chat({
       busy ||
       syncing ||
       !contextReadyRef.current ||
+      !attachmentReadyRef.current ||
       availability.state !== "ready" ||
       (temporary && action !== "send")
     )
@@ -325,6 +344,7 @@ export default function Chat({
         actionsEnabled={
           !temporary &&
           contextReady &&
+          attachmentReady &&
           availability.state === "ready" &&
           !syncing &&
           !submitting
@@ -341,6 +361,20 @@ export default function Chat({
           disabled={busy || syncing || submitting}
           onChange={onContextChange}
         />
+        <AttachmentComposer
+          chatId={id}
+          saved={persisted.current}
+          temporary={temporary}
+          busy={busy || syncing || submitting}
+          context={contextSelection}
+          contextReady={contextReady}
+          model={model}
+          funding={funding}
+          imagesSupported={Boolean(
+            models.find((item) => item.id === model)?.capabilities?.images,
+          )}
+          onChange={onAttachmentsChange}
+        />
         <FundingSelector
           value={funding}
           onChange={setFunding}
@@ -348,7 +382,7 @@ export default function Chat({
         />
         <ChatInput
           onSend={(draft) => submit(draft)}
-          blocked={syncing || submitting || !contextReady}
+          blocked={syncing || submitting || !contextReady || !attachmentReady}
           availability={availability}
           models={models}
           status={status}

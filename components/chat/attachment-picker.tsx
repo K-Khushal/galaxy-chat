@@ -35,6 +35,16 @@ export function attachmentErrorMessage(id: string) {
       "This PDF cannot be read. Try an unencrypted text PDF.",
     attachment_model_unsupported:
       "This model cannot read images. Choose a reviewed image-capable model or attach text.",
+    attachment_context_changed:
+      "A selected file changed or was deleted. Refresh the file context before sending.",
+    context_changed:
+      "Request context changed. Refresh your memory and file selections before sending.",
+    context_too_large:
+      "Selected memories, instructions, and files exceed the request limit. Select less context.",
+    not_found:
+      "A selected private file is unavailable. Clear or refresh your file selection.",
+    temporary_attachments_unavailable:
+      "Files are unavailable in temporary conversations.",
     attachment_context_limit:
       "The selected files exceed the context limit. Select fewer files or upload shorter excerpts.",
   };
@@ -51,6 +61,7 @@ export type AttachmentPickerProps = {
   selected: string[];
   onSelection: (ids: string[]) => void;
   imagesSupported?: boolean;
+  onBusyChange?: (busy: boolean) => void;
 };
 /** Saved invited chats only. Metadata is escaped text; files never render inline. */
 export function AttachmentPicker({
@@ -61,10 +72,12 @@ export function AttachmentPicker({
   selected,
   onSelection,
   imagesSupported = false,
+  onBusyChange,
 }: AttachmentPickerProps) {
   const [files, setFiles] = useState<AttachmentView[]>([]);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [available, setAvailable] = useState(false);
   const [uploading, setUploading] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const upload = useRef<AbortController | null>(null);
@@ -85,6 +98,7 @@ export function AttachmentPicker({
   useEffect(() => {
     setFiles([]);
     setMessage("");
+    setAvailable(false);
     if (disabled) return;
     const controller = new AbortController();
     setLoading(true);
@@ -95,7 +109,10 @@ export function AttachmentPicker({
       .then(async (response) => {
         const body = await response.json();
         if (!response.ok) throw new Error(body.error?.id);
-        if (mounted.current) setFiles(body.attachments);
+        if (mounted.current) {
+          setFiles(body.attachments);
+          setAvailable(true);
+        }
       })
       .catch((error) => {
         if (!controller.signal.aborted && mounted.current)
@@ -113,6 +130,7 @@ export function AttachmentPicker({
     const controller = new AbortController();
     upload.current = controller;
     setUploading(true);
+    onBusyChange?.(true);
     setMessage("");
     try {
       if (file.size > attachmentLimits.fileBytes)
@@ -127,7 +145,16 @@ export function AttachmentPicker({
           headers: {
             "Content-Type": markdown
               ? "text/markdown"
-              : file.type || "application/octet-stream",
+              : file.type ||
+                ({
+                  txt: "text/plain",
+                  pdf: "application/pdf",
+                  png: "image/png",
+                  jpg: "image/jpeg",
+                  jpeg: "image/jpeg",
+                  webp: "image/webp",
+                }[file.name.split(".").at(-1)?.toLowerCase() ?? ""] ??
+                  "application/octet-stream"),
             "x-attachment-name": encodeURIComponent(file.name),
           },
         },
@@ -158,7 +185,10 @@ export function AttachmentPicker({
         );
     } finally {
       upload.current = null;
-      if (mounted.current) setUploading(false);
+      if (mounted.current) {
+        setUploading(false);
+        onBusyChange?.(false);
+      }
       if (input.current) input.current.value = "";
     }
   }
@@ -192,6 +222,7 @@ export function AttachmentPicker({
           type="file"
           accept={attachmentAccept}
           className="sr-only"
+          disabled={disabled || busy || uploading}
           tabIndex={-1}
           aria-label="Choose a private file"
           onChange={(event) => {
@@ -203,7 +234,7 @@ export function AttachmentPicker({
           type="button"
           variant="ghost"
           size="sm"
-          disabled={disabled || busy || uploading || loading}
+          disabled={disabled || busy || uploading || loading || !available}
           onClick={() => input.current?.click()}
           className="min-h-11 touch-manipulation"
         >
@@ -227,7 +258,10 @@ export function AttachmentPicker({
         </p>
       </div>
       {files.length ? (
-        <ul className="space-y-1" aria-label="Files in this conversation">
+        <ul
+          className="max-h-[22dvh] space-y-1 overflow-y-auto overscroll-contain"
+          aria-label="Files in this conversation"
+        >
           {files.map((file) => {
             const unsupported = file.kind === "image" && !imagesSupported;
             const checked = selected.includes(file.id);
@@ -242,8 +276,9 @@ export function AttachmentPicker({
                     checked={checked}
                     disabled={
                       busy ||
+                      uploading ||
                       file.state !== "ready" ||
-                      unsupported ||
+                      (!checked && unsupported) ||
                       (!checked &&
                         selected.length >= attachmentLimits.perMessage)
                     }
@@ -276,7 +311,7 @@ export function AttachmentPicker({
                   variant="ghost"
                   size="icon"
                   className="min-h-11 min-w-11 touch-manipulation"
-                  disabled={busy}
+                  disabled={busy || uploading}
                   aria-label={`Delete ${file.name}`}
                   onClick={() => void remove(file.id)}
                 >

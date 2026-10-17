@@ -96,8 +96,28 @@ export async function mutateContext(userId: string, json: unknown) {
   const parsed = contextMutationSchema.safeParse(json);
   if (!parsed.success) throw new AppError("invalid_context", 400);
   const input = parsed.data;
-  if (input.action === "preview")
-    return resolveContext(userId, input.selection, false);
+  if (input.action === "preview") {
+    const context = await resolveContext(userId, input.selection, false);
+    if (!input.attachments?.ids.length) return context;
+    const {
+      resolveAttachmentRequest,
+      attachmentInstructions,
+      attachmentTurns,
+    } = await import("@/lib/attachments/request");
+    const files = await resolveAttachmentRequest(userId, input.attachments);
+    const instructions = attachmentInstructions(context.instructions, files);
+    attachmentTurns([{ role: "user", content: "" }], instructions, files);
+    return {
+      ...context,
+      attachments: {
+        digest: files.digest,
+        estimatedTokens: files.estimatedTokens,
+        imageTokens: files.imageTokens,
+        provenance: files.provenance,
+        excerpts: files.excerpts,
+      },
+    };
+  }
   const db = requireDb();
   return db.transaction(async (tx) => {
     await tx.execute(

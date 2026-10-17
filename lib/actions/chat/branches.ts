@@ -180,6 +180,17 @@ export async function prepareRun(input: BranchInput, userId: string) {
           messages = messages.slice(0, userIndex);
         }
       }
+      // Provenance is derived by the server for this request, including retries;
+      // never retain an older anchor's selected files implicitly.
+      message = {
+        ...message,
+        parts: [
+          ...input.message.parts.filter(
+            (part) => part.type === "data-attachments",
+          ),
+          ...message.parts.filter((part) => part.type !== "data-attachments"),
+        ],
+      };
       // Every generation needs space for its user prompt and terminal assistant,
       // including after a failed user-only turn. Forks use their actual prefix.
       if (messages.length + 2 > 500)
@@ -209,7 +220,9 @@ export async function prepareRun(input: BranchInput, userId: string) {
         userId,
         role: "user",
         parts: message.parts,
-        attachments: [],
+        attachments: message.parts
+          .filter((part) => part.type === "data-attachments")
+          .flatMap((part) => part.data.sources),
       });
       await tx
         .update(chatBranch)

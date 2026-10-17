@@ -1,4 +1,7 @@
 import { asc, desc, eq, sql } from "drizzle-orm";
+import type { AttachmentView } from "@/lib/attachments/contract";
+import { cleanupAfterDeletion } from "@/lib/attachments/service";
+import { attachmentView, lockAttachments } from "@/lib/attachments/store";
 import { resourceActor } from "@/lib/byok/config";
 import type { CredentialView } from "@/lib/byok/contract";
 import { ByokStore, lockByokResources } from "@/lib/byok/store";
@@ -26,6 +29,7 @@ export type AccountProfile = {
 
 export type AccountExport = {
   profile: AccountProfile;
+  attachments: Array<AttachmentView & { extractedText: string }>;
   memories: Array<typeof memory.$inferSelect>;
   projects: Array<typeof project.$inferSelect>;
   providerCredentials: CredentialView[];
@@ -166,8 +170,16 @@ export async function exportOwnedAccount(
     state: row.state,
     createdAt: row.created_at,
   }));
+  const attachmentRows = await db.execute<
+    import("@/lib/attachments/store").AttachmentRow
+  >(sql`SELECT * FROM attachment WHERE user_id=${userId} ORDER BY created_at`);
+  const attachments = attachmentRows.map((row) => ({
+    ...attachmentView(row),
+    extractedText: row.extracted_text,
+  }));
   return {
     profile,
+    attachments,
     memories,
     projects,
     chats,
@@ -182,10 +194,19 @@ export async function exportOwnedAccount(
 
 export async function deleteOwnedAccount(userId: string) {
   const db = requireDb();
-  return db.transaction(async (tx) => {
+  let hasAttachments = false;
+  await db.transaction(async (tx) => {
     // Serialize deletion with credential reads/provider entry. Anonymous resource
     // leases survive the cascade and still count until remote work is terminal.
     await lockByokResources(tx);
+    await lockAttachments(tx);
+    hasAttachments = Boolean(
+      (
+        await tx.execute(
+          sql`SELECT id FROM attachment WHERE user_id=${userId} LIMIT 1`,
+        )
+      )[0],
+    );
     const owned = await tx
       .select({ id: user.id })
       .from(user)
@@ -196,6 +217,8 @@ export async function deleteOwnedAccount(userId: string) {
     }
     await tx.delete(account).where(eq(account.userId, userId));
     await tx.delete(user).where(eq(user.id, userId));
-    return { deleted: true };
   });
+  return hasAttachments
+    ? { deleted: true, attachmentCleanup: await cleanupAfterDeletion() }
+    : { deleted: true };
 }
