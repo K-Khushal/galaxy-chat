@@ -8,6 +8,12 @@ import type { TypeChatMessage, TypeUIMessage } from "../types";
  */
 export function getChatErrorMessage(error: Error): string {
   const messages: Record<string, string> = {
+    context_changed:
+      "Memory or project instructions changed. Refresh Request context and review the exact selection before sending again.",
+    project_mismatch:
+      "This conversation belongs to a different project. Reload it or start a new conversation.",
+    temporary_conflict:
+      "Start a fresh temporary conversation. Saved conversations cannot be opened in temporary mode.",
     byok_key_invalid:
       "Your provider rejected this key. Replace it in Account & settings → Keys. Platform credits were not used.",
     byok_key_unavailable:
@@ -16,7 +22,7 @@ export function getChatErrorMessage(error: Error): string {
       "Your key changed on another device. Reload before trying again. Platform credits were not used.",
     byok_key_missing: "Save a provider key in Account & settings → Keys.",
     byok_provider_failed:
-      "The provider could not finish this response. Your prompt is saved. Platform credits were not used. Uncertain requests may require service recovery.",
+      "The provider could not finish this response. Saved conversations retain the prompt. Temporary conversations remain only in this tab. Platform credits were not used. Uncertain requests may require service recovery.",
     byok_busy:
       "A BYOK request is active or awaiting service recovery. Platform credits were not used.",
     byok_resource_limited:
@@ -30,7 +36,7 @@ export function getChatErrorMessage(error: Error): string {
     idempotency_conflict:
       "This request ID was already used. Reload the conversation before sending again.",
     funding_busy:
-      "A request is still active or awaiting usage reconciliation. Your current message is saved.",
+      "A request is still active or awaiting usage reconciliation. Saved conversations retain the current message; temporary messages remain in this tab.",
     chat_busy:
       "A saved request is still active. Wait for it to finish, then reload saved messages.",
     daily_exhausted:
@@ -38,7 +44,7 @@ export function getChatErrorMessage(error: Error): string {
     shared_exhausted:
       "The shared allowance is exhausted. Platform generation is paused.",
     provider_failed:
-      "The provider could not finish this response. Your prompt is saved. Any uncertain usage remains reserved until reconciled.",
+      "The provider could not finish this response. Saved conversations retain the prompt. Temporary conversations remain only in this tab. Any uncertain usage remains reserved until reconciled.",
     context_too_large:
       "This prompt exceeds the bounded context limit. Shorten it before sending.",
     funded_capability_denied:

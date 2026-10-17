@@ -15,6 +15,7 @@ export type ChatVisibility = "public" | "private";
 export type Chat = {
   id: string;
   title: string;
+  projectId?: string | null;
   userId: string;
   visibility: ChatVisibility;
   lastContext: AppUsage | null;

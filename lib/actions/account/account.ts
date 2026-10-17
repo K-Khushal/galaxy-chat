@@ -9,6 +9,8 @@ import {
   chatMessage,
   chatRun,
   chat as chatTable,
+  memory,
+  project,
   usageRecord,
   user,
 } from "@/lib/db/schema";
@@ -24,6 +26,8 @@ export type AccountProfile = {
 
 export type AccountExport = {
   profile: AccountProfile;
+  memories: Array<typeof memory.$inferSelect>;
+  projects: Array<typeof project.$inferSelect>;
   providerCredentials: CredentialView[];
   byokOperations: Array<{
     id: string;
@@ -36,6 +40,7 @@ export type AccountExport = {
     id: string;
     title: string;
     visibility: string;
+    projectId: string | null;
     createdAt: Date;
     updatedAt: Date;
   }>;
@@ -91,6 +96,7 @@ export async function exportOwnedAccount(
       id: chatTable.id,
       title: chatTable.title,
       visibility: chatTable.visibility,
+      projectId: chatTable.projectId,
       createdAt: chatTable.createdAt,
       updatedAt: chatTable.updatedAt,
     })
@@ -127,6 +133,14 @@ export async function exportOwnedAccount(
     .select()
     .from(chatRun)
     .where(eq(chatRun.userId, userId));
+  const memories = await db
+    .select()
+    .from(memory)
+    .where(eq(memory.userId, userId));
+  const projects = await db
+    .select()
+    .from(project)
+    .where(eq(project.userId, userId));
   const providerCredentials = await new ByokStore(db).credentials(userId);
   let actor: string | undefined;
   try {
@@ -154,6 +168,8 @@ export async function exportOwnedAccount(
   }));
   return {
     profile,
+    memories,
+    projects,
     chats,
     messages,
     usageRecords,

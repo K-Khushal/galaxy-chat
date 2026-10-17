@@ -57,9 +57,10 @@ export function HomeSections() {
           ))}
         </div>
         <p className={styles.roadmap}>
-          <span>Here today:</span> text conversations and account controls.{" "}
-          <span>Still ahead:</span> saved memory, attachments, artifacts, tools,
-          and browser work.
+          <span>Implemented for the gated beta:</span> text conversations,
+          explicit memory, projects, temporary chat, and account controls.{" "}
+          <span>Still ahead:</span> attachments, artifacts, tools, and browser
+          work.
         </p>
       </section>
       <section
