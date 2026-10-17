@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, mock, test } from "bun:test";
 import { PGlite } from "@electric-sql/pglite";
 import { PGLiteSocketServer } from "@electric-sql/pglite-socket";
 import { makeSignature } from "better-auth/crypto";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { NextRequest } from "next/server";
 
 mock.module("server-only", () => ({}));
@@ -375,6 +375,246 @@ test("history pages tied timestamps without another user's titles", async () => 
   expect((await bodyOf(both)).json).toEqual({
     error: { id: "invalid_cursor" },
   });
+});
+
+function historyPage(json: unknown) {
+  if (!json || typeof json !== "object" || !("hasMore" in json)) {
+    return { hasMore: false, ids: [] as string[] };
+  }
+  return { hasMore: json.hasMore === true, ids: idsOf(json) };
+}
+
+function messageIds(json: unknown) {
+  if (!json || typeof json !== "object" || !("messages" in json)) {
+    return [];
+  }
+  const messages = json.messages;
+  if (!Array.isArray(messages)) {
+    return [];
+  }
+  return messages.flatMap((message) => {
+    if (!message || typeof message !== "object" || !("id" in message)) {
+      return [];
+    }
+    return typeof message.id === "string" ? [message.id] : [];
+  });
+}
+
+test("history cursors cross four sub-millisecond pages without gaps", async () => {
+  await db.execute(sql`
+    insert into public.chat (
+      id, title, user_id, visibility, created_at, updated_at
+    ) values
+      ('p0', 'page-0', 'user-alice', 'private', timestamp '2026-06-01 00:00:00.100001', timestamp '2026-06-01 00:00:00.100001'),
+      ('p1', 'page-1', 'user-alice', 'private', timestamp '2026-06-01 00:00:00.100002', timestamp '2026-06-01 00:00:00.100002'),
+      ('p2', 'page-2', 'user-alice', 'private', timestamp '2026-06-01 00:00:00.100003', timestamp '2026-06-01 00:00:00.100003'),
+      ('p3', 'page-3', 'user-alice', 'private', timestamp '2026-06-01 00:00:00.100004', timestamp '2026-06-01 00:00:00.100004'),
+      ('p4', 'page-4', 'user-alice', 'private', timestamp '2026-06-01 00:00:00.100005', timestamp '2026-06-01 00:00:00.100005'),
+      ('p5', 'page-5', 'user-alice', 'private', timestamp '2026-06-01 00:00:00.100006', timestamp '2026-06-01 00:00:00.100006'),
+      ('p6', 'page-6', 'user-alice', 'private', timestamp '2026-06-01 00:00:00.100007', timestamp '2026-06-01 00:00:00.100007'),
+      ('p7', 'page-7', 'user-alice', 'private', timestamp '2026-06-01 00:00:00.100008', timestamp '2026-06-01 00:00:00.100008'),
+      ('p8', 'page-8', 'user-alice', 'private', timestamp '2026-06-01 00:00:00.100009', timestamp '2026-06-01 00:00:00.100009'),
+      ('p9', 'page-9', 'user-alice', 'private', timestamp '2026-06-01 00:00:00.100010', timestamp '2026-06-01 00:00:00.100010'),
+      ('p-bob', 'bob-micro-title', 'user-bob', 'private', timestamp '2026-06-01 00:00:00.100007', timestamp '2026-06-01 00:00:00.100007')
+  `);
+  await db.execute(sql`
+    insert into public.chat (id, title, user_id, visibility)
+    values ('p-clock', 'bob-clock-title', 'user-bob', 'private')
+  `);
+  const headers = await cookieHeader("alice-token");
+  const older1 = historyPage(
+    (
+      await bodyOf(
+        await historyGet(request("/api/history?limit=2&q=page-", headers)),
+      )
+    ).json,
+  );
+  const older2 = historyPage(
+    (
+      await bodyOf(
+        await historyGet(
+          request("/api/history?limit=2&q=page-&ending_before=p8", headers),
+        ),
+      )
+    ).json,
+  );
+  const older3 = historyPage(
+    (
+      await bodyOf(
+        await historyGet(
+          request("/api/history?limit=2&q=page-&ending_before=p6", headers),
+        ),
+      )
+    ).json,
+  );
+  const older4 = historyPage(
+    (
+      await bodyOf(
+        await historyGet(
+          request("/api/history?limit=2&q=page-&ending_before=p4", headers),
+        ),
+      )
+    ).json,
+  );
+  const older5 = historyPage(
+    (
+      await bodyOf(
+        await historyGet(
+          request("/api/history?limit=2&q=page-&ending_before=p2", headers),
+        ),
+      )
+    ).json,
+  );
+  expect(older1).toEqual({ hasMore: true, ids: ["p9", "p8"] });
+  expect(older2).toEqual({ hasMore: true, ids: ["p7", "p6"] });
+  expect(older3).toEqual({ hasMore: true, ids: ["p5", "p4"] });
+  expect(older4).toEqual({ hasMore: true, ids: ["p3", "p2"] });
+  expect(older5).toEqual({ hasMore: false, ids: ["p1", "p0"] });
+
+  const newer1 = historyPage(
+    (
+      await bodyOf(
+        await historyGet(
+          request("/api/history?limit=2&q=page-&starting_after=p0", headers),
+        ),
+      )
+    ).json,
+  );
+  const newer2 = historyPage(
+    (
+      await bodyOf(
+        await historyGet(
+          request("/api/history?limit=2&q=page-&starting_after=p2", headers),
+        ),
+      )
+    ).json,
+  );
+  const newer3 = historyPage(
+    (
+      await bodyOf(
+        await historyGet(
+          request("/api/history?limit=2&q=page-&starting_after=p4", headers),
+        ),
+      )
+    ).json,
+  );
+  const newer4 = historyPage(
+    (
+      await bodyOf(
+        await historyGet(
+          request("/api/history?limit=2&q=page-&starting_after=p6", headers),
+        ),
+      )
+    ).json,
+  );
+  const newer5 = historyPage(
+    (
+      await bodyOf(
+        await historyGet(
+          request("/api/history?limit=2&q=page-&starting_after=p8", headers),
+        ),
+      )
+    ).json,
+  );
+  expect(newer1).toEqual({ hasMore: true, ids: ["p2", "p1"] });
+  expect(newer2).toEqual({ hasMore: true, ids: ["p4", "p3"] });
+  expect(newer3).toEqual({ hasMore: true, ids: ["p6", "p5"] });
+  expect(newer4).toEqual({ hasMore: true, ids: ["p8", "p7"] });
+  expect(newer5).toEqual({ hasMore: false, ids: ["p9"] });
+
+  const foreignOlder = await historyGet(
+    request("/api/history?ending_before=p-bob", headers),
+  );
+  const foreignNewer = await historyGet(
+    request("/api/history?starting_after=p-clock", headers),
+  );
+  expect(foreignOlder.status).toBe(404);
+  expect(foreignNewer.status).toBe(404);
+  expect((await bodyOf(foreignOlder)).json).toEqual({
+    error: { id: "not_found" },
+  });
+  const hidden = await bodyOf(
+    await historyGet(request("/api/history?q=bob-micro-title", headers)),
+  );
+  expect(hidden.text).not.toContain("bob-micro-title");
+  expect(hidden.text).not.toContain("bob-clock-title");
+  expect(idsOf(hidden.json)).toEqual([]);
+});
+
+test("message cursors and trailing delete keep sub-millisecond neighbors", async () => {
+  await db.execute(sql`
+    insert into public.chat (
+      id, title, user_id, visibility, created_at, updated_at
+    ) values (
+      'p-msg',
+      'micro-chat',
+      'user-alice',
+      'private',
+      timestamp '2026-07-01 00:00:00.300000',
+      timestamp '2026-07-01 00:00:00.300000'
+    )
+  `);
+  await db.execute(sql`
+    insert into public.chat_message (
+      id, chat_id, user_id, role, parts, attachments, created_at, updated_at
+    ) values
+      ('n0', 'p-msg', 'user-alice', 'user', '[{"type":"text","text":"micro-early"}]'::jsonb, '[]'::jsonb, timestamp '2026-07-01 00:00:00.200001', timestamp '2026-07-01 00:00:00.200001'),
+      ('n1', 'p-msg', 'user-alice', 'user', '[{"type":"text","text":"micro-anchor"}]'::jsonb, '[]'::jsonb, timestamp '2026-07-01 00:00:00.200002', timestamp '2026-07-01 00:00:00.200002'),
+      ('n2', 'p-msg', 'user-alice', 'user', '[{"type":"text","text":"micro-next"}]'::jsonb, '[]'::jsonb, timestamp '2026-07-01 00:00:00.200003', timestamp '2026-07-01 00:00:00.200003'),
+      ('n3', 'p-msg', 'user-alice', 'user', '[{"type":"text","text":"micro-last"}]'::jsonb, '[]'::jsonb, timestamp '2026-07-01 00:00:00.200004', timestamp '2026-07-01 00:00:00.200004'),
+      ('n-bob', 'b-9', 'user-bob', 'user', '[{"type":"text","text":"bob-micro-keep"}]'::jsonb, '[]'::jsonb, timestamp '2026-07-01 00:00:00.200003', timestamp '2026-07-01 00:00:00.200003')
+  `);
+  await db.execute(sql`
+    insert into public.chat_message (
+      id, chat_id, user_id, role, parts, attachments
+    ) values (
+      'n-default',
+      'p-msg',
+      'user-alice',
+      'user',
+      '[{"type":"text","text":"micro-default"}]'::jsonb,
+      '[]'::jsonb
+    )
+  `);
+  const alice = await cookieHeader("alice-token");
+  const next = await bodyOf(
+    await messages.GET(
+      request("/api/messages?chatId=p-msg&limit=1&after=n1", alice),
+    ),
+  );
+  expect(next.json).toMatchObject({
+    hasMore: true,
+    messages: [{ id: "n2" }],
+  });
+  expect(messageIds(next.json)).toEqual(["n2"]);
+  const rest = await bodyOf(
+    await messages.GET(
+      request("/api/messages?chatId=p-msg&limit=10&after=n2", alice),
+    ),
+  );
+  expect(messageIds(rest.json)).toEqual(["n3", "n-default"]);
+  const foreign = await messages.GET(
+    request("/api/messages?chatId=p-msg&after=n-bob", alice),
+  );
+  expect(foreign.status).toBe(404);
+  expect((await bodyOf(foreign)).text).not.toContain("bob-micro-keep");
+
+  currentHeaders = await cookieHeader("bob-token");
+  await expect(deleteChatMessages("n1")).rejects.toMatchObject({
+    id: "not_found",
+  });
+  currentHeaders = alice;
+  await deleteChatMessages("n1");
+  const remaining = await db
+    .select({ id: messageTable.id })
+    .from(messageTable)
+    .where(eq(messageTable.chatId, "p-msg"));
+  expect(remaining.map((row) => row.id).sort()).toEqual(["n0", "n1"]);
+  const kept = await db
+    .select({ id: messageTable.id })
+    .from(messageTable)
+    .where(eq(messageTable.id, "n-bob"));
+  expect(kept).toHaveLength(1);
 });
 
 test("message retrieval is chronological and batches stay owner-scoped", async () => {
