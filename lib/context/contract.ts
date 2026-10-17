@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  type AttachmentContextView,
+  attachmentPreviewSchema,
+} from "@/lib/attachments/contract";
 export const CONTEXT_LIMITS = {
   memories: 8,
   instructionBytes: 4500,
@@ -24,6 +28,7 @@ export type ContextView = {
   digest: string;
   instructionBytes: number;
   limits: typeof CONTEXT_LIMITS;
+  attachments?: AttachmentContextView;
 };
 export type ContextLibrary = {
   memories: { id: string; content: string; projectId: string | null }[];
@@ -32,7 +37,11 @@ export type ContextLibrary = {
 };
 export const contextMutationSchema = z.discriminatedUnion("action", [
   z
-    .object({ action: z.literal("preview"), selection: contextSelectionSchema })
+    .object({
+      action: z.literal("preview"),
+      selection: contextSelectionSchema,
+      attachments: attachmentPreviewSchema.optional(),
+    })
     .strict(),
   z
     .object({

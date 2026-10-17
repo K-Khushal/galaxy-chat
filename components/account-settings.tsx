@@ -173,8 +173,9 @@ export function SettingsDialog({
                   Your data belongs to you
                 </h2>
                 <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-                  Download your conversations, memories, projects, and artifact
-                  revisions as a JSON file.
+                  Download conversations, memories, projects, artifact
+                  revisions, file metadata and extracted text as JSON. Download
+                  original files separately before deleting them.
                 </p>
                 <Button
                   className="mt-3"
@@ -195,7 +196,9 @@ export function SettingsDialog({
                 <h2 className="text-sm font-medium">Delete account</h2>
                 <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
                   Permanently remove your account, sessions, conversations,
-                  memories, projects, artifacts, and saved provider keys.
+                  memories, projects, artifacts, and saved provider keys, and
+                  queue private file cleanup. Uncertain remote writes may need
+                  operator reconciliation.
                 </p>
                 <Button
                   className="mt-3"
@@ -268,7 +271,9 @@ export function SettingsDialog({
               This permanently deletes your account, saved conversations,
               memories, projects, artifacts and their revisions, and provider
               keys, then signs you out. Export anything you want to keep first.
-              This cannot be undone.
+              This cannot be undone. Private files are queued for deletion;
+              unfinished remote writes may retain anonymous cleanup records
+              until reconciled.
             </DialogDescription>
           </DialogHeader>
           {failure && (

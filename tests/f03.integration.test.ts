@@ -145,6 +145,7 @@ beforeAll(async () => {
     "0003_chat_branches",
     "0004_byok",
     "0005_explicit_context",
+    "0006_attachments",
     "0007_artifacts",
     "0008_tools",
   ]);

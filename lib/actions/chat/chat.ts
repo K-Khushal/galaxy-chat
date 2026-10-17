@@ -1,5 +1,7 @@
 import { and, asc, desc, eq, ilike, type SQL, sql } from "drizzle-orm";
 import type { AppUsage } from "@/lib/ai/usage";
+import { cleanupAfterDeletion } from "@/lib/attachments/service";
+import { lockAttachments } from "@/lib/attachments/store";
 import { requireDb } from "@/lib/db/client";
 import { chatMessage, chat as chatTable } from "@/lib/db/schema";
 import { AppError } from "@/lib/errors";
@@ -227,7 +229,9 @@ export const getChatsByUserId = getAllUserChats;
 
 export async function deleteChat(id: string, userId: string): Promise<boolean> {
   const db = requireDb();
-  return db.transaction(async (tx) => {
+  let hasAttachments = false;
+  const deleted = await db.transaction(async (tx) => {
+    await lockAttachments(tx);
     const owned = await tx
       .select({ id: chatTable.id })
       .from(chatTable)
@@ -236,6 +240,13 @@ export async function deleteChat(id: string, userId: string): Promise<boolean> {
     if (!owned[0]) {
       return false;
     }
+    hasAttachments = Boolean(
+      (
+        await tx.execute(
+          sql`SELECT id FROM attachment WHERE chat_id=${id} AND user_id=${userId} LIMIT 1`,
+        )
+      )[0],
+    );
     await tx
       .delete(chatMessage)
       .where(and(eq(chatMessage.chatId, id), eq(chatMessage.userId, userId)));
@@ -244,6 +255,8 @@ export async function deleteChat(id: string, userId: string): Promise<boolean> {
       .where(and(eq(chatTable.id, id), eq(chatTable.userId, userId)));
     return true;
   });
+  if (deleted && hasAttachments) await cleanupAfterDeletion();
+  return deleted;
 }
 
 export async function updateChatLastContext({

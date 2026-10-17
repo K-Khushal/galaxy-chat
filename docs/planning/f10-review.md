@@ -1,0 +1,19 @@
+# F10 independent review
+
+Reviewed source cfbc2ad27797ec0e99c52135ae1062366a9b5e8d against F09 atomic-entry baseline 7883aae. Spec review accepted ownership, bounded extraction, SDK image payload, quota/cleanup, temporary-chat and pre-entry revocation behavior. Standards review found concurrent delete/selection restoration and pending feedback defects; fix 592d04b43dd557e5c10713c1d3fede82d1cd2eb7 was re-reviewed and accepted.
+
+Worker final source checks: 134 tests / 1,391 assertions; strict Webpack production build, nonincremental types, lint, vendor integrity and diff checks passed. Root independently ran 21 F10 tests / 280 assertions in 29.80 seconds, including real SQL and PDF extraction plus React DOM race regressions.
+
+Root CUA reviewed the production attachment composer using the explicitly local in-memory fixture: hostile filename/source text stayed escaped; exact source context was inspectable; image selection required the approved-model fixture and became blocked after switching to text-only; slow deletion guarded pending actions and removed the record; temporary chat denied files; unavailable storage allowed file-free messaging. At 390px, light/dark cards, context, controls and accepted selection stayed within the canvas and remained scrollable. Screenshots: /private/tmp/galaxy-f10-desktop-context.png, /private/tmp/galaxy-f10-phone-light.png, /private/tmp/galaxy-f10-phone-dark.png. Root server 3079 stopped.
+
+Browser review did not perform a native upload or contact Supabase/auth/model providers. Upload/cancel races are DOM regressions; private storage/provider serialization are local integration checks. Live storage capacity/egress, hosted PDF CPU/memory, OAuth and provider proof remain pending.
+
+The worker subsequently integrated accepted main F11 commit f1d19a68bb3eda037690eac9c3284f3335af88fa. Eight shared conflicts were inspected and both complete capabilities retained. A native PostgreSQL regression proved an owner/chat FK lock inversion; narrowing the attachment chat pin to FOR KEY SHARE preserved parent deletion protection and advisory quota serialization. The regression also passed actual account/conversation cascade, combined export, quota and ownership checks.
+
+Combined worker verification: 144 tests / 1,582 assertions across 21 files with the native concurrency regression explicitly enabled, no skips or failures; strict nonincremental typecheck, lint269, vendor integrity, and strict Webpack build (24 static pages) passed. The temporary local PostgreSQL server was stopped. Exact conflict files, native proof/opt-in command, limits and build timing are in f10-evidence.md. The earlier root source/browser acceptance above applies to its reviewed checkpoints; combined-source integration review remains a root step before PR publication.
+
+## Combined F11 integration
+
+Reviewed merge a2404acd8c3b866e07b99726f47d541041d81c70 against both parents. Independent spec integration review accepted the union; chat route/BYOK/context hooks are identical to reviewed F10 and artifact service/preview/migration identical to accepted F11. Root confirmed both export/UI/copy capabilities and migrations 0005/0006/0007 survive. Native PostgreSQL reproduced the parent-row FK deadlock; the narrow attachment parent `FOR KEY SHARE` avoids that cycle while preserving deletion protection and the existing advisory quota/delete lock. The opt-in native test demonstrates simultaneous completion, quota/ownership and real account/chat cascades, retaining anonymous cleanup liability.
+
+Worker combined final checks: 144 tests / 1,582 assertions, no skips/failures with native concurrency enabled, strict Webpack build/types/lint269/integrity/diff pass. Root independently reran all five attachment/artifact integration, parser and DOM suites: **30 tests / 442 assertions passed in 24.01 seconds**. No provider/cloud requests or extra browser/live proof are implied.
