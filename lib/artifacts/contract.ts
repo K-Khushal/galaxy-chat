@@ -7,7 +7,12 @@ export const artifactLimits = {
   ownerBytes: 8 * 1024 * 1024,
   requestBytes: 800 * 1024,
 } as const;
-export const artifactKind = z.enum(["markdown", "html"]);
+export const artifactKind = z.enum(["markdown", "html", "chart"]);
+export const artifactKindLabel = {
+  markdown: "Markdown",
+  html: "HTML",
+  chart: "Chart",
+} as const;
 export const artifactIdentifier = z
   .string()
   .min(1)
@@ -84,7 +89,7 @@ export function artifactFilename(title: string, kind: ArtifactKind) {
       .replace(/^-+|-+$/g, "")
       .slice(0, 72) || "artifact";
   // Source is deliberately delivered as text, never as an executable HTML page.
-  return `${stem}.${kind === "html" ? "html.txt" : "md"}`;
+  return `${stem}.${kind === "html" ? "html.txt" : kind === "chart" ? "chart.json" : "md"}`;
 }
 export function artifactSource(parts: unknown, kind: ArtifactKind) {
   if (!Array.isArray(parts)) return "";
@@ -98,13 +103,14 @@ export function artifactSource(parts: unknown, kind: ArtifactKind) {
         : [],
     )
     .join("\n\n");
-  const fenced = /^\s*```(html|markdown|md)\s*\n([\s\S]*?)\n```\s*$/i.exec(
-    text,
-  );
+  const fenced =
+    /^\s*```(html|markdown|md|chart|json)\s*\n([\s\S]*?)\n```\s*$/i.exec(text);
   return fenced &&
-    (kind === "html"
-      ? fenced[1].toLowerCase() === "html"
-      : fenced[1].toLowerCase() !== "html")
+    (kind === "chart"
+      ? ["chart", "json"].includes(fenced[1].toLowerCase())
+      : kind === "html"
+        ? fenced[1].toLowerCase() === "html"
+        : ["markdown", "md"].includes(fenced[1].toLowerCase()))
     ? fenced[2]
     : text;
 }

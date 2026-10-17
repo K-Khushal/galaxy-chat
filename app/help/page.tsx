@@ -139,15 +139,24 @@ export default function HelpPage() {
         <h2>Save an answer as an artifact</h2>
         <p>
           Under a saved assistant response, choose Create artifact, add a title,
-          and select Markdown or HTML. You can also reopen saved documents with
-          Artifacts in the conversation header. Guest and temporary
-          conversations cannot save artifacts.
+          and select Markdown, HTML, or Chart from JSON. You can also reopen
+          saved documents with Artifacts in the conversation header. Guest and
+          temporary conversations cannot save artifacts.
         </p>
         <p>
           Edit the source and choose Save revision. History lets you restore a
           saved version as a new revision. The reading preview disables links,
           scripts, images, custom styles, and external resources. Download saves
           Markdown or HTML source as a text file; Galaxy does not run it.
+        </p>
+        <p>
+          Charts accept a version 1 JSON spec for bar, line, area, or scatter
+          plots, with a title, description, labeled axes, series, and rows.
+          Preview includes an equivalent data table. Use null for missing
+          values; at most eight series and 2,000 numeric cells are allowed
+          (scatter x/y pairs count as two). Unknown fields, code, and remote
+          data are rejected. Save a revision to download its chart JSON or inert
+          SVG. Editing and rendering a chart do not call a model.
         </p>
         <p>
           Each artifact allows 128 KiB of source per revision and 40 revisions.

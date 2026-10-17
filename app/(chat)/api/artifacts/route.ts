@@ -1,3 +1,5 @@
+import { chartSvg } from "@/lib/artifacts/chart-export";
+import { parseChartSource } from "@/lib/artifacts/chart-spec";
 import {
   artifactFilename,
   artifactIdentifier,
@@ -26,11 +28,35 @@ export async function GET(request: Request) {
       throw new AppError("not_found", 404);
     if (id) {
       const document = await readArtifact(access.userId, id);
+      const download = params.get("download");
+      if (
+        document.kind === "chart" &&
+        download &&
+        !parseChartSource(document.content).success
+      )
+        throw new AppError("invalid_artifact", 400);
+      if (download === "svg") {
+        if (document.kind !== "chart")
+          throw new AppError("invalid_artifact", 400);
+        const svg = chartSvg(document.content);
+        if (!svg) throw new AppError("invalid_artifact", 400);
+        return new Response(svg, {
+          headers: {
+            ...privateHeaders,
+            "content-type": "image/svg+xml; charset=utf-8",
+            "content-disposition": `attachment; filename="${artifactFilename(document.title, "chart").replace(/\.chart\.json$/, ".svg")}"`,
+            "content-security-policy": "default-src 'none'; sandbox",
+          },
+        });
+      }
       if (params.get("download") === "source")
         return new Response(document.content, {
           headers: {
             ...privateHeaders,
-            "content-type": "text/plain; charset=utf-8",
+            "content-type":
+              document.kind === "chart"
+                ? "application/json; charset=utf-8"
+                : "text/plain; charset=utf-8",
             "content-disposition": `attachment; filename="${artifactFilename(document.title, document.kind)}"`,
             "content-security-policy": "default-src 'none'; sandbox",
           },

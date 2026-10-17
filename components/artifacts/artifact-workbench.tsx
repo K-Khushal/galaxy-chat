@@ -1,5 +1,6 @@
 "use client";
 import {
+  ChartNoAxesCombined,
   FileCode2,
   FileText,
   FolderOpen,
@@ -8,6 +9,7 @@ import {
   Save,
   Trash2,
 } from "lucide-react";
+import dynamic from "next/dynamic";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,18 +23,33 @@ import {
 } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { chartSvg } from "@/lib/artifacts/chart-export";
+import { parseChartSource } from "@/lib/artifacts/chart-spec";
 import {
   type ArtifactDocument,
   type ArtifactKind,
   type ArtifactMutation,
   type ArtifactSummary,
   artifactError,
+  artifactFilename,
+  artifactKindLabel,
   artifactLimits,
 } from "@/lib/artifacts/contract";
 import {
   artifactPreviewDocument,
   markdownPreviewDocument,
 } from "@/lib/artifacts/preview";
+
+const ChartPreview = dynamic(
+  () => import("./chart-preview").then((module) => module.ChartPreview),
+  {
+    loading: () => (
+      <output className="p-4 text-sm text-muted-foreground">
+        Loading chart preview…
+      </output>
+    ),
+  },
+);
 
 export type ArtifactClient = {
   list: (chatId: string) => Promise<ArtifactSummary[]>;
@@ -77,11 +94,14 @@ export function ArtifactPreview({
 }) {
   const document = useMemo(
     () =>
-      kind === "html"
-        ? artifactPreviewDocument(source)
-        : markdownPreviewDocument(source),
+      kind === "chart"
+        ? ""
+        : kind === "html"
+          ? artifactPreviewDocument(source)
+          : markdownPreviewDocument(source),
     [source, kind],
   );
+  if (kind === "chart") return <ChartPreview source={source} />;
   return (
     <iframe
       title={`${kind === "html" ? "HTML" : "Markdown"} artifact preview`}
@@ -143,11 +163,40 @@ export function ArtifactEditor({
   }, [dirty]);
   const bytes = new TextEncoder().encode(content).byteLength;
   const overLimit = bytes > artifactLimits.contentBytes;
+  const chartValidation = useMemo(
+    () => (document.kind === "chart" ? parseChartSource(content) : null),
+    [document.kind, content],
+  );
   const canSave =
     dirty &&
     title.trim().length > 0 &&
     !overLimit &&
+    (!chartValidation || chartValidation.success) &&
     document.version < artifactLimits.revisions;
+  function fixtureDownload(format: "source" | "svg") {
+    if (
+      !fixture ||
+      document.kind !== "chart" ||
+      !parseChartSource(document.content).success
+    )
+      return;
+    const content =
+      format === "svg" ? chartSvg(document.content) : document.content;
+    if (!content) return;
+    const url = URL.createObjectURL(
+      new Blob([content], {
+        type: format === "svg" ? "image/svg+xml" : "application/json",
+      }),
+    );
+    const anchor = window.document.createElement("a");
+    anchor.href = url;
+    anchor.download = artifactFilename(document.title, "chart").replace(
+      /\.chart\.json$/,
+      format === "svg" ? ".svg" : ".chart.json",
+    );
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
   async function commit(input: ArtifactMutation) {
     if (pending.current) return;
     pending.current = true;
@@ -224,7 +273,9 @@ export function ArtifactEditor({
         </div>
         <TabsContent value="source" className="flex flex-1 flex-col gap-2">
           <label htmlFor={`${uid}-source`} className="text-sm font-medium">
-            {document.kind === "html" ? "HTML source" : "Markdown source"}
+            {document.kind === "chart"
+              ? "Chart JSON"
+              : `${artifactKindLabel[document.kind]} source`}
           </label>
           <Textarea
             ref={sourceInput}
@@ -234,8 +285,23 @@ export function ArtifactEditor({
             disabled={busy}
             value={content}
             onChange={(event) => setContent(event.target.value)}
+            aria-invalid={chartValidation?.success === false}
+            aria-describedby={
+              document.kind === "chart" ? `${uid}-chart-validation` : undefined
+            }
             className="min-h-64 flex-1 resize-none font-mono text-base leading-6 [tab-size:2]"
           />
+          {document.kind === "chart" && (
+            <p
+              id={`${uid}-chart-validation`}
+              role={chartValidation?.success === false ? "alert" : undefined}
+              className={`text-sm ${chartValidation?.success === false ? "text-destructive" : "text-muted-foreground"}`}
+            >
+              {chartValidation?.success === false
+                ? chartValidation.error
+                : "Valid chart JSON. Preview your changes, then save a revision. Use null for a missing value."}
+            </p>
+          )}
           <span
             className={
               overLimit
@@ -249,8 +315,9 @@ export function ArtifactEditor({
         </TabsContent>
         <TabsContent value="preview" className="flex flex-1 flex-col gap-3">
           <p className="text-sm text-muted-foreground">
-            Safe reading preview. Links, scripts, images, external resources,
-            and custom styles are disabled.
+            {document.kind === "chart"
+              ? "Preview of your current edits. Saving adds a revision; downloads use the last saved revision."
+              : "Safe reading preview. Links, scripts, images, external resources, and custom styles are disabled."}
           </p>
           <ArtifactPreview source={content} kind={document.kind} />
         </TabsContent>
@@ -366,20 +433,60 @@ export function ArtifactEditor({
             Discard changes
           </Button>
         )}
-        <Button variant="outline" asChild disabled={fixture}>
+        <Button
+          variant="outline"
+          asChild
+          disabled={fixture && document.kind !== "chart"}
+        >
           <a
             href={
               fixture
-                ? undefined
+                ? document.kind === "chart"
+                  ? "#"
+                  : undefined
                 : `/api/artifacts?id=${encodeURIComponent(document.id)}&download=source`
             }
             download
-            aria-disabled={fixture}
+            aria-disabled={fixture && document.kind !== "chart"}
+            onClick={
+              fixture && document.kind === "chart"
+                ? (event) => {
+                    event.preventDefault();
+                    fixtureDownload("source");
+                  }
+                : undefined
+            }
           >
             Download saved{" "}
-            {document.kind === "html" ? "HTML source (.txt)" : "Markdown"}
+            {document.kind === "html"
+              ? "HTML source (.txt)"
+              : document.kind === "chart"
+                ? "chart JSON"
+                : "Markdown"}
           </a>
         </Button>
+        {document.kind === "chart" && (
+          <Button variant="outline" asChild>
+            <a
+              href={
+                fixture
+                  ? "#"
+                  : `/api/artifacts?id=${encodeURIComponent(document.id)}&download=svg`
+              }
+              download
+              onClick={
+                fixture
+                  ? (event) => {
+                      event.preventDefault();
+                      fixtureDownload("svg");
+                    }
+                  : undefined
+              }
+            >
+              Download saved SVG
+            </a>
+          </Button>
+        )}
         <Button
           variant="ghost"
           aria-label="Delete artifact"
@@ -530,7 +637,7 @@ function ArtifactPanel({
         </SheetTitle>
         <SheetDescription>
           {document
-            ? `From a saved assistant message · ${document.kind === "html" ? "HTML" : "Markdown"}`
+            ? `From a saved assistant message · ${artifactKindLabel[document.kind]}`
             : "Save a response as an editable document. Artifacts stay linked to this conversation."}
         </SheetDescription>
       </SheetHeader>
@@ -612,7 +719,14 @@ function ArtifactPanel({
               >
                 <option value="markdown">Markdown document</option>
                 <option value="html">HTML document</option>
+                <option value="chart">Chart from JSON</option>
               </select>
+              {kind === "chart" && (
+                <p className="text-sm text-muted-foreground">
+                  The response must contain a complete version 1 chart JSON spec
+                  for bar, line, area, or scatter. No model call is made.
+                </p>
+              )}
               <Button
                 type="submit"
                 aria-busy={creating}
@@ -658,6 +772,8 @@ function ArtifactPanel({
                       aria-hidden="true"
                       className="shrink-0 animate-spin"
                     />
+                  ) : item.kind === "chart" ? (
+                    <ChartNoAxesCombined className="shrink-0" />
                   ) : item.kind === "html" ? (
                     <FileCode2 className="shrink-0" />
                   ) : (

@@ -9,6 +9,7 @@ import {
   user,
 } from "@/lib/db/schema";
 import { AppError } from "@/lib/errors";
+import { parseChartSource } from "./chart-spec";
 import {
   type ArtifactDocument,
   type ArtifactSummary,
@@ -133,6 +134,8 @@ export async function mutateArtifact(
       const source = artifactSource(origin[0].parts, input.kind);
       if (!source.trim() || !artifactContent.safeParse(source).success)
         throw new AppError("invalid_artifact", 400);
+      if (input.kind === "chart" && !parseChartSource(source).success)
+        throw new AppError("invalid_artifact", 400);
       const count = await tx
         .select({ count: sql<number>`count(*)::integer` })
         .from(artifact)
@@ -192,6 +195,8 @@ export async function mutateArtifact(
         content = input.content;
         title = input.title;
       }
+      if (row.kind === "chart" && !parseChartSource(content).success)
+        throw new AppError("invalid_artifact", 400);
       await tx
         .update(artifact)
         .set({ head: version, updatedAt: new Date() })
