@@ -222,10 +222,7 @@ export function ArtifactEditor({
             Revision {document.version} of 40{dirty ? " · Unsaved changes" : ""}
           </span>
         </div>
-        <TabsContent
-          value="source"
-          className="flex flex-1 flex-col gap-2"
-        >
+        <TabsContent value="source" className="flex flex-1 flex-col gap-2">
           <label htmlFor={`${uid}-source`} className="text-sm font-medium">
             {document.kind === "html" ? "HTML source" : "Markdown source"}
           </label>
@@ -250,20 +247,14 @@ export function ArtifactEditor({
             {artifactLimits.contentBytes.toLocaleString()} bytes
           </span>
         </TabsContent>
-        <TabsContent
-          value="preview"
-          className="flex flex-1 flex-col gap-3"
-        >
+        <TabsContent value="preview" className="flex flex-1 flex-col gap-3">
           <p className="text-sm text-muted-foreground">
             Safe reading preview. Links, scripts, images, external resources,
             and custom styles are disabled.
           </p>
           <ArtifactPreview source={content} kind={document.kind} />
         </TabsContent>
-        <TabsContent
-          value="history"
-          className="flex-1 space-y-4"
-        >
+        <TabsContent value="history" className="flex-1 space-y-4">
           <p className="text-sm text-muted-foreground">
             Each save is permanent in history. Restore adds a new revision.
             Download before deleting an artifact; deletion removes all its
