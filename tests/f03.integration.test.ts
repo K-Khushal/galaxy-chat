@@ -4,6 +4,7 @@ import { PGLiteSocketServer } from "@electric-sql/pglite-socket";
 import { makeSignature } from "better-auth/crypto";
 import { eq, sql } from "drizzle-orm";
 import { NextRequest } from "next/server";
+import { rejectionOf } from "./helpers/rejection";
 
 mock.module("server-only", () => ({}));
 
@@ -626,7 +627,7 @@ test("message cursors and trailing delete keep sub-millisecond neighbors", async
   expect((await bodyOf(foreign)).text).not.toContain("bob-micro-keep");
 
   currentHeaders = await cookieHeader("bob-token");
-  await expect(deleteChatMessages("n1")).rejects.toMatchObject({
+  expect(await rejectionOf(deleteChatMessages("n1"))).toMatchObject({
     id: "not_found",
   });
   currentHeaders = alice;
@@ -772,7 +773,7 @@ test("rename and delete refuse another user's conversation", async () => {
 test("trailing delete uses the session and keeps the other user's messages", async () => {
   const bob = await cookieHeader("bob-token");
   currentHeaders = bob;
-  await expect(deleteChatMessages("t-b")).rejects.toMatchObject({
+  expect(await rejectionOf(deleteChatMessages("t-b"))).toMatchObject({
     id: "not_found",
   });
   const before = await db

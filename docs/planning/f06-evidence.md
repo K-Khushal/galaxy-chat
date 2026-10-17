@@ -64,3 +64,32 @@ PGlite is a local shared engine and does not prove independently deployed Postgr
 The installed version-matched AI SDK `src/types/usage.ts`, `src/generate-text/stream-text.ts` and stream result types establish total input/output versus reasoning tokens, `onEnd`/abort/error lifecycle, consumer draining and retry defaults. Installed OpenRouter source maps output limits to `max_tokens`, disables reasoning/fallbacks and preserves explicit raw cost receipts. Reviewed primary references: [OpenRouter provider routing and maximum prices](https://openrouter.ai/docs/guides/routing/provider-selection), [Turnstile server validation, action/hostname and single-use proofs](https://developers.cloudflare.com/turnstile/get-started/server-side-validation/).
 
 Still unverified: real BASIC model/endpoint pricing and billing period semantics, provider account spending limits and fees, model-specific tokenization/framing bound, actual nonreasoning/output/maximum-price enforcement, final usage receipts under provider failures/cancellation, live Turnstile/proxy trust, hosted streaming/draining, Workers CPU/size/runtime compatibility, and the total recurring $10 go/no-go. `FUNDED_PROVIDER_LIMITS_VERIFIED=0`, blank prices/keys/cost fields and the enabled kill switch intentionally keep everything off until that evidence exists. No F06 live checkbox or GitHub issue was closed.
+
+
+## Hosted CI timeout diagnosis and fixture correction
+
+Follow-up on 2026-10-17, based on merged UI/backend HEAD `09f3eda`. The [failed push run 39034705901](https://github.com/K-Khushal/galaxy-chat/actions/runs/39034705901) on Linux/Bun 1.4.3 timed out the pre-entry/post-entry lifecycle test at 30 seconds. Its callback continued after the next `beforeEach` truncated shared rows, so a late duplicate request incorrectly found no reservation and resolved. The passing PR-merge run did not establish that this race was fixed. No failed hosted run was bypassed or rerun during diagnosis.
+
+Reproduction and causal evidence on local Bun 1.4.2:
+
+- `bun test tests/f06.integration.test.ts --test-name-pattern 'pre-entry failure releases safely'` took **20,062ms** before any correction.
+- A minimized real postgres.js/PGlite loop performed four callback-rejected transactions followed by successful transactions. Bun `.rejects.toThrow` took about **4,010ms**; `.rejects.toMatchObject` took about **3,163ms**. No connection reconnect/close occurred during these stalls. Reducing the pool from four sockets to one still took about **4,011ms**, falsifying reconnect/backoff as the primary cause.
+- Keeping the SQL and pool unchanged but natively awaiting each rejection before a synchronous error assertion reduced the same four iterations to about **10ms**. That reproduction asserted a one-second execution bound and went red with the async matchers, then green with native awaiting. The temporary instrumented harness was removed after diagnosis.
+- The original lifecycle test dropped to **62.92ms** with only that rejection-observation correction and all prior error assertions preserved. This isolates the slowdown to Bun's async rejection matcher interacting with same-process socket progress, rather than ordinary database work or budget logic. The underlying Bun runtime implementation was not changed.
+
+`tests/helpers/rejection.ts` now awaits the operation through normal JavaScript, explicitly asserts that it rejected, and returns the actual error for the existing synchronous field/message assertions. A fulfilled promise still fails. The same correction covers the two F03 socket-backed rejection assertions; their ownership expectations are unchanged.
+
+`tests/helpers/credits-fixture.ts` gives each F06 callback an owned engine, client and store. There is no shared `beforeEach` TRUNCATE or mutable global store. Both `finally` and `onTestFinished` call idempotent cleanup, which closes the client, flushes socket detach/rollback work before disposing WASM, and closes the engine. A new real database/provider regression suspends a late retry, retires its fixture, creates a successor and resumes the retry: the old client rejects, no provider is invoked and the successor's funds stay untouched.
+
+Fresh-engine experiments also exposed an independent PGlite multi-socket unnamed-portal collision (`34000`). PGlite has one PostgreSQL session; its multiplexed sockets are not independent backends. The fixture now uses one socket/connection, matching the application's existing `getDb` pool. All concurrent Promise.all request/cap/guest assertions remain. Native independently deployed PostgreSQL backends still require the previously documented live contention evidence.
+
+The 30-second override was removed. All cases use Bun's default **5,000ms** per-test deadline, with a two-second local connect timeout and bounded client shutdown. No product, provider, budget, UI, environment, dependency or lockfile behavior changed in this follow-up.
+
+Final local checks after the correction:
+
+- `bun test tests/f06.integration.test.ts` — **23 passed**, 0 failures, 146 assertions, 13.96 seconds; original lifecycle case 628.94ms including its fresh database setup.
+- `bun test tests/f06.integration.test.ts --test-name-pattern 'pre-entry failure releases safely|late continuation' --rerun-each=5` — **10 passed**, 0 failures, 80 assertions, 11.00 seconds. Both target cases passed on all five executions under the default timeout.
+- `bun test` — **53 passed**, 0 failures, 323 assertions across six merged UI/backend files, 20.32 seconds while other local checks/build also ran.
+- `bun run lint`, `bun run typecheck`, `bun run f01:integrity`, `bun run build`, `git diff --check` — passed.
+
+No preview/server process remains; database/socket fixtures were closed. Hosted verification on a new revision remains pending until the parent commits/pushes this correction. The separate F05 checkout was not touched.
