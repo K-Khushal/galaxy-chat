@@ -30,6 +30,14 @@ export default function PrivacyPage() {
           titles, messages, or memories. Anonymous cost and resource records
           remain. Your provider’s retention policy still applies.
         </p>
+        <p>
+          Artifacts are saved only when you explicitly create one from a saved
+          assistant response. Galaxy stores its source, immutable revisions, and
+          links to the originating conversation and message. Previewing an
+          artifact does not contact a model or load external resources, and
+          artifact source is not automatically added to model context. Guest and
+          temporary exchanges cannot create saved artifacts.
+        </p>
       </section>
       <section>
         <h2>What a provider receives</h2>
@@ -52,15 +60,18 @@ export default function PrivacyPage() {
         <p>
           In your workspace, open Account &amp; settings → Account to export
           account data or delete the account. Export includes your profile,
-          conversations, messages, branches, explicit memories, projects, and
-          safe usage and provider-key metadata. You can also delete individual
-          conversations from history and remove provider keys in the Keys tab.
+          conversations, messages, branches, explicit memories, projects,
+          artifacts and all of their revisions, and safe usage and provider-key
+          metadata. You can also delete individual conversations from history
+          and remove provider keys in the Keys tab.
         </p>
         <p>
           Account deletion removes personal account records, saved chats,
-          memories, projects, and saved provider keys. It does not recall a
-          request that has already reached a provider, remove provider-held
-          records, or promise immediate removal from backups.
+          memories, projects, artifacts and their revisions, and saved provider
+          keys. Deleting an originating conversation or message also removes its
+          linked artifacts. It does not recall a request that has already
+          reached a provider, remove provider-held records, or promise immediate
+          removal from backups.
         </p>
         <Link href="/chat" prefetch={false}>
           Open your workspace to manage data

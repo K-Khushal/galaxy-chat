@@ -6,6 +6,8 @@ import { lockContext } from "@/lib/context/service";
 import { requireDb } from "@/lib/db/client";
 import {
   account,
+  artifact,
+  artifactRevision,
   chatBranch,
   chatMessage,
   chatRun,
@@ -27,6 +29,8 @@ export type AccountProfile = {
 
 export type AccountExport = {
   profile: AccountProfile;
+  artifacts: Array<typeof artifact.$inferSelect>;
+  artifactRevisions: Array<typeof artifactRevision.$inferSelect>;
   memories: Array<typeof memory.$inferSelect>;
   projects: Array<typeof project.$inferSelect>;
   providerCredentials: CredentialView[];
@@ -134,6 +138,14 @@ export async function exportOwnedAccount(
     .select()
     .from(chatRun)
     .where(eq(chatRun.userId, userId));
+  const artifacts = await db
+    .select()
+    .from(artifact)
+    .where(eq(artifact.userId, userId));
+  const artifactRevisions = await db
+    .select()
+    .from(artifactRevision)
+    .where(eq(artifactRevision.userId, userId));
   const memories = await db
     .select()
     .from(memory)
@@ -169,6 +181,8 @@ export async function exportOwnedAccount(
   }));
   return {
     profile,
+    artifacts,
+    artifactRevisions,
     memories,
     projects,
     chats,

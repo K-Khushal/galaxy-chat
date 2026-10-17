@@ -8,6 +8,7 @@ const pages = [
   { path: "/", label: "Home" },
   { path: "/help", label: "Help" },
   { path: "/privacy", label: "Privacy & data" },
+  { path: "/preview/artifacts", label: "Local artifacts fixture" },
   { path: "/guest", label: "Guest (public)" },
   { path: "/preview/ui?context=1", label: "Local memory & projects fixture" },
   {
