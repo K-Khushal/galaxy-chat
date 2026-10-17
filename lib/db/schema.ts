@@ -69,6 +69,19 @@ export const chat = pgTable("chat", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
+/**
+ * Placeholder for later usage rows. It stores ownership only.
+ * Credit amounts and BYOK material are not part of this table.
+ */
+export const usageRecord = pgTable("usage_record", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  chatId: text("chat_id").references(() => chat.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export const chatMessage = pgTable("chat_message", {
   id: text("id").primaryKey(),
   chatId: text("chat_id")
@@ -84,5 +97,10 @@ export const chatMessage = pgTable("chat_message", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
+export const schemaMigrations = pgTable("schema_migrations", {
+  version: text("version").primaryKey(),
+  appliedAt: timestamp("applied_at").notNull().defaultNow(),
+});
+
 export const authSchema = { user, session, account, verification };
-export const appSchema = { chat, chatMessage };
+export const appSchema = { chat, chatMessage, usageRecord };

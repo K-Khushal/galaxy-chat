@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, lt } from "drizzle-orm";
+import { and, desc, eq, gt, ilike, lt, or, type SQL } from "drizzle-orm";
 import type { AppUsage } from "@/lib/ai/usage";
 import { requireDb } from "@/lib/db/client";
 import { chatMessage, chat as chatTable } from "@/lib/db/schema";
@@ -27,12 +27,38 @@ export type GetChatsInput = {
   limit?: number;
   startingAfter?: string;
   endingBefore?: string;
+  query?: string;
 };
 
 export type GetChatsResult = {
   chats: Chat[];
   hasMore: boolean;
 };
+
+export function boundedLimit(
+  value: number | undefined,
+  fallback: number,
+  max: number,
+) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 1) {
+    return fallback;
+  }
+  return Math.min(Math.floor(value), max);
+}
+
+function likePattern(query: string) {
+  const escaped = query.replace(/[\\%_]/g, (character) => `\\${character}`);
+  return `%${escaped}%`;
+}
+
+function definedSql(clauses: Array<SQL | undefined>) {
+  const present = clauses.filter((clause) => clause !== undefined);
+  const combined = and(...present);
+  if (!combined) {
+    throw new AppError("persistence_failed", 500);
+  }
+  return combined;
+}
 
 function toChat(row: typeof chatTable.$inferSelect): Chat {
   return {
@@ -110,51 +136,55 @@ export async function getUserChats(
   if (!input.userId.trim()) {
     throw new AppError("invalid_chat", 400);
   }
+  if (input.startingAfter && input.endingBefore) {
+    throw new AppError("invalid_cursor", 400);
+  }
   const db = requireDb();
-  const limit = Math.min(input.limit || 50, 100);
+  const limit = boundedLimit(input.limit, 50, 100);
   const userId = input.userId.trim();
-  let cursorDate: Date | null = null;
-  let direction: "before" | "after" = "before";
-  if (input.startingAfter) {
-    const cursor = await getChatForUser(input.startingAfter, userId);
-    if (!cursor) {
-      throw new AppError("not_found", 404);
-    }
-    cursorDate = cursor.createdAt;
-    direction = "before";
-  }
+  const query = input.query?.trim() ?? "";
+  let cursor: Chat | null = null;
+  let direction: "older" | "newer" | null = null;
   if (input.endingBefore) {
-    const cursor = await getChatForUser(input.endingBefore, userId);
+    cursor = await getChatForUser(input.endingBefore, userId);
     if (!cursor) {
       throw new AppError("not_found", 404);
     }
-    cursorDate = cursor.createdAt;
-    direction = "after";
+    direction = "older";
   }
-  let where = eq(chatTable.userId, userId);
-  if (cursorDate && direction === "before") {
-    const next = and(
-      eq(chatTable.userId, userId),
-      lt(chatTable.createdAt, cursorDate),
-    );
-    if (next) {
-      where = next;
+  if (input.startingAfter) {
+    cursor = await getChatForUser(input.startingAfter, userId);
+    if (!cursor) {
+      throw new AppError("not_found", 404);
     }
+    direction = "newer";
   }
-  if (cursorDate && direction === "after") {
-    const next = and(
-      eq(chatTable.userId, userId),
-      gt(chatTable.createdAt, cursorDate),
-    );
-    if (next) {
-      where = next;
-    }
-  }
+  const search =
+    query.length > 0 ? ilike(chatTable.title, likePattern(query)) : undefined;
+  const older = cursor
+    ? or(
+        lt(chatTable.createdAt, cursor.createdAt),
+        and(
+          eq(chatTable.createdAt, cursor.createdAt),
+          lt(chatTable.id, cursor.id),
+        ),
+      )
+    : undefined;
+  const newer = cursor
+    ? or(
+        gt(chatTable.createdAt, cursor.createdAt),
+        and(
+          eq(chatTable.createdAt, cursor.createdAt),
+          gt(chatTable.id, cursor.id),
+        ),
+      )
+    : undefined;
+  const timeline = direction === "newer" ? newer : older;
   const rows = await db
     .select()
     .from(chatTable)
-    .where(where)
-    .orderBy(desc(chatTable.createdAt))
+    .where(definedSql([eq(chatTable.userId, userId), search, timeline]))
+    .orderBy(desc(chatTable.createdAt), desc(chatTable.id))
     .limit(limit + 1);
   const hasMore = rows.length > limit;
   return {
@@ -169,7 +199,7 @@ export async function getAllUserChats(userId: string): Promise<Chat[]> {
     .select()
     .from(chatTable)
     .where(eq(chatTable.userId, userId))
-    .orderBy(desc(chatTable.createdAt));
+    .orderBy(desc(chatTable.createdAt), desc(chatTable.id));
   return rows.map(toChat);
 }
 

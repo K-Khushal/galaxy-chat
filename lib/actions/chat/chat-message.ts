@@ -1,4 +1,6 @@
-import { and, asc, eq, gt, inArray } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, or } from "drizzle-orm";
+import { boundedLimit } from "@/lib/actions/chat/chat";
+import { requireChatAccess } from "@/lib/auth/access";
 import { requireDb } from "@/lib/db/client";
 import { chatMessage, chat as chatTable } from "@/lib/db/schema";
 import { AppError } from "@/lib/errors";
@@ -27,7 +29,12 @@ export type GetMessagesInput = {
   chatId: string;
   userId: string;
   limit?: number;
-  offset?: number;
+  afterId?: string;
+};
+
+export type OwnedMessagePage = {
+  messages: ChatMessage[];
+  hasMore: boolean;
 };
 
 function asList(value: unknown): unknown[] {
@@ -184,24 +191,72 @@ export async function updateMessage(
   return toMessage(updated);
 }
 
-export async function getChatMessages(
+export async function listOwnedMessages(
   input: GetMessagesInput,
-): Promise<ChatMessage[]> {
+): Promise<OwnedMessagePage> {
   const owner = await ownerId(input.chatId, input.userId);
   if (!owner) {
     throw new AppError("forbidden", 403);
   }
   const db = requireDb();
-  const limit = Math.min(input.limit || 100, 500);
-  const offset = Math.max(input.offset || 0, 0);
+  const limit = boundedLimit(input.limit, 100, 500);
+  let afterCreatedAt: Date | null = null;
+  let afterMessageId: string | null = null;
+  if (input.afterId) {
+    const cursorRows = await db
+      .select({
+        createdAt: chatMessage.createdAt,
+        id: chatMessage.id,
+      })
+      .from(chatMessage)
+      .where(
+        and(
+          eq(chatMessage.id, input.afterId),
+          eq(chatMessage.chatId, input.chatId),
+          eq(chatMessage.userId, input.userId),
+        ),
+      )
+      .limit(1);
+    const cursor = cursorRows[0];
+    if (!cursor) {
+      throw new AppError("not_found", 404);
+    }
+    afterCreatedAt = cursor.createdAt;
+    afterMessageId = cursor.id;
+  }
+  const timeline =
+    afterCreatedAt && afterMessageId
+      ? or(
+          gt(chatMessage.createdAt, afterCreatedAt),
+          and(
+            eq(chatMessage.createdAt, afterCreatedAt),
+            gt(chatMessage.id, afterMessageId),
+          ),
+        )
+      : undefined;
+  const ownedMessages = and(
+    eq(chatMessage.chatId, input.chatId),
+    eq(chatMessage.userId, input.userId),
+  );
+  const where = timeline ? and(ownedMessages, timeline) : ownedMessages;
   const rows = await db
     .select()
     .from(chatMessage)
-    .where(eq(chatMessage.chatId, input.chatId))
-    .orderBy(asc(chatMessage.createdAt))
-    .limit(limit)
-    .offset(offset);
-  return rows.map(toMessage);
+    .where(where)
+    .orderBy(asc(chatMessage.createdAt), asc(chatMessage.id))
+    .limit(limit + 1);
+  const hasMore = rows.length > limit;
+  return {
+    messages: rows.slice(0, limit).map(toMessage),
+    hasMore,
+  };
+}
+
+export async function getChatMessages(
+  input: GetMessagesInput,
+): Promise<ChatMessage[]> {
+  const page = await listOwnedMessages(input);
+  return page.messages;
 }
 
 export async function getMessageById(
@@ -233,20 +288,46 @@ export async function deleteMessage(
 export async function deleteTrailingMessages(
   chatId: string,
   userId: string,
-  timestamp: Date,
+  anchor: { id: string; createdAt: Date },
 ): Promise<number> {
   const owner = await ownerId(chatId, userId);
   if (!owner) {
     throw new AppError("forbidden", 403);
   }
   const db = requireDb();
+  const trailing = or(
+    gt(chatMessage.createdAt, anchor.createdAt),
+    and(
+      eq(chatMessage.createdAt, anchor.createdAt),
+      gt(chatMessage.id, anchor.id),
+    ),
+  );
   const rows = await db
     .delete(chatMessage)
     .where(
-      and(eq(chatMessage.chatId, chatId), gt(chatMessage.createdAt, timestamp)),
+      and(
+        eq(chatMessage.chatId, chatId),
+        eq(chatMessage.userId, userId),
+        trailing,
+      ),
     )
     .returning({ id: chatMessage.id });
   return rows.length;
+}
+
+export async function deleteOwnedTrailingFromMessage(
+  requestHeaders: Headers,
+  messageId: string,
+) {
+  const access = await requireChatAccess(requestHeaders);
+  const message = await getMessageById(messageId, access.userId);
+  if (!message) {
+    throw new AppError("not_found", 404);
+  }
+  await deleteTrailingMessages(message.chatId, access.userId, {
+    id: message.id,
+    createdAt: message.createdAt,
+  });
 }
 
 export async function getLatestMessage(
@@ -279,7 +360,7 @@ export async function getChatMessagesWithMedia(userId: string): Promise<
     .from(chatMessage)
     .innerJoin(chatTable, eq(chatMessage.chatId, chatTable.id))
     .where(eq(chatMessage.userId, userId))
-    .orderBy(asc(chatMessage.createdAt));
+    .orderBy(asc(chatMessage.createdAt), asc(chatMessage.id));
   const media: Array<{
     id: string;
     chatId: string;

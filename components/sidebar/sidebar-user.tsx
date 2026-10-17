@@ -81,7 +81,7 @@ export function SidebarUser({ user }: { user: TypeUserProfile }) {
             </DropdownMenuGroup>
           </DropdownMenuContent>
         </DropdownMenu>
-        <SettingsDialog open={openDialog} setOpen={setOpenDialog} />
+        <SettingsDialog open={openDialog} setOpen={setOpenDialog} user={user} />
       </SidebarMenuItem>
     </SidebarMenu>
   );

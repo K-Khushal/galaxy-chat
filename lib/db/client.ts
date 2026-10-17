@@ -33,3 +33,12 @@ export function requireDb() {
   }
   return db;
 }
+
+export async function closeDb() {
+  const current = client;
+  client = null;
+  database = null;
+  if (current) {
+    await current.end({ timeout: 1 });
+  }
+}
