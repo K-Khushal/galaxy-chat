@@ -1,4 +1,4 @@
-import { expect, mock, test } from "bun:test";
+import { expect, mock, spyOn, test } from "bun:test";
 import { sql } from "drizzle-orm";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AttachmentContextPreview } from "../components/chat/attachment-composer";
@@ -390,3 +390,94 @@ test("F10 file excerpts and the single data-guard instruction share existing con
     await f.close();
   }
 }, 60_000);
+
+for (const funding of ["platform", "openrouter"] as const) {
+  test(`F10 ${funding} final atomic claim rejects file deletion committed after payload preparation`, async () => {
+    const f = await attachmentHttpFixture();
+    const { CreditStore } = await import("../lib/credits/store");
+    let release = () => {};
+    let arrived = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const waiting = new Promise<void>((resolve) => {
+      arrived = resolve;
+    });
+    const originalCredit = CreditStore.prototype.enter;
+    const originalByok = ByokStore.prototype.enter;
+    // Pause the same awaited entry boundary as global-lock contention. All SQL,
+    // final tx validation, real mutations and provider serialization stay real.
+    const paused =
+      funding === "platform"
+        ? spyOn(CreditStore.prototype, "enter").mockImplementation(
+            async function (this: InstanceType<typeof CreditStore>, ...args) {
+              arrived();
+              await gate;
+              return originalCredit.apply(this, args);
+            },
+          )
+        : spyOn(ByokStore.prototype, "enter").mockImplementation(
+            async function (this: InstanceType<typeof ByokStore>, ...args) {
+              arrived();
+              await gate;
+              return originalByok.apply(this, args);
+            },
+          );
+    let running: Promise<Response> | undefined;
+    try {
+      if (funding === "openrouter") await enableImages(f);
+      const file =
+        funding === "platform"
+          ? await upload(
+              f,
+              "claim.txt",
+              new TextEncoder().encode("Revoked evidence"),
+            )
+          : await upload(f, "claim.png", pngFixture, "image/png");
+      const p = await preview(f, [file.id], funding);
+      expect(p.response.status).toBe(200);
+      running = chat.POST(
+        await f.request("/api/chat", body(f, p.body, funding)),
+      );
+      await waiting;
+      expect(f.reads()).toBe(funding === "platform" ? 0 : 1);
+      expect(f.seen).toHaveLength(0);
+      const table =
+        funding === "platform" ? "credit_reservation" : "byok_operation";
+      expect(
+        (await f.db.$client.unsafe(`SELECT state FROM ${table}`))[0]?.state,
+      ).toBe("reserved");
+      const deleted = await uploads.DELETE(
+        new Request(`${env.BETTER_AUTH_URL}/api/attachments?id=${file.id}`, {
+          method: "DELETE",
+          headers: await f.headers(),
+        }),
+      );
+      expect(deleted.status).toBe(200);
+      release();
+      const response = await running;
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(f.seen).toHaveLength(0);
+      expect(
+        (await f.db.$client.unsafe(`SELECT state FROM ${table}`))[0]?.state,
+      ).toBe("released");
+      if (funding === "platform")
+        expect(
+          (
+            await f.db.$client.unsafe(
+              "SELECT charged_microdollars FROM credit_reservation",
+            )
+          )[0]?.charged_microdollars,
+        ).toBe(0);
+      else
+        expect(
+          await f.db.$client.unsafe("SELECT id FROM credit_reservation"),
+        ).toHaveLength(0);
+    } finally {
+      release();
+      await running?.catch(() => {});
+      paused.mockRestore();
+      await f.close();
+    }
+  }, 60_000);
+}

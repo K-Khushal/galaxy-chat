@@ -261,7 +261,11 @@ export async function POST(request: Request) {
           {
             id: responseMessage.id,
             role: responseMessage.role,
-            parts: responseMessage.parts,
+            // Providers cannot author attachment provenance or other app data.
+            parts: responseMessage.parts.filter(
+              (part): part is TypeUIMessage["parts"][number] =>
+                !part.type.startsWith("data-"),
+            ),
           },
         );
       },

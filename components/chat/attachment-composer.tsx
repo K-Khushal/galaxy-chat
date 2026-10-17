@@ -5,6 +5,10 @@ import {
   attachmentErrorMessage,
 } from "@/components/chat/attachment-picker";
 import { Button } from "@/components/ui/button";
+import {
+  type AttachmentClient,
+  attachmentClient,
+} from "@/lib/attachments/client";
 import type {
   AttachmentContextView,
   AttachmentSelection,
@@ -56,6 +60,7 @@ export function AttachmentComposer({
   funding,
   imagesSupported,
   onChange,
+  client = attachmentClient,
 }: {
   chatId: string;
   saved: boolean;
@@ -66,6 +71,7 @@ export function AttachmentComposer({
   model: string;
   funding: FundingChoice;
   imagesSupported: boolean;
+  client?: AttachmentClient;
   onChange: (
     selection: AttachmentSelection | undefined,
     ready: boolean,
@@ -104,22 +110,12 @@ export function AttachmentComposer({
     }
     onChange(undefined, false);
     if (temporary || !saved || !contextReady || !model) return;
-    fetch("/api/context", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        action: "preview",
-        selection: context ?? { projectId: null, memoryIds: [] },
-        attachments: { chatId, ids, model, funding },
-      }),
-      signal: controller.signal,
-    })
-      .then(async (response) => {
-        const body = await response.json();
-        if (!response.ok) throw new Error(body.error?.id);
+    client
+      .preview({ chatId, ids, model, funding, context }, controller.signal)
+      .then((next) => {
         if (!controller.signal.aborted) {
-          setView(body.attachments);
-          onChange({ ids, digest: body.attachments.digest }, true);
+          setView(next);
+          onChange({ ids, digest: next.digest }, true);
         }
       })
       .catch((cause) => {
@@ -140,6 +136,7 @@ export function AttachmentComposer({
     funding,
     onChange,
     uploading,
+    client,
   ]);
   return (
     <div className="mb-2 space-y-2">
@@ -152,6 +149,7 @@ export function AttachmentComposer({
         onSelection={select}
         imagesSupported={imagesSupported}
         onBusyChange={uploadState}
+        client={client}
       />
       {view ? <AttachmentContextPreview view={view} /> : null}
       {error ? (

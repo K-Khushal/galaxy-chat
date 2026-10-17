@@ -1,6 +1,6 @@
 # F10 private attachments — implementation evidence
 
-Status: private storage, extraction, API, context contract, and picker foundation implemented locally. Shared chat inference/context/account deletion integration is deliberately awaiting F09 coordination. This is not public-beta, hosted-storage, hosted-CI, deployment, or paid-inference evidence.
+Status: private storage, extraction, owned API, shared chat/context/provider integration, account export/deletion, and composer implemented locally. F09 explicit context and its atomic provider-claim fix are inherited. This is not public-beta, hosted-storage, hosted-CI, deployment, or paid-inference evidence.
 
 ## Implemented boundary
 
@@ -13,17 +13,19 @@ Status: private storage, extraction, API, context contract, and picker foundatio
 - Daily UTC transfer reservations cap upload, download, and model-image reads; each operation reserves at least 64 KiB to bound tiny-file/request amplification. Maximum configurable cap is 100 MiB/day. A zero-to-ten-dollar operating target still requires operator review of database, storage, transfer, request, and infrastructure costs. No free-plan allowance is assumed or guaranteed. Attachments default unavailable with all capacity settings blank.
 - Downloads first check ownership, reserve transfer bytes, obtain a 60-second signed URL internally, verify origin/path and content hash, and proxy bytes with `attachment`, `application/octet-stream`, `nosniff`, sandbox CSP, and `private, no-store`. Signed URLs and server credentials are never returned to the browser/model or logged. Redirects are rejected. The model receives reviewed image bytes rather than a storage URL.
 
-## Context/service contract for F09 integration
+## Shared context and provider boundary
 
-`buildAttachmentContext({ userId, chatId, attachmentIds, model, maxContextTokens, expectedDigest?, includeImageBytes?, temporary? }, service?)` returns `{ content, provenance, estimatedTokens, digest, instructions }`.
+`/api/context` keeps F09’s selection/digest contract and accepts an optional attachment preview selection `{ chatId, ids, model, funding }`. It returns the exact owned excerpts, provenance, attachment digest, and conservative input estimate. `/api/chat` accepts `{ ids, digest }` separately from memory selection. At most three distinct ids are accepted; they must belong to the caller and the same saved chat and remain ready. Guest files and temporary-chat files are explicitly unavailable. Empty selection never constructs a storage service, so ordinary text chat works with attachments disabled and no secrets.
 
-`content` uses current installed AI SDK `file` parts with image media type and raw bytes (the old `image` part is deprecated), plus JSON-encoded text parts labeled as untrusted source data. Source metadata includes attachment id, escaped filename, content hash, and PDF page labels. The system instruction explicitly rejects instructions found in file content. Callers must append these user content parts to the current message, include the returned instruction in the bounded instruction set, include the content/token estimate in funding/resource reservation and digest, and repeat the owned ready/hash/digest check immediately before provider entry.
+`buildAttachmentContext` returns text/file content, source provenance/excerpts, digest, text/image token estimates, and a fixed untrusted-data instruction. Source fingerprints include id, filename, pages, kind, media type, byte count, bucket, content hash, and extracted text. Text excerpts are JSON-encoded user data; only the fixed data guard joins instructions. F09 instruction bounds (4,500 encoded bytes), existing text bounds (12,000 encoded bytes), and 16,384 conservative total input tokens include the selected data and guard once. Earlier turns can be dropped to fit; the current prompt and selected excerpts cannot silently be truncated. No automatic OCR or additional model call occurs.
 
-Images require a server-reviewed `{ images: { verified: true, mediaTypes, maxTokensPerImage } }` capability, with an explicit conservative bound of 4,096–16,384 tokens per image. The default funded and BYOK catalogs are still text-only. Capability rejection occurs before image loading or provider calls. A synthetic capability test exercises actual AI SDK/OpenRouter serialization with a mocked network and proves inline `data:image/png` payloads. It does not enable a live model or spending.
+Images require a server-reviewed `{ images: { verified: true, mediaTypes, maxTokensPerImage } }` capability with a conservative 4,096–16,384 token bound per image. The default funded and BYOK catalogs remain text-only; funded images are denied. A reviewed BYOK capability creates real current AI SDK `file` parts containing checked private image bytes. Unsupported selection fails before image loading, chat-run creation, resource reservation, or provider calls. No storage URL reaches the SDK. A synthetic reviewed capability exercises actual AI SDK/OpenRouter inline `data:image/png` serialization against mocked network; it does not enable a live model or spending.
 
-For an empty attachment selection, callers must skip constructing the storage service so disabled storage cannot block ordinary text chat. Text estimates include UTF-8 bytes for source JSON and the untrusted-data instruction, intentionally conservative. Image bounds are added before image reads. No provider/OCR calls occur during extraction. At most three distinct attachment ids are accepted. The context digest rechecks the same owned extracted text and content hashes, and a changed/deleted attachment fails rather than silently using stale context.
+Provider entry reuses the F09 phase contract: private image I/O finishes while the BYOK resource reservation is held, before entry; the durable entry transaction acquires the resource global lock, then the context owner lock, then the attachment lock. Both context and file resolvers use the supplied transaction queue. The final owned ready/digest/capability checks run after the awaited entry lock and before the entered-state/audit claim. Claim commit is the authorization cutoff. A deletion or edit committed while entry waits rolls back the claim and releases only a never-dispatched reservation. There is no new entered-state refund path. Unknown provider holds retain existing accounting semantics. No storage network I/O runs inside or after the final claim transaction.
 
-`AttachmentPicker` is an accessible reusable saved-chat shell with native file selection, selected checkboxes, limits, cancellation, provenance metadata, download, and deletion. It has not yet been wired into the shared Chat composer pending F09. Mobile target sizes/overflow are implemented; real-phone/keyboard/browser interaction evidence remains outstanding.
+The production composer supports upload/cancellation/deletion, explicit selected files, exact escaped excerpt/provenance preview, unsupported-image guidance, loading/error states, and readiness gating for send/retry. Server-authored safe source metadata is saved on the user message and shown on reload; extracted text/image bytes are not copied into the saved message. Providers cannot author application data parts. Deleting a file does not rewrite old source references in saved messages. Account export includes owned metadata/extracted text without object keys, signed URLs, or credentials. Attachment/chat/account deletion queues durable private cleanup and attempts bounded post-transaction cleanup; deletion never claims unknown writes have stopped.
+
+`/preview/ui?attachments=1` uses the same production composer/picker with an injected in-memory client. It is guarded by the existing development-only `F04_UI_HARNESS=1` switch. Its visible label explains that it has no authentication, database, private storage, or provider requests. The fixture covers text-only versus explicitly approved image selection, hostile escaped excerpts and source names, loading/unavailable responses, local Blob downloads, and delayed text/Markdown uploads/cancellation/deletion. It deliberately does not simulate PDF extraction, image validation, backend authorization, or billing acceptance. Browser review remains separate from SQL/backend evidence.
 
 ## Durable deletion and unknown writes
 
@@ -55,26 +57,26 @@ The command records a write-once association to the evidence hash and makes the 
 Repository-portable commands (run sequentially):
 
 ```sh
-bun test tests/f10-attachments.test.tsx
+bun test tests/f09.integration.test.ts tests/f10-attachments.test.tsx tests/f10.integration.test.tsx
 bun run lint
 bun run typecheck
 bun test
-bun run build
+bun run build --webpack
 ```
 
 The current collaboration serializes SQL/tests/typecheck/build with a machine-local lock wrapper; that wrapper is not a repository dependency. SQL fixtures apply all migrations to real PGlite, then route all queries through the captured application postgres.js max:1 queue. Rejections use native await so the same-process socket makes progress. Tests use local fixture bytes and mocked external network; they make no live storage, OCR, or paid model requests.
 
-Latest foundation checks (2026-10-17):
+Latest integrated checks (2026-10-17):
 
-- Focused F10 tests: 11 passed, 152 assertions (8.07 seconds).
-- Full suite after updating the static migration-ledger expectation: 109 passed, zero failed, 1,030 assertions across 14 files (59.76 seconds). The first full run identified only that expected manifest update; migration application itself succeeded.
-- `bun run lint`: passed, 237 files checked; final repeat passed after the manifest update.
-- `bun run typecheck`: passed. Production build also completed its TypeScript phase against final source.
-- `bun run build`: passed on Next 16.4.2/Turbopack; compile 16.0 seconds, TypeScript 11.4 seconds, all 22 static pages generated, `/api/attachments` emitted as a dynamic route.
-- `git diff --check`: passed.
+- Initial focused F09/F10 integration: 30 passed, zero failed, 442 assertions across three files (30.90 seconds).
+- Final combined checks: pending final run; exact results are recorded below before writer release.
+- `bun run lint`: passed, 257 files checked after the local preview and claim-race tests.
+- Strict typecheck: initial integrated source passed; final check pending.
+- Foundation baseline (before shared integration): 109 tests / 1,030 assertions passed, normal Next 16.4.2/Turbopack production build passed. This historical baseline does not substitute for final combined checks.
+- `git diff --check`: passed before final evidence update.
 - Operator commands without configuration/terminal-proof confirmation: expected exit 1, redacted stable error identifiers only; no network reached.
 
- Shared inference integration, hosted storage access/policy proof, automatic scheduled cleanup provisioning, hostile PDF isolate resource checks, real-phone interaction, and hosted CI remain gates. Do not mark the whole F10 ticket complete from foundation evidence alone.
+Hosted private bucket access/policy proof, scheduled cleanup provisioning, hostile PDF isolate resource/load checks, reviewed live image model bounds, real-phone interaction, browser review, hosted CI and deployment remain gates. Attachments must remain disabled until the applicable operational checks are satisfied. No free-plan cost guarantee is made.
 
 ## Primary API references checked
 
@@ -83,16 +85,15 @@ Latest foundation checks (2026-10-17):
 - [Supabase private downloads](https://supabase.com/docs/guides/storage/serving/downloads) and [official StorageFileApi REST implementation](https://github.com/supabase/storage-js/blob/master/src/packages/StorageFileApi.ts).
 - [unpdf official documentation, including untrusted PDF resource caveats](https://github.com/unjs/unpdf) and [PDF.js API documentation](https://mozilla.github.io/pdf.js/api/draft/module-pdfjsLib.html).
 
-## Changed foundation files
+## Principal changed modules
 
-- `.env.example`, `package.json`, `bun.lock`: fail-closed configuration, pinned parser, operator commands.
-- `drizzle/0006_attachments.sql`: owned records, durable deletion/capacity liability, transfer reservations, reconciliation evidence.
-- `lib/attachments/{contract,config,content,extract,storage,store,service,context,http}.ts`: complete foundation boundaries.
-- `app/(chat)/api/attachments/route.ts`: owned API exports.
-- `components/chat/attachment-picker.tsx`: reusable UI shell, not yet composer integration.
+- `.env.example`, `package.json`, `bun.lock`: fail-closed storage/capacity and reviewed image capability configuration, pinned parser, operator commands.
+- `drizzle/0006_attachments.sql`: owned records, durable deletion/capacity liability, transfer reservations, reconciliation evidence; migration manifest preserves F09 0005 and F10 0006.
+- `lib/attachments/`: content/extraction, Supabase REST, ownership/quota store, service, request/context/model payload, HTTP/client boundaries.
+- `app/(chat)/api/{attachments,context,chat}/route.ts`, shared context/schema/types/chat/account actions and BYOK service: owned preview, bounded request, final transactional claim, provenance, export and cascade cleanup.
+- `components/chat/{attachment-picker,attachment-composer,chat,chat-input,chat-messages}.tsx`: production selection and disclosure flow. `components/preview/attachment-preview.tsx` plus the existing preview route: labeled local review fixture.
+- Help/privacy/account/error copy: explicit limits, model data sharing, disabled guest/temporary files, asynchronous deletion and unknown-write reconciliation.
 - `scripts/attachments-{cleanup,reconcile}.ts`: bounded operator-only maintenance.
-- `tests/f10-attachments.test.tsx`, `tests/helpers/attachment-fixture.ts`: real local bytes/SQL/SDK-adapter tests.
-- `tests/f03.integration.test.ts`: expected migration ledger includes 0006; no assertion weakening.
-- `docs/planning/f10-evidence.md`: evidence and remaining gates.
+- `tests/f10-attachments.test.tsx`, `tests/f10.integration.test.tsx`, `tests/helpers/attachment-{fixture,http-fixture}.ts`: real local bytes, SQL, route, SDK and provider-entry race evidence.
 
-No GitHub, push, merge, live provider, cloud login/provisioning, deployment, or browser-session action was performed by this implementation agent.
+No GitHub, push, remote merge, live provider, cloud login/provisioning, deployment, or browser-session action was performed by this implementation agent.

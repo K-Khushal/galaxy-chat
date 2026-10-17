@@ -91,7 +91,13 @@ export async function buildAttachmentContext(
     };
     provenance.push(source);
     excerpts.push({ id: row.id, text: row.extracted_text });
-    fingerprint.push({ ...source, text: row.extracted_text });
+    fingerprint.push({
+      ...source,
+      mediaType: row.media_type,
+      bytes: row.bytes,
+      bucket: row.bucket,
+      text: row.extracted_text,
+    });
     const text = JSON.stringify({
       untrustedAttachment: source,
       extractedText: row.extracted_text,

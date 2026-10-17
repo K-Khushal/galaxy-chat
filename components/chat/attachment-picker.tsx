@@ -3,6 +3,10 @@ import { Paperclip, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
+  type AttachmentClient,
+  attachmentClient,
+} from "@/lib/attachments/client";
+import {
   type AttachmentView,
   attachmentAccept,
   attachmentLimits,
@@ -62,6 +66,7 @@ export type AttachmentPickerProps = {
   onSelection: (ids: string[]) => void;
   imagesSupported?: boolean;
   onBusyChange?: (busy: boolean) => void;
+  client?: AttachmentClient;
 };
 /** Saved invited chats only. Metadata is escaped text; files never render inline. */
 export function AttachmentPicker({
@@ -73,6 +78,7 @@ export function AttachmentPicker({
   onSelection,
   imagesSupported = false,
   onBusyChange,
+  client = attachmentClient,
 }: AttachmentPickerProps) {
   const [files, setFiles] = useState<AttachmentView[]>([]);
   const [message, setMessage] = useState("");
@@ -102,15 +108,11 @@ export function AttachmentPicker({
     if (disabled) return;
     const controller = new AbortController();
     setLoading(true);
-    fetch(`/api/attachments?chatId=${encodeURIComponent(chatId)}`, {
-      cache: "no-store",
-      signal: controller.signal,
-    })
-      .then(async (response) => {
-        const body = await response.json();
-        if (!response.ok) throw new Error(body.error?.id);
-        if (mounted.current) {
-          setFiles(body.attachments);
+    client
+      .list(chatId, controller.signal)
+      .then((attachments) => {
+        if (!controller.signal.aborted && mounted.current) {
+          setFiles(attachments);
           setAvailable(true);
         }
       })
@@ -124,7 +126,7 @@ export function AttachmentPicker({
         if (!controller.signal.aborted && mounted.current) setLoading(false);
       });
     return () => controller.abort();
-  }, [chatId, disabled]);
+  }, [chatId, disabled, client]);
   async function add(file: File) {
     if (disabled || busy || uploading) return;
     const controller = new AbortController();
@@ -135,34 +137,8 @@ export function AttachmentPicker({
     try {
       if (file.size > attachmentLimits.fileBytes)
         throw new Error("attachment_size_limit");
-      const markdown = /\.(md|markdown)$/i.test(file.name);
-      const response = await fetch(
-        `/api/attachments?chatId=${encodeURIComponent(chatId)}`,
-        {
-          method: "POST",
-          body: file,
-          signal: controller.signal,
-          headers: {
-            "Content-Type": markdown
-              ? "text/markdown"
-              : file.type ||
-                ({
-                  txt: "text/plain",
-                  pdf: "application/pdf",
-                  png: "image/png",
-                  jpg: "image/jpeg",
-                  jpeg: "image/jpeg",
-                  webp: "image/webp",
-                }[file.name.split(".").at(-1)?.toLowerCase() ?? ""] ??
-                  "application/octet-stream"),
-            "x-attachment-name": encodeURIComponent(file.name),
-          },
-        },
-      );
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.error?.id);
+      const attachment = await client.upload(chatId, file, controller.signal);
       if (!mounted.current) return;
-      const attachment = body.attachment as AttachmentView;
       setFiles((previous) => [...previous, attachment]);
       if (
         selected.length < attachmentLimits.perMessage &&
@@ -195,14 +171,7 @@ export function AttachmentPicker({
   async function remove(id: string) {
     setMessage("");
     try {
-      const response = await fetch(
-        `/api/attachments?id=${encodeURIComponent(id)}`,
-        { method: "DELETE" },
-      );
-      if (!response.ok) {
-        const body = await response.json();
-        throw new Error(body.error?.id);
-      }
+      await client.remove(id);
       setFiles((previous) => previous.filter((file) => file.id !== id));
       setMessage(
         "File removed from the conversation. Private storage cleanup is queued; uncertain uploads may need operator reconciliation.",
@@ -300,7 +269,8 @@ export function AttachmentPicker({
                   </span>
                 </label>
                 <a
-                  href={`/api/attachments?id=${encodeURIComponent(file.id)}&download=1`}
+                  href={client.downloadURL(file.id)}
+                  download={file.name}
                   className="flex min-h-11 items-center rounded px-2 text-xs underline focus-visible:outline-2"
                   aria-label={`Download ${file.name}`}
                 >
