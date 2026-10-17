@@ -1,5 +1,5 @@
-import { cn } from "@/lib/utils";
 import { Sparkles } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 export default function GalaxyChat({ className }: { className?: string }) {
   return (

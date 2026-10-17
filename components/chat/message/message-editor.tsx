@@ -1,13 +1,13 @@
 "use client";
 
+import type { UseChatHelpers } from "@ai-sdk/react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { deleteChatMessages } from "@/app/(chat)/action";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { getTextMessage } from "@/lib/ai/utils";
 import type { TypeUIMessage } from "@/lib/types";
-import type { UseChatHelpers } from "@ai-sdk/react";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { toast } from "sonner";
 
 export type MessageEditorProps = {
   message: TypeUIMessage;

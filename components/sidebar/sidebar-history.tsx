@@ -1,5 +1,12 @@
 "use client";
 
+import { motion } from "framer-motion";
+import { Forward, LoaderIcon, MoreHorizontal, Trash2 } from "lucide-react";
+import Link from "next/link";
+import { useParams, usePathname, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import { toast } from "sonner";
+import useSWRInfinite from "swr/infinite";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -19,13 +26,6 @@ import {
 } from "@/components/ui/sidebar";
 import { fetchJson } from "@/lib/ai/utils";
 import type { ChatHistory } from "@/lib/types";
-import { motion } from "framer-motion";
-import { Forward, LoaderIcon, MoreHorizontal, Trash2 } from "lucide-react";
-import Link from "next/link";
-import { useParams, usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
-import { toast } from "sonner";
-import useSWRInfinite from "swr/infinite";
 import {
   AlertDialog,
   AlertDialogAction,

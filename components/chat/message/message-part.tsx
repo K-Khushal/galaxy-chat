@@ -1,11 +1,11 @@
 "use client";
 
-import type { TypeUIMessage } from "@/lib/types";
 import type { UseChatHelpers } from "@ai-sdk/react";
 import type { ChatStatus } from "ai";
 import { PaperclipIcon } from "lucide-react";
 import Image from "next/image";
 import { Fragment, lazy, Suspense, useState } from "react";
+import type { TypeUIMessage } from "@/lib/types";
 import { Message, MessageContent } from "../../elements/message";
 import {
   Reasoning,

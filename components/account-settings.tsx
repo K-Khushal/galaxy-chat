@@ -1,5 +1,7 @@
 "use client";
 
+import { Shield, User } from "lucide-react";
+import { useState } from "react";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -19,8 +21,6 @@ import {
   SidebarMenuItem,
   SidebarProvider,
 } from "@/components/ui/sidebar";
-import { Shield, User } from "lucide-react";
-import { useState } from "react";
 
 const data = {
   nav: [

@@ -1,6 +1,5 @@
 "use client";
 
-import { cn } from "@/lib/utils";
 import {
   CheckIcon,
   CopyIcon,
@@ -11,6 +10,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 import { Action, Actions } from "../../elements/actions";
 
 // Custom hook for copy functionality

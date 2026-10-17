@@ -1,9 +1,9 @@
-import { TextShimmer } from "@/components/ui/text-shimmer";
-import type { TypeUIMessage } from "@/lib/types";
 import type { UseChatHelpers } from "@ai-sdk/react";
 import type { ChatStatus } from "ai";
 import { AlertCircleIcon, ArrowDownIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { TextShimmer } from "@/components/ui/text-shimmer";
+import type { TypeUIMessage } from "@/lib/types";
 import { Conversation, ConversationContent } from "../elements/conversation";
 import { Message } from "../elements/message";
 import { Response } from "../elements/response";

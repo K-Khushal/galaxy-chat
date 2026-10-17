@@ -1,26 +1,21 @@
 # F01 evidence
 
-Date: 2026-10-17. Branch: `codex/f01-feasibility`. Scope: local Halaska vendoring and an AI Elements compatibility prototype. This slice does not pin packages, deploy, or call a model.
+Date: 2026-10-17. Branch: `codex/f01-feasibility`. Scope: local Halaska prototype plus the Next 16 / Bun / AI SDK 7 / Better Auth foundation. This file records commands that ran in this worktree. It does not accept a deploy, a live OAuth login, a provider stream, Worker CPU, or the $10/month budget.
 
-## Result
+## Gate split
 
-The official Halaska kit is vendored unmodified, with MIT license, provenance, and checksums. `/spike/f01` renders the existing AI Elements conversation, message, and response components inside a Halaska shell and streams a canned local reply. No application dependency version changed.
+Local checks below can be reviewed and can unlock the next code ticket. These live checks stay pending and do not block that review:
 
-These F01 acceptance items are not complete: package pinning, a deployed streaming request, cancellation against a provider, secret handling on a host, worker runtime and quota behavior, browser keyboard/hydration checks, and a budget go/no-go. Details are below. Do not treat the compile step as a passing production build.
+- GitHub OAuth against a real OAuth app
+- Provider server-sent events, cancellation, and secret handling on a host
+- Cloudflare deploy, Worker CPU, and upload-size acceptance
+- Billing and a current-price budget go/no-go
 
-## What changed
-
-- `vendor/halaska/halaska-kit.jsx`, `halaska-kit.d.ts`, and `LICENSE` are the downloaded bytes.
-- `vendor/halaska/PROVENANCE.md` and `SHA256SUMS` record source, headers, and hashes.
-- `components/spike/halaska-elements-prototype.tsx` and `app/spike/f01/page.tsx` are the prototype.
-- `scripts/f01-vendor-smoke.mjs` and `package.json` script `f01:smoke` recheck the checksums and the prototype boundaries.
-- `biome.json` ignores `vendor/` so formatting cannot rewrite the kit.
-
-Existing routes, middleware, chat API, and dependency ranges were left as they were. The new route is public in `middleware.ts` because only `/chat` redirects anonymous users. The root layout still wraps every page in `ClerkProvider`, so this route inherits that requirement.
+Do not treat this document as permission to close GitHub issue #5 or #6. Each still has a required live check.
 
 ## Vendoring
 
-Downloaded earlier in this session and copied without modification.
+The official Halaska kit is vendored unmodified.
 
 | File | Source | Bytes | SHA-256 |
 | --- | --- | --- | --- |
@@ -28,143 +23,83 @@ Downloaded earlier in this session and copied without modification.
 | `vendor/halaska/halaska-kit.d.ts` | https://ui.halaska.com/halaska-kit.d.ts | 9403 | `fc8760c4c3ada52d642f76b2da5c346afd853a7c47f28047762d5dcde01ab27b` |
 | `vendor/halaska/LICENSE` | https://raw.githubusercontent.com/Halaska-Studio/ui/main/LICENSE | 1071 | `3e8303becd6efb3a15b58158af96a35da65234196df1733ae1b792a9166b404a` |
 
-Kit response: HTTP 200, `etag: "46e78c0d7a342cae4522ea8d97071632"` (MD5 of the file), `last-modified: Sat, 17 Oct 2026 09:02:15 GMT`, `content-type: text/jsx`. Shim response: `etag: "e8b4c1489c8d0f6bcaeb8bd1338d99ec"`, `content-type: video/mp2t` (the body is the `.d.ts` shim).
+Kit response recorded earlier: HTTP 200, `etag: "46e78c0d7a342cae4522ea8d97071632"`, `last-modified: Sat, 17 Oct 2026 09:02:15 GMT`, `content-type: text/jsx`. Shim: `etag: "e8b4c1489c8d0f6bcaeb8bd1338d99ec"`, `content-type: video/mp2t`. Git blob `a7e55b0c39ab7b290e9c851bed81fc73038dd225`. Last kit commit `260b4981306ac5506c86b6b1823e4ae8df2c8f7c` (2026-10-01). License: MIT, Copyright (c) 2026 Halaska Studio. `biome.json` ignores `vendor/`.
 
-GitHub [Halaska-Studio/ui](https://github.com/Halaska-Studio/ui) file `halaska-kit/halaska-kit-v1.0.jsx` has git blob `a7e55b0c39ab7b290e9c851bed81fc73038dd225`, which matches these bytes. Last commit that touched that path: `260b4981306ac5506c86b6b1823e4ae8df2c8f7c` (2026-10-01T07:49:08Z). The site `last-modified` is newer than that commit; the hash still matches the blob.
-
-License: MIT, Copyright (c) 2026 Halaska Studio. Header in the kit: `Halaska UI v1.0`, MIT. Install docs: https://ui.halaska.com/docs/install and https://ui.halaska.com/install.md. The vendor install adds no npm dependency. Stated runtime dependencies are `react` and `react-dom`. The file starts with `"use client"`.
-
-One NUL byte is present at offset 368483 inside a template literal. It is part of the checksum. Webpack compiled that file; see the build section.
+`node scripts/f01-vendor-integrity.mjs` checks those three SHA-256 lines only. Exit 0. Printed `f01 vendor integrity passed`.
 
 ## Prototype
 
-Route: `/spike/f01`.
+`/spike/f01` renders only when `F01_PROTOTYPE=1`. Otherwise the page calls `notFound()`. The route is dynamic. The production build without that variable lists it as a dynamic route and does not prerender the prototype.
 
-Halaska pieces used: `ThemeProvider`, `usePal`, `tokens`, `Stack`, `Card`, `CardHeader`, `EmptyState`, `SegmentedControl`, `TextArea`, `Button`, `Dialog`, `setKitMotion`.
+Halaska pieces: `ThemeProvider`, `usePal`, `tokens`, `Stack`, `Card`, `CardHeader`, `EmptyState`, `TextArea`, `Button`, `Dialog`. Theme is a native named radio group (`fieldset` / `legend` / `input type="radio"`). Message bubbles receive Halaska palette values through CSS variables on the transcript subtree. Reduced motion sets the kit duration variables on that subtree, passes `initial` and `resize` `"instant"` to `use-stick-to-bottom`, reveals the canned reply in one update, and scrolls with `animation: "instant"`. `setKitMotion` is not called.
 
-Existing AI Elements pieces used: `Conversation`, `ConversationContent`, `ConversationScrollButton`, `Message`, `MessageContent`, `Response`.
+The reply text is constant. The prototype does not call a model.
 
-Adaptations, from the kit source rather than a browser pass:
+`bun run f01:preview` compiles the prototype with Tailwind and serves it on `127.0.0.1:4317` only. Generated files stay in `.f01-preview/`, which is gitignored. This session got HTTP 200 and an HTML shell whose script bundle contains the prototype title, `f01-theme`, and `prefers-reduced-motion`. No browser keyboard, contrast, hydration, or focus pass was done.
 
-- `PromptInputPattern`, `AgentChatPattern`, and `MessageThreadPattern` keep their own demo state and do not take the transcript as props. The prototype does not use them.
-- `TextArea` accepts `value` and `onChange` (string) and sets `aria-label` from `label`. It does not forward `onKeyDown`, and its `Label` is not tied to the textarea with `htmlFor`. Enter therefore inserts a newline. Send is a `type="submit"` button.
-- `Button` only forwards `type`, `aria-label`, `aria-expanded`, `aria-haspopup`, and `aria-describedby`. The prototype sets `type` on every kit button it creates.
-- `SegmentedControl` is a `radiogroup` with arrow-key handling and `aria-checked`. It has no prop for an accessible name. The visible word "Theme" next to it is not programmatically associated.
-- `Dialog` implements focus move, Tab wrap, Escape, `role="dialog"`, and `aria-modal` in `useModalFocus`. Its backdrop is a clickable `div`. Both of its buttons call `onClose`. This was read from source, not exercised in a browser.
-- Kit `prefers-reduced-motion` CSS only stops `[data-halaska-orb]` and `[data-halaska-calm]`. The prototype calls `setKitMotion("instant")` when that media query matches, and it inserts the canned reply in one update instead of the 32ms interval. Other kit animations are not fully disabled.
-- The reply text is constant. There is no `fetch`, provider SDK call, or `streamText` use. Stop clears the local interval and leaves the partial text.
+First-load client chunks for `/spike/f01` from `.next/diagnostics/route-bundle-stats.json` after the Next 16.4.2 build: 1,263,012 raw bytes, 379,540 gzip bytes across 15 chunks (`gzip.compress`, `mtime=0`). The chunk containing the `halaska` marker is `static/chunks/2ootc1d-brg16.js`: 32,715 raw, 10,934 gzip. These are client chunks, not a Worker upload size.
+
+## Foundation pins
+
+Installed with Bun 1.4.2. `package-lock.json` is removed. `bun.lock` is the lockfile. Local Bun was not upgraded. GitHub's latest stable release seen earlier is 1.4.3.
+
+| Package | Pinned |
+| --- | --- |
+| `next` | 16.4.2 |
+| `react` / `react-dom` | 19.3.1 |
+| `ai` | 7.0.143 |
+| `@ai-sdk/react` | 4.0.147 |
+| `@ai-sdk/openai` | 4.0.96 |
+| `@openrouter/ai-sdk-provider` | 3.1.0 |
+| `better-auth` / `@better-auth/drizzle-adapter` | 1.7.10 |
+| `drizzle-orm` | 0.45.4 |
+| `postgres` | 3.4.9 |
+| `@opennextjs/cloudflare` | 1.20.12 |
+| `wrangler` | 4.151.1 |
+
+Auth is Better Auth with GitHub only, Drizzle, and postgres.js (`prepare: false`). Supabase is the intended Postgres and private storage host. Supabase Auth is not used. `resolveAuthConfig` returns null unless `BETTER_AUTH_SECRET` (at least 32 characters), `BETTER_AUTH_URL`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, and `DATABASE_URL` are all non-empty. There is no default secret. An empty `GITHUB_INVITE_LOGINS` invites nobody. Chat layout and API routes call `requireChatAccess`. Storage reads `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, and `SUPABASE_STORAGE_BUCKET` on the server. Uploads return `storage_unconfigured` or `storage_unavailable`. Platform-funded model calls also require `FUNDED_INFERENCE=1`; a provider key alone returns `funded_inference_disabled`. `.env.example` lists these names with nonfunctional placeholders. `.gitignore` ignores `.env*` and keeps `.env.example`. `drizzle/0000_baseline.sql` is the versioned schema and is applied only by `bun run db:migrate` when `DATABASE_URL` is set.
+
+A Node `proxy.ts` was tried. OpenNext then failed while bundling Node middleware: esbuild could not resolve `@opentelemetry/api` from its copied Next tracer. The file was removed. `/chat` is gated in the chat layout, and the chat APIs gate themselves. That is not a substitute for a deployed session test.
 
 ## Checks that ran
 
-Machine: Node `v25.8.2`, npm `11.17.0`. `node_modules` was absent, so dependencies were installed from the existing lockfile. No `.env*` files were present. Secret values were not read.
+Machine: Node `v25.8.2`, npm `11.17.0`, Bun `1.4.2`. No real `.env` file was read. Commands:
 
 ```text
-npm ci
+bun install
+bun run f01:integrity
+bun test
+bun run typecheck
+bun run build
+bun run build:workers
 ```
 
-Outcome: exit 0. `added 607 packages`. `package-lock.json` was not modified.
+Outcomes:
 
-```text
-node scripts/f01-vendor-smoke.mjs
-```
+- `bun install` exit 0. Lockfile saved.
+- Integrity exit 0.
+- `bun test` exit 0. Seven tests: auth configuration, invites, owner mismatch, mixed message batch rejected before insert, funded inference staying disabled, and baseline SQL lockdown.
+- `bun run typecheck` (`tsc --noEmit --pretty false --incremental false`) exit 0.
+- `bun run build` (Next.js 16.4.2) exit 0. Static pages generated. `/`, `/forgot-password`, and `/sign-up` are static. Chat, auth API, and `/spike/f01` are dynamic. No Clerk key is required.
+- `bun run build:workers` exit 0 after the proxy file was removed. OpenNext printed `Worker saved in .open-next/worker.js` and `OpenNext build complete.` It warned that `compatibility_date` `2024-12-30` is old, and esbuild warned about a duplicate `database` key inside bundled Better Auth message strings. `.open-next/worker.js` is 2,278 bytes raw and 735 gzip. The server function `handler.mjs` is 23,449,308 bytes raw and 5,267,704 gzip. No Wrangler upload ran, so the deployed script size is unknown. This does not show that the Free tier accepts the bundle.
 
-Outcome: exit 0. Printed `f01 vendor smoke passed`.
+`bunx biome check` exit 0. Checked 144 files. The previous 17 errors and 5 warnings are fixed in the first-party UI. No rules were disabled.
 
-```text
-npx biome check app/spike/f01/page.tsx components/spike/halaska-elements-prototype.tsx scripts/f01-vendor-smoke.mjs
-```
+`bun install --frozen-lockfile` exit 0. `bun run f01:integrity` exit 0. `bun test` exit 0, 7 tests. `bun run typecheck` exit 0. `bun run build` exit 0 on Next.js 16.4.2. `bun run db:migrate` without `DATABASE_URL` exit 1 and printed only `{"level":"error","id":"persistence_unconfigured"}`. No database was contacted.
 
-Outcome: exit 0 after Biome formatted those files. `Checked 3 files. No fixes applied.`
-
-```text
-npx tsc --noEmit --pretty false --incremental false
-```
-
-Outcome: exit 0. This typechecks against `halaska-kit.d.ts`. That shim types every component as `any` or a wide `ComponentType`, so it does not prove prop correctness.
-
-```text
-npx next build
-```
-
-Outcome: exit 1. Next.js `15.5.9` printed `Compiled successfully in 24.4s`, then failed while generating static pages:
-
-```text
-Error occurred prerendering page "/_not-found"
-Error: @clerk/clerk-react: Missing publishableKey.
-Export encountered an error on /_not-found/page: /_not-found
-```
-
-Webpack also warned: `Serializing big strings (175kiB) impacts deserialization performance`. The production build did not finish, and Next did not print its route size table. The failure is the existing root `ClerkProvider`, not a Halaska syntax error. No Clerk environment name is referenced in this repository's source.
-
-Client files listed for `/spike/f01/page` in `.next/app-build-manifest.json` after that compile, gzip measured locally with `mtime=0`:
-
-| File | Raw bytes | Gzip bytes | Notes |
-| --- | ---: | ---: | --- |
-| `static/chunks/app/spike/f01/page-23d2a6093541ccc1.js` | 44942 | 14769 | Contains `halaska-blink` / `data-halaska-orb`. Kit plus prototype module. |
-| `static/chunks/8140-c39d5372e3c3f0de.js` | 616849 | 187437 | Contains `streamdown`, `shiki`, `katex`, `lucide`, `stick-to-bottom`. Pulled in by existing `Response`. |
-| `static/chunks/d3ac728e-c3f1b1482325c621.js` | 268355 | 76242 | Contains `KaTeX`. |
-| `static/css/df64af30921ff372.css` | 24731 | 3833 | Contains `KaTeX`. |
-| `static/chunks/5707-6e9128a46d0d5a94.js` | 27488 | 8860 | Also referenced by the auth pages. |
-| Framework quartet (`webpack`, `4bd1b696`, `1255`, `main-app`) | 358113 | 106788 | Shared with other routes. |
-
-Route files excluding that framework quartet: 982365 raw bytes, 291141 gzip bytes. The Halaska module itself is the 45KB page chunk, not the Streamdown/KaTeX chunks. These numbers are from an unfinished build. They are not a Worker upload size.
-
-Server compile of the same route: `.next/server/app/spike/f01/page.js`, 61414 raw bytes, 20215 gzip bytes, and it contains the kit marker.
+CI in `.github/workflows/ci.yml` installs Node 22 and Bun 1.4.3, then runs frozen install, integrity, lint, typecheck, tests, and build. That workflow has not been executed on a hosted runner.
 
 ## Checks that did not run
 
-- No browser session. Keyboard order, dialog focus return, hydration, contrast, and reduced-motion behavior are unverified at runtime.
-- No `next dev` or `next start`. Prerender already requires a Clerk publishable key, and none is available.
-- No OpenNext/Wrangler build, preview, or deploy. Worker CPU, streaming cancellation, cold start, and quota were not measured.
-- No provider request. `OPENROUTER_API_KEY` is unread and was not present in a local env file.
-- No Supabase project, Cloudflare account action, or paid signup.
-- Dependency install used npm and the current `package-lock.json`. Bun was not introduced. Local Bun is `1.4.2`; the latest stable release seen on GitHub is `1.4.3` (2026-10-10). Bun was not upgraded.
+- No browser session for keyboard, dialog focus, contrast, hydration, or reduced motion.
+- No GitHub OAuth login and no Supabase project.
+- No provider request. `OPENROUTER_API_KEY` was not present.
+- No `wrangler deploy`, preview publish, or other cloud write.
+- No fresh fetch of Supabase or Gateway prices in this slice. Workers Free is 100,000 requests/day and 10ms CPU. Workers Paid is a $5/month minimum, not a hard cap. The limits page updated Oct 12, 2026 lists 64 MiB uncompressed and says there is no compressed size limit. OpenNext's docs still say 3 MiB gzip on Free and 10 MiB on Paid. Those statements still conflict, and this slice did not upload a Worker. Vercel Hobby remains non-commercial personal use. The $10/month cap is not accepted and is not rejected.
 
-## Versions proposed for F02, not installed
+## Still pending
 
-Current lockfile, left in place:
-
-| Package | Locked version |
-| --- | --- |
-| `next` | 15.5.9 |
-| `react` / `react-dom` | 19.1.0 |
-| `ai` | 5.0.61 |
-| `@ai-sdk/react` | 2.0.61 |
-| `@ai-sdk/openai` | 2.0.44 |
-| `@openrouter/ai-sdk-provider` | 1.2.0 |
-
-Registry facts checked against npm on 2026-10-17. Do not treat beta or canary tags as candidates.
-
-| Package | Stable facts |
-| --- | --- |
-| `next` | `latest` 16.4.2 (2026-10-15). `backport` 15.5.28. Both peer `react` `^18.2.0 \|\| ^19.0.0`. |
-| `@opennextjs/cloudflare` | `latest` 1.20.12. Peer `next` is `>=15.5.28 <16 \|\| >=16.4.1`. Peer `wrangler` is `^4.148.0`. |
-| `wrangler` | `latest` 4.151.1. |
-| `react` | `latest` 19.3.1. `backport` 19.1.10. |
-| `ai` | `latest` 7.0.143. Tag `ai-v5` is 5.0.277. Tag `beta` is 7.0.0-beta.187 and is not a pin target. |
-| `@ai-sdk/react` | `latest` 4.0.147, matching AI SDK 7. Tag `ai-v5` is 2.0.280. That 2.0.280 peer range is `react` `^18 \|\| ~19.0.1 \|\| ~19.1.2 \|\| ^19.2.1`, which does not include the locked React 19.1.0. |
-| `@ai-sdk/openai` | `latest` 4.0.96. Tag `ai-v5` is 2.0.135. |
-| `@openrouter/ai-sdk-provider` | `latest` 3.1.0 peers `ai` `^7`. 1.5.4 peers `ai` `^5`. 2.10.0 peers `ai` `^6`. |
-
-`@opennextjs/cloudflare@1.20.12` does not accept the locked `next@15.5.9`. A later F02 pin has to move Next to at least 15.5.28, or to 16.4.1+, and then retest the app. AI SDK 7 is a separate migration from the locked 5.0.61 chat route. This slice did not attempt either move.
-
-Cloudflare's current Next.js guide recommends vinext and calls it beta. vinext was not added. OpenNext remains the non-beta adapter to test in F02.
-
-## Cost notes from primary pages already fetched
-
-Not a budget acceptance pass. No account was billed.
-
-- Workers pricing (https://developers.cloudflare.com/workers/platform/pricing/): Free is 100,000 requests/day and 10ms CPU per invocation. Paid is a $5 USD/month minimum, then usage past the included amounts. Paid is not a hard monthly cap.
-- Workers limits (https://developers.cloudflare.com/workers/platform/limits/, updated Oct 12, 2026): Free and Paid both list Worker size as 64 MiB uncompressed, and that page says there is no compressed size limit. HTTP duration is unlimited while the client stays connected. CPU time on Free stays 10ms.
-- OpenNext's Cloudflare page still says the Worker size limit is 3 MiB compressed on Free and 10 MiB on Paid. That conflicts with the limits page above. This slice did not produce a Worker bundle, so neither document was tested against this app.
-- Vercel Hobby (https://vercel.com/docs/plans/hobby): free, and the fair-use text restricts it to non-commercial personal use. It is not the commercial hosting plan.
-- Supabase and Vercel AI Gateway prices were not re-fetched in this slice. Nothing here authorizes turning them on.
-
-The $10/month cap is not shown to fail by these notes, and it is also not shown to hold. Workers Paid would consume $5 before inference if Free cannot run the app. That choice is blocked on the missing worker build.
-
-## Remaining requirements
-
-1. Provide a Clerk publishable key locally, rerun `npx next build`, and keep the failing prerender from being reported as success. Then record the route table Next prints.
-2. Browser-check `/spike/f01` for hydration, Tab/Escape dialog behavior, the unlabeled theme radiogroup, contrast, and `prefers-reduced-motion`.
-3. In F02, pin an adapter-compatible Next version and a matching AI SDK line, then run an OpenNext build. Measure uncompressed Worker size, startup, streaming, cancellation, and CPU. Do not deploy until that build fits the chosen tier.
-4. Keep paid inference, Supabase provisioning, and Cloudflare resource creation out of the spike until credentials and the budget gate are explicit.
+1. Browser-check the preview at `http://127.0.0.1:4317` (`bun run f01:preview`) and `/spike/f01` with `F01_PROTOTYPE=1`.
+2. Populate `.env.example` values locally, then exercise GitHub sign-in, the invite allowlist, and a real provider stream.
+3. Decide Worker tier from an actual upload size and a streaming CPU trace. Do not deploy until that measurement exists.
+4. Run the GitHub Actions workflow on a hosted runner. The local equivalents already passed.

@@ -1,10 +1,16 @@
 "use client";
 
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  type FormEvent,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+import { useStickToBottomContext } from "use-stick-to-bottom";
 import {
   Conversation,
   ConversationContent,
-  ConversationScrollButton,
 } from "@/components/elements/conversation";
 import { Message, MessageContent } from "@/components/elements/message";
 import { Response } from "@/components/elements/response";
@@ -14,9 +20,7 @@ import {
   CardHeader,
   Dialog,
   EmptyState,
-  SegmentedControl,
   Stack,
-  setKitMotion,
   TextArea,
   ThemeProvider,
   tokens,
@@ -26,7 +30,13 @@ import {
 const LOCAL_REPLY =
   "Local compatibility reply. No provider was called. Text is appended in place so the message does not jump between loading and completion.";
 
-const THEME_OPTIONS = ["light", "dark"];
+const REDUCED_MOTION_VARS = {
+  "--halaska-t-fast": "0.01ms",
+  "--halaska-t-normal": "0.01ms",
+  "--halaska-t-smooth": "0.01ms",
+  "--halaska-t-spring": "0.01ms",
+  "--halaska-t-slow": "0.01ms",
+} as const;
 
 type ThemeName = "light" | "dark";
 
@@ -38,10 +48,6 @@ type Turn = {
 
 type ReplyStatus = "Idle" | "Responding" | "Stopped" | "Complete";
 
-function isThemeName(value: string): value is ThemeName {
-  return value === "light" || value === "dark";
-}
-
 function TurnBody({ turn }: { turn: Turn }) {
   if (turn.role === "user") {
     return <span>{turn.text}</span>;
@@ -52,11 +58,92 @@ function TurnBody({ turn }: { turn: Turn }) {
   return <Response>{turn.text}</Response>;
 }
 
+function paletteVars(pal: {
+  bg: string;
+  text: string;
+  textSecondary: string;
+  bgSubtle: string;
+  bgMuted: string;
+  bgElevated: string;
+  borderSubtle: string;
+  accent: string;
+}): CSSProperties {
+  return {
+    "--background": pal.bg,
+    "--foreground": pal.text,
+    "--card": pal.bgElevated,
+    "--card-foreground": pal.text,
+    "--primary": pal.text,
+    "--primary-foreground": pal.bg,
+    "--secondary": pal.bgSubtle,
+    "--secondary-foreground": pal.text,
+    "--muted": pal.bgMuted,
+    "--muted-foreground": pal.textSecondary,
+    "--accent": pal.bgMuted,
+    "--accent-foreground": pal.text,
+    "--border": pal.borderSubtle,
+    "--input": pal.bgSubtle,
+    "--ring": pal.accent,
+  } as CSSProperties;
+}
+
+function ThemeRadioGroup({
+  onTheme,
+  theme,
+}: {
+  onTheme: (value: ThemeName) => void;
+  theme: ThemeName;
+}) {
+  return (
+    <fieldset className="m-0 border-0 p-0">
+      <legend>Theme</legend>
+      {(["light", "dark"] as const).map((option) => (
+        <label key={option} className="mr-3 inline-flex items-center gap-2">
+          <input
+            checked={theme === option}
+            name="f01-theme"
+            onChange={() => onTheme(option)}
+            type="radio"
+            value={option}
+          />
+          {option}
+        </label>
+      ))}
+    </fieldset>
+  );
+}
+
+function PrototypeScrollButton({ reducedMotion }: { reducedMotion: boolean }) {
+  const { isAtBottom, scrollToBottom } = useStickToBottomContext();
+  if (isAtBottom) {
+    return null;
+  }
+  return (
+    <button
+      aria-label="Scroll to latest message"
+      className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full border px-3 py-1 text-sm"
+      onClick={() => {
+        void scrollToBottom({
+          animation: reducedMotion ? "instant" : "smooth",
+        });
+      }}
+      style={{
+        background: "var(--card)",
+        color: "var(--foreground)",
+        borderColor: "var(--border)",
+      }}
+      type="button"
+    >
+      Latest
+    </button>
+  );
+}
+
 function PrototypeFrame({
   onTheme,
   theme,
 }: {
-  onTheme: (value: string) => void;
+  onTheme: (value: ThemeName) => void;
   theme: ThemeName;
 }) {
   const pal = usePal(theme);
@@ -73,7 +160,6 @@ function PrototypeFrame({
     const media = window.matchMedia("(prefers-reduced-motion: reduce)");
     const apply = () => {
       setReducedMotion(media.matches);
-      setKitMotion(media.matches ? "instant" : "spring");
     };
     apply();
     media.addEventListener("change", apply);
@@ -155,16 +241,29 @@ function PrototypeFrame({
     }, 32);
   };
 
+  const frameStyle = {
+    background: pal.bg,
+    color: pal.text,
+    fontFamily: tokens.font.sans,
+    minHeight: "100vh",
+    padding: 24,
+    ...(reducedMotion ? REDUCED_MOTION_VARS : {}),
+  };
+
   return (
-    <main
-      style={{
-        background: pal.bg,
-        color: pal.text,
-        fontFamily: tokens.font.sans,
-        minHeight: "100vh",
-        padding: 24,
-      }}
-    >
+    <main className="f01-root" style={frameStyle}>
+      <style>
+        {`
+          @media (prefers-reduced-motion: reduce) {
+            .f01-root, .f01-root * {
+              scroll-behavior: auto !important;
+              animation-duration: 0.01ms !important;
+              animation-iteration-count: 1 !important;
+              transition-duration: 0.01ms !important;
+            }
+          }
+        `}
+      </style>
       <div style={{ margin: "0 auto", maxWidth: 720 }}>
         <Stack gap={16}>
           <header>
@@ -190,17 +289,7 @@ function PrototypeFrame({
             gap={12}
             justify="space-between"
           >
-            <Stack gap={4}>
-              <span style={{ color: pal.textSecondary, fontSize: 12 }}>
-                Theme
-              </span>
-              <SegmentedControl
-                onChange={onTheme}
-                options={THEME_OPTIONS}
-                theme={theme}
-                value={theme}
-              />
-            </Stack>
+            <ThemeRadioGroup onTheme={onTheme} theme={theme} />
             <Button
               onClick={() => setNotesOpen(true)}
               theme={theme}
@@ -216,8 +305,16 @@ function PrototypeFrame({
               theme={theme}
               title="Conversation"
             />
-            <div className="flex h-96 min-h-0 flex-col">
-              <Conversation aria-busy={streaming} className="min-h-0 flex-1">
+            <div
+              className="f01-transcript relative flex h-96 min-h-0 flex-col"
+              style={paletteVars(pal)}
+            >
+              <Conversation
+                aria-busy={streaming}
+                className="min-h-0 flex-1"
+                initial={reducedMotion ? "instant" : "smooth"}
+                resize={reducedMotion ? "instant" : "smooth"}
+              >
                 <ConversationContent>
                   {messages.length === 0 ? (
                     <EmptyState
@@ -235,7 +332,7 @@ function PrototypeFrame({
                     ))
                   )}
                 </ConversationContent>
-                <ConversationScrollButton aria-label="Scroll to latest message" />
+                <PrototypeScrollButton reducedMotion={reducedMotion} />
               </Conversation>
             </div>
             <form onSubmit={submit}>
@@ -282,9 +379,9 @@ function PrototypeFrame({
         title="Spike notes"
       >
         This screen is a local compatibility prototype. It does not deploy,
-        authenticate, or stream from a provider. Theme options are a kit radio
-        group. Escape closes this dialog. Reduced motion reveals the canned
-        reply at once and switches the kit motion preset to instant.
+        authenticate, or stream from a provider. Theme is a named radio group.
+        Escape closes this dialog. Reduced motion skips the stick-to-bottom
+        animation and reveals the canned reply at once.
       </Dialog>
     </main>
   );
@@ -295,14 +392,7 @@ export function HalaskaElementsPrototype() {
 
   return (
     <ThemeProvider theme={theme}>
-      <PrototypeFrame
-        onTheme={(value) => {
-          if (isThemeName(value)) {
-            setTheme(value);
-          }
-        }}
-        theme={theme}
-      />
+      <PrototypeFrame onTheme={setTheme} theme={theme} />
     </ThemeProvider>
   );
 }

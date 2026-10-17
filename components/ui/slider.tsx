@@ -5,6 +5,16 @@ import * as React from "react";
 
 import { cn } from "@/lib/utils";
 
+function thumbKeys(values: number[]) {
+  const seen = new Map<string, number>();
+  return values.map((value) => {
+    const token = Number.isFinite(value) ? String(value) : "unset";
+    const count = (seen.get(token) ?? 0) + 1;
+    seen.set(token, count);
+    return `thumb-${token}-${count}`;
+  });
+}
+
 function Slider({
   className,
   defaultValue,
@@ -49,11 +59,11 @@ function Slider({
           )}
         />
       </SliderPrimitive.Track>
-      {Array.from({ length: _values.length }, (_, index) => (
+      {thumbKeys(_values).map((key) => (
         <SliderPrimitive.Thumb
-          data-slot="slider-thumb"
-          key={index}
           className="border-primary bg-background ring-ring/50 block size-4 shrink-0 rounded-full border shadow-sm transition-[color,box-shadow] hover:ring-4 focus-visible:ring-4 focus-visible:outline-hidden disabled:pointer-events-none disabled:opacity-50"
+          data-slot="slider-thumb"
+          key={key}
         />
       ))}
     </SliderPrimitive.Root>

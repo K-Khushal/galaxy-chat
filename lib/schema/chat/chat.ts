@@ -1,5 +1,5 @@
-import { chatModels } from "@/lib/ai/model";
 import { z } from "zod";
+import { chatModels } from "@/lib/ai/model";
 
 const textPartSchema = z.object({
   type: z.enum(["text"]),

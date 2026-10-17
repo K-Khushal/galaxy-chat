@@ -25,13 +25,13 @@ Do not market universal model capability: expose supported providers and per-mod
 
 ## Architecture direction
 
-Use TypeScript, Next.js App Router, React, Bun package management, Vercel AI SDK, AI Elements and shadcn behavior adapted to Halaska's visual language. Pin mutually compatible stable versions during F01, including the deployment adapter; do not choose package versions solely because they are newest.
+Use TypeScript, Next.js App Router, React, Bun package management, Vercel AI SDK, AI Elements and shadcn behavior adapted to Halaska's visual language. Pin mutually compatible stable versions during the local F01/F02 slice. Live deployment acceptance stays pending after that pin.
 
 Use a single application initially. Separate modules for identity/ownership, conversations, model catalog/provider routing, usage reservations, encrypted credentials and rendering. Later add artifacts, memory and jobs at these boundaries rather than introducing microservices now.
 
-Database choice: Supabase Free for PostgreSQL, Auth and private Storage, with transactional reservations and row-level access controls. Use GitHub OAuth first. Its free tier has capacity, inactivity and backup limitations; record and monitor these before beta. See stack-research.md for sourced details.
+Database and storage: Supabase Free for PostgreSQL and private Storage only. Do not use Supabase Auth. Authentication is Better Auth with the Drizzle adapter and postgres.js (`prepare: false` for the Supabase pooler). Ownership is the Better Auth user id enforced in application queries. Do not assume `auth.uid()`. Never expose a storage secret to the browser. GitHub OAuth is the first login option. Invitation gating applies server-side. Missing auth configuration fails closed with an error id and does not invent a session.
 
-Hosting target: Cloudflare Workers with OpenNext, conditional on a production streaming/build/CPU compatibility spike. Bun is the development toolchain, not the Workers runtime. Do not substitute a beta runtime silently. If the free tier cannot fit, review a concrete alternative within the $10 cap; Vercel Hobby is restricted to qualifying personal non-commercial use, and paid Workers can incur overages.
+Hosting target: Cloudflare Workers with OpenNext, conditional on a production streaming/build/CPU compatibility spike. Bun is the development toolchain, not the Workers runtime. Do not substitute a beta runtime silently. If the free tier cannot fit, review a concrete alternative within the $10 cap; Vercel Hobby is restricted to qualifying personal non-commercial use, and paid Workers can incur overages. A local OpenNext bundle is not a deploy or a size acceptance pass.
 
 Provider access: explicit Gateway and OpenRouter adapters. Prefer Gateway for funded chat while eligible for its recurring free allowance; verify account eligibility because purchasing credit ends that recurring allowance. Select the basic model from current cost/capability data during F01 and configure it server-side; do not hard-code a model name from memory. Unknown model pricing cannot use platform funds. Disable automatic paid fallback.
 
@@ -45,7 +45,7 @@ Future durable jobs persist lifecycle and checkpoints independently of HTTP requ
 
 Halaska defines visual conventions. Use shared wrappers/adapted patterns to avoid inconsistent parallel design systems. Its examples do not supply application state, persistence or safe artifact execution.
 
-Vendor the official kit and attribution only after inspection, record provenance/checksum, and verify client boundaries, SSR/hydration, styling and actual bundled size. The requested kit installation belongs to F01; no kit or packages have been installed during planning.
+Vendor the official kit and attribution only after inspection, record provenance/checksum, and verify client boundaries, SSR/hydration, styling and actual bundled size. The kit is vendored. Browser keyboard and contrast acceptance is still pending.
 
 Retain accessible shadcn/AI Elements behavior where Halaska lacks a suitable primitive. Validate keyboard navigation, focus management, screen-reader semantics, contrast, reduced motion and mobile input. Prefer transform/opacity animation for meaningful state changes; token streaming should remain visually stable.
 
@@ -63,27 +63,26 @@ Remote MCP/tool output, web pages and documents are untrusted input. Connection 
 
 ## Delivery and quality gates
 
-1. M0 — F01–F02: prove deployment, stack and Halaska; establish reproducible build/CI.
+Local code correctness can merge and unlock the next ticket: typecheck, tests, a production `next build`, and review. Live acceptance stays visibly pending and does not block later tickets: GitHub OAuth against a real app, provider SSE, cancellation on a host, Cloudflare deploy, Worker CPU/size acceptance, billing, and the $10/month go/no-go. Do not mark those live checks passing, and do not close a GitHub issue while one of its required live checks is still pending. F02 does not bypass F01; the local slice may land while F01's live checks remain open.
+
+1. M0 — F01–F02: prove deployment, stack and Halaska; establish reproducible build/CI. Local foundation can proceed; live deploy proof remains open.
 2. M1 — F03–F08: secure identity/data, polished shell, reliable chat, atomic quotas and BYOK. Release invite beta only after all gates pass.
 3. M2 — F09–F11: explicit memory/projects, private attachments and versioned Markdown/HTML artifacts.
 4. M3 — F12–F13: charts/sheets/images, bounded tools, cited web search and MCP. Split roadmap scopes before implementation.
 5. M4 — F14: connectors, durable jobs and isolated browser work with explicit funding and approval boundaries.
 
-No calendar promises until F01 establishes feasibility and F02 establishes a build baseline. Work in dependency order, one reviewable vertical slice at a time. The backlog defines acceptance criteria and dependencies.
+No calendar promises until the pending F01 live checks and the F02 CI gate are recorded. Work in dependency order, one reviewable vertical slice at a time. The backlog defines acceptance criteria and dependencies.
 
 Required beta evidence: lint/typecheck/build, cross-user access tests, concurrent budget exhaustion, idempotent retries, cancellation and unknown-usage handling, guest limits, key redaction, provider failure behavior, keyboard/mobile checks and a verified deployed streaming flow. Measure first-token and UI responsiveness on a reference device/network; record results rather than inventing latency guarantees.
 
 ## Existing repository findings
 
-Current code uses Next 15.5.9, React 19.1, AI SDK 5, Clerk, MongoDB/Mongoose, Cloudinary and Mem0. It contains streaming chat, two model options, search toggle, image uploads and history, but no complete credit/BYOK/artifact/tool system.
+The local foundation now pins Next 16.4.2, React 19.3.1, AI SDK 7.0.143, Better Auth 1.7.10, Drizzle 0.45.4, and postgres.js 3.4.9. Clerk, MongoDB/Mongoose, Cloudinary, and Mem0 are removed from the dependency list. Chat reads and writes filter on the Better Auth user id. Unconfigured auth, database, storage, and provider calls return error ids and do not create a session. `bun run build` completes without credentials. `bun run build:workers` produces an OpenNext bundle and does not deploy it.
 
-The audit identified missing ownership/auth checks in chat reads/deletes and upload operations; these are release blockers, not features to carry forward. The existing OpenRouter client is unused while string model IDs imply Gateway routing. Current title generation delays streaming. Existing context retrieval takes the oldest 100 messages. Replace these behaviors in F03/F05/F08.
-
-Existing .gitignore changes and untracked skills-lock.json are outside this planning change.
+The audit identified missing ownership/auth checks in chat reads/deletes and upload operations; the new routes require a session and an owner id. Uploads still fail closed because private storage is not wired. The chat route uses the OpenRouter provider when `OPENROUTER_API_KEY` is set. Title generation still runs before the stream when that key is present. Existing context retrieval behavior is replaced by the Drizzle message query. Credit, BYOK, artifact, and tool systems are not in this slice.
 
 ## Tracking and remaining prerequisites
 
-Use backlog.md as the local ticket source. github-issues.md records all published URLs. The roadmap is GitHub issue #4 and F01–F14 are issues #5–#18 in K-Khushal/galaxy-chat. Publication succeeded through gh with network access; the integration itself still returned 403. The earlier CLI invalid-login report was caused by the restricted environment.
+Use backlog.md as the local ticket source. github-issues.md records all published URLs. The roadmap is GitHub issue #4 and F01–F14 are issues #5–#18 in K-Khushal/galaxy-chat.
 
-No deployment, billing signup, package upgrade, application rewrite or UI retrofit has occurred during this planning step.
-
+Live OAuth, provider streaming, deployment, Worker acceptance, and billing remain pending. Placeholders live in `.env.example`. Real `.env` files stay gitignored. No cloud resource was provisioned in this slice.
