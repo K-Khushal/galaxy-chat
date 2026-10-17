@@ -1,9 +1,8 @@
 import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import Chat from "@/components/chat/chat";
+import { readBranches } from "@/lib/actions/chat/branches";
 import { getChatForUser } from "@/lib/actions/chat/chat";
-import { getChatMessages } from "@/lib/actions/chat/chat-message";
-import { convertToUIMessages } from "@/lib/ai/utils";
 import { requireChatAccess } from "@/lib/auth/access";
 import { AppError } from "@/lib/errors";
 
@@ -11,8 +10,10 @@ export const dynamic = "force-dynamic";
 
 export default async function Page({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ branch?: string }>;
 }) {
   const { id } = await params;
   let userId = "";
@@ -31,13 +32,16 @@ export default async function Page({
     return notFound();
   }
 
-  const messages = await getChatMessages({ chatId: id, userId });
+  const view = await readBranches(id, userId, (await searchParams).branch);
 
   return (
     <Chat
       id={chat.id}
       title={chat.title}
-      chatMessages={convertToUIMessages(messages)}
+      chatMessages={view.messages}
+      initialBranchId={view.branchId}
+      initialBranches={view.branches}
+      initialRuns={view.runs}
       lastContext={chat.lastContext ?? undefined}
     />
   );

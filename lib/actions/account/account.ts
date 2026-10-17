@@ -2,7 +2,9 @@ import { asc, desc, eq } from "drizzle-orm";
 import { requireDb } from "@/lib/db/client";
 import {
   account,
+  chatBranch,
   chatMessage,
+  chatRun,
   chat as chatTable,
   usageRecord,
   user,
@@ -35,6 +37,8 @@ export type AccountExport = {
     createdAt: Date;
     updatedAt: Date;
   }>;
+  branches: Array<typeof chatBranch.$inferSelect>;
+  runs: Array<typeof chatRun.$inferSelect>;
   usageRecords: Array<{
     id: string;
     chatId: string | null;
@@ -104,7 +108,15 @@ export async function exportOwnedAccount(
     .from(usageRecord)
     .where(eq(usageRecord.userId, userId))
     .orderBy(asc(usageRecord.createdAt), asc(usageRecord.id));
-  return { profile, chats, messages, usageRecords };
+  const branches = await db
+    .select()
+    .from(chatBranch)
+    .where(eq(chatBranch.userId, userId));
+  const runs = await db
+    .select()
+    .from(chatRun)
+    .where(eq(chatRun.userId, userId));
+  return { profile, chats, messages, usageRecords, branches, runs };
 }
 
 export async function deleteOwnedAccount(userId: string) {

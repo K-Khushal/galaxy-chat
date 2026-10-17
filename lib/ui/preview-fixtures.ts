@@ -2,6 +2,7 @@ import type { Chat, TypeUIMessage, TypeUserProfile } from "@/lib/types";
 export const previewScenarios = [
   "empty",
   "populated",
+  "branches",
   "loading",
   "streaming",
   "error",

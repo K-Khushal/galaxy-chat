@@ -2,7 +2,7 @@ export type CreditStatus =
   | { state: "unavailable"; reason: "metering_pending" | "signed_out" }
   | { state: "available"; remainingMicrodollars: number; resetsAt: string }
   | { state: "exhausted"; resetsAt: string }
-  | { state: "paused"; reason: string }
+  | { state: "paused"; reason: string; cause?: "shared" | "busy" }
   | { state: "byok" };
 
 export const defaultCreditStatus: CreditStatus = {
@@ -17,7 +17,9 @@ export function creditStatusLabel(status: CreditStatus) {
     case "exhausted":
       return "Daily allowance used";
     case "paused":
-      return "Shared funding paused";
+      return status.cause === "busy"
+        ? "Request in progress"
+        : "Shared funding paused";
     case "byok":
       return "Using your provider key";
     case "unavailable":

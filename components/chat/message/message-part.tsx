@@ -38,6 +38,7 @@ interface MessagePartProps {
   regenerate: () => void;
   setMessages: UseChatHelpers<TypeUIMessage>["setMessages"];
   actionsEnabled?: boolean;
+  onEdit?: (messageId: string, text: string) => Promise<boolean>;
 }
 
 export function MessagePart({
@@ -47,8 +48,8 @@ export function MessagePart({
   status,
   isLastMessage,
   regenerate,
-  setMessages,
   actionsEnabled = false,
+  onEdit,
 }: MessagePartProps) {
   const isLastPart = partIndex === message.parts.length - 1;
 
@@ -63,8 +64,9 @@ export function MessagePart({
               <MessageEditor
                 message={message}
                 setMode={setMode}
-                setMessages={setMessages}
-                regenerate={regenerate}
+                onSubmit={async (text) => {
+                  return (await onEdit?.(message.id, text)) ?? false;
+                }}
               />
             </Suspense>
           </Fragment>
@@ -84,7 +86,9 @@ export function MessagePart({
               isLastMessage={isLastMessage}
               isLastPart={isLastPart}
               onRetry={actionsEnabled ? regenerate : undefined}
-              onEdit={actionsEnabled ? () => setMode("edit") : undefined}
+              onEdit={
+                actionsEnabled && isLastPart ? () => setMode("edit") : undefined
+              }
             />
           </Fragment>
         );

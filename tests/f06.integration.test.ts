@@ -43,6 +43,7 @@ const price = {
   allInPrice: true,
 };
 const env = {
+  FUNDED_ADAPTER: "openrouter",
   FUNDED_INFERENCE: "1",
   FUNDED_KILL_SWITCH: "0",
   FUNDED_PROVIDER_LIMITS_VERIFIED: "1",

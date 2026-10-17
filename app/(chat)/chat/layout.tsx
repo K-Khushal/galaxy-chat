@@ -1,5 +1,6 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { PlatformAccessProvider } from "@/components/chat/platform-access";
 import { AppSidebar } from "@/components/sidebar/app-sidebar";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { requireChatAccess } from "@/lib/auth/access";
@@ -30,9 +31,11 @@ export default async function ChatLayout({
   }
 
   return (
-    <SidebarProvider>
-      <AppSidebar user={profile} />
-      <SidebarInset>{children}</SidebarInset>
-    </SidebarProvider>
+    <PlatformAccessProvider>
+      <SidebarProvider>
+        <AppSidebar user={profile} />
+        <SidebarInset>{children}</SidebarInset>
+      </SidebarProvider>
+    </PlatformAccessProvider>
   );
 }

@@ -106,3 +106,32 @@ export const authSchema = { user, session, account, verification };
 export const appSchema = { chat, chatMessage, usageRecord };
 
 export * from "./credit-schema";
+
+export const chatBranch = pgTable("chat_branch", {
+  id: text("id").primaryKey(),
+  chatId: text("chat_id")
+    .notNull()
+    .references(() => chat.id, { onDelete: "cascade" }),
+  userId: text("user_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  parentId: text("parent_id"),
+  label: text("label").notNull(),
+  messages: jsonb("messages").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+export const chatRun = pgTable("chat_run", {
+  id: text("id").primaryKey(),
+  chatId: text("chat_id")
+    .notNull()
+    .references(() => chat.id, { onDelete: "cascade" }),
+  userId: text("user_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  branchId: text("branch_id")
+    .notNull()
+    .references(() => chatBranch.id, { onDelete: "cascade" }),
+  digest: text("digest").notNull(),
+  state: text("state").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});

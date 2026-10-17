@@ -22,6 +22,7 @@ const priceSchema = z
   .strict();
 export type PriceSnapshot = z.infer<typeof priceSchema>;
 export type FundingConfig = {
+  adapter: "openrouter";
   monthlyMicrodollars: number;
   commitmentsMicrodollars: number;
   price: PriceSnapshot;
@@ -45,6 +46,10 @@ export function resolveFundingConfig(
 ): FundingConfig {
   if (env.FUNDED_INFERENCE !== "1" || env.FUNDED_KILL_SWITCH !== "0")
     throw new AppError("funded_inference_disabled", 503);
+  if (env.FUNDED_ADAPTER === "gateway")
+    throw new AppError("gateway_receipts_unverified", 503);
+  if (env.FUNDED_ADAPTER !== "openrouter")
+    throw new AppError("provider_unconfigured", 503);
   // Requires an operator to verify the configured endpoint enforces these bounds.
   if (
     env.FUNDED_PROVIDER_LIMITS_VERIFIED !== "1" ||
@@ -73,6 +78,7 @@ export function resolveFundingConfig(
   )
     throw new AppError("funding_unconfigured", 503);
   return {
+    adapter: "openrouter",
     monthlyMicrodollars,
     commitmentsMicrodollars,
     price,

@@ -31,6 +31,7 @@ export function ChatMessages({
   setMessages,
   onPrompt,
   actionsEnabled = false,
+  onEdit,
 }: {
   messages: TypeUIMessage[];
   status: ChatStatus;
@@ -39,6 +40,7 @@ export function ChatMessages({
   setMessages: UseChatHelpers<TypeUIMessage>["setMessages"];
   onPrompt?: (text: string) => void;
   actionsEnabled?: boolean;
+  onEdit?: (messageId: string, text: string) => Promise<boolean>;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -157,6 +159,7 @@ export function ChatMessages({
                     isLastMessage={message.id === messages.at(-1)?.id}
                     regenerate={regenerate}
                     setMessages={setMessages}
+                    onEdit={onEdit}
                     actionsEnabled={
                       actionsEnabled &&
                       status !== "streaming" &&

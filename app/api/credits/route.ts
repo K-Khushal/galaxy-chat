@@ -1,3 +1,4 @@
+import { modelCatalog } from "@/lib/ai/catalog";
 import { requireChatAccess } from "@/lib/auth/access";
 import { creditStatus } from "@/lib/credits/status";
 import { actorFor } from "@/lib/credits/store";
@@ -10,9 +11,15 @@ export async function GET(request: Request) {
       (process.env.CREDIT_ACTOR_SECRET?.length ?? 0) >= 32
         ? actorFor("user", access.userId, process.env.CREDIT_ACTOR_SECRET ?? "")
         : { kind: "user" as const, key: "unconfigured" };
-    return Response.json(await creditStatus(process.env, actor), {
-      headers: { "cache-control": "no-store" },
-    });
+    return Response.json(
+      {
+        ...(await creditStatus(process.env, actor)),
+        models: modelCatalog(process.env),
+      },
+      {
+        headers: { "cache-control": "no-store" },
+      },
+    );
   } catch (error) {
     const response = errorResponse(error, "credits_failed");
     response.headers.set("cache-control", "no-store");

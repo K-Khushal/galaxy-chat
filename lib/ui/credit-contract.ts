@@ -24,12 +24,14 @@ export function toCreditStatus(view: PlatformCreditView): CreditStatus {
     case "shared_exhausted":
       return {
         state: "paused",
+        cause: "shared",
         reason:
           "The shared allowance is currently exhausted. No platform-funded requests are available.",
       };
     case "busy":
       return {
         state: "paused",
+        cause: "busy",
         reason:
           "A request is already using your allowance. Wait for it to finish.",
       };

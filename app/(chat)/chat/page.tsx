@@ -1,10 +1,9 @@
-import { nanoid } from "nanoid";
 import Chat from "@/components/chat/chat";
 
 export const dynamic = "force-dynamic";
 
 export default function Page() {
-  const id = nanoid();
+  const id = crypto.randomUUID();
 
   return <Chat id={id} chatMessages={[]} />;
 }

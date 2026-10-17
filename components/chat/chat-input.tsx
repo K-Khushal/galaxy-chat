@@ -10,7 +10,11 @@ import {
   type ChatAvailability,
   defaultAvailability,
 } from "@/lib/ui/availability";
-import { canSendMessage } from "@/lib/ui/composer";
+import {
+  acceptComposerSubmission,
+  type ComposerSubmission,
+  canSendMessage,
+} from "@/lib/ui/composer";
 
 export type ComposerProps = {
   status: "ready" | "submitted" | "streaming" | "error";
@@ -22,7 +26,8 @@ export type ComposerProps = {
   setModel: (model: string) => void;
   models?: ChatModel[];
   availability?: ChatAvailability;
-  onSend: (text: string) => Promise<void> | void;
+  blocked?: boolean;
+  onSend: (text: string) => ComposerSubmission;
 };
 
 export function ChatInput({
@@ -36,23 +41,37 @@ export function ChatInput({
   setModel,
   models,
   availability = defaultAvailability,
+  blocked = false,
 }: ComposerProps) {
   const composing = useRef(false);
+  const submittingRef = useRef(false);
   const [submitting, setSubmitting] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const busy = status === "streaming" || status === "submitted";
   const ready = availability.state === "ready" && Boolean(model);
   async function submit() {
-    if (!ready || submitting || !canSendMessage(text, busy)) return;
+    if (
+      !ready ||
+      submittingRef.current ||
+      !canSendMessage(text, busy || blocked)
+    )
+      return;
     const draft = text.trim();
+    submittingRef.current = true;
     setSubmitting(true);
-    setText("");
     inputRef.current?.focus();
     try {
-      await onSend(draft);
+      const submission = acceptComposerSubmission({
+        text,
+        blocked: busy || blocked,
+        onSend,
+        onAccepted: () => setText(""),
+      });
+      if (submission.accepted) await submission.completion;
     } catch {
       if (!inputRef.current?.value) setText(draft);
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   }
@@ -72,7 +91,7 @@ export function ChatInput({
           id="chat-composer"
           ref={inputRef}
           rows={2}
-          maxLength={32000}
+          maxLength={2000}
           aria-describedby="composer-status"
           className="block max-h-48 min-h-20 w-full resize-y rounded-lg bg-transparent px-3 py-3 text-base leading-relaxed outline-none placeholder:text-muted-foreground md:text-sm"
           placeholder="Ask anything, or think out loud…"
@@ -121,7 +140,8 @@ export function ChatInput({
             className="rounded-xl"
             aria-label={busy ? "Stop response" : "Send message"}
             disabled={
-              !busy && (submitting || !ready || !canSendMessage(text, false))
+              !busy &&
+              (blocked || submitting || !ready || !canSendMessage(text, false))
             }
             onClick={busy ? stop : undefined}
           >
