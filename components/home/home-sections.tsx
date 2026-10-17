@@ -158,21 +158,21 @@ export function HomeSections() {
         <div className={styles.guestNote}>
           <h3>Just looking?</h3>
           <p>
-            Guest chat is not available on this page yet. The planned guest
-            entry is one bounded basic text prompt, followed by sign-in. It will
-            depend on bot checks and available shared funding.
+            Try one bounded basic text response when guest access is available.
+            Bot verification, quota, and shared funding apply; generation may be
+            unavailable.
           </p>
           <p>
-            You can explore the preview above or sign in with an invited
-            account.
+            Your guest exchange is not saved or transferred when you sign in.
+            Continue with an invited account for saved conversations.
           </p>
           <Button
             asChild
             variant="outline"
             className="mt-2 rounded-full bg-card shadow-none"
           >
-            <Link href="/sign-in" prefetch={false}>
-              Go to sign-in
+            <Link href="/guest" prefetch={false}>
+              Try a guest prompt
             </Link>
           </Button>
         </div>

@@ -59,6 +59,7 @@ const guestEnv = {
   ...env,
   GUEST_COOKIE_SECRET: "guest-signature-test-secret-at-least-32",
   GUEST_TURNSTILE_SECRET: "local-bot-fixture-never-sent",
+  GUEST_TURNSTILE_SITE_KEY: "local-fixture-site-key",
   GUEST_TRUSTED_PROXY: "cloudflare",
   GUEST_ORIGIN_IS_PROXY_ONLY: "1",
   BETTER_AUTH_URL: "https://galaxy.example",

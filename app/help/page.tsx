@@ -36,10 +36,15 @@ export default function HelpPage() {
           is available yet.
         </p>
         <p>
-          Guest chat is not available on this landing page yet. The planned
-          entry allows one bounded basic text generation, then asks you to sign
-          in. Bot checks, quota, and shared funding will apply; saved chat
-          requires an account.
+          Open{" "}
+          <Link href="/guest" prefetch={false}>
+            guest chat
+          </Link>{" "}
+          to check availability for one bounded basic text generation. Service
+          configuration, bot verification, quota, and shared funding apply, so
+          generation may be unavailable. After your generation, sign in with an
+          invited account to continue. The guest exchange is not saved to
+          account history or transferred when you sign in.
         </p>
       </section>
       <section id="credits">
@@ -121,8 +126,8 @@ export default function HelpPage() {
         <p>
           Saved memory and projects, attachments, artifacts, tools, search, and
           browser work are roadmap features. This beta focuses on text chat.
-          Guest onboarding, live provider behavior, deployment, and the release
-          quality gate still require verification before public beta.
+          Live guest verification, provider behavior, deployment, and the
+          release quality gate still require verification before public beta.
         </p>
       </section>
     </InfoPage>

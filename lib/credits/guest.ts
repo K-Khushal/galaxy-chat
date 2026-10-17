@@ -11,6 +11,7 @@ const AGE = 365 * 24 * 60 * 60;
 export type GuestConfig = {
   secret: string;
   turnstileSecret: string;
+  siteKey: string;
   origin: string;
   hostname: string;
 };
@@ -18,12 +19,15 @@ export function guestConfig(env: EnvSource): GuestConfig {
   resolveFundingConfig(env);
   const secret = env.GUEST_COOKIE_SECRET;
   const turnstileSecret = env.GUEST_TURNSTILE_SECRET;
+  const siteKey = env.GUEST_TURNSTILE_SITE_KEY;
   // The origin MUST only be accessible through Cloudflare, which strips/sets
   // CF-Connecting-IP. Never trust arbitrary X-Forwarded-For or a public origin.
   if (
     !secret ||
     secret.length < 32 ||
     !turnstileSecret ||
+    !siteKey ||
+    !/^[A-Za-z0-9_-]{3,100}$/.test(siteKey) ||
     env.GUEST_TRUSTED_PROXY !== "cloudflare" ||
     env.GUEST_ORIGIN_IS_PROXY_ONLY !== "1"
   )
@@ -38,6 +42,7 @@ export function guestConfig(env: EnvSource): GuestConfig {
   return {
     secret,
     turnstileSecret,
+    siteKey,
     origin: url.origin,
     hostname: url.hostname,
   };

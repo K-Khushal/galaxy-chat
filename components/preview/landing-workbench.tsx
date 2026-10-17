@@ -8,6 +8,23 @@ const pages = [
   { path: "/", label: "Home" },
   { path: "/help", label: "Help" },
   { path: "/privacy", label: "Privacy & data" },
+  { path: "/guest", label: "Guest (public)" },
+  {
+    path: "/preview/ui?guest=available",
+    label: "Local guest fixture: available",
+  },
+  {
+    path: "/preview/ui?guest=streaming",
+    label: "Local guest fixture: streaming",
+  },
+  {
+    path: "/preview/ui?guest=botpending",
+    label: "Local guest fixture: botpending",
+  },
+  {
+    path: "/preview/ui?guest=exhausted",
+    label: "Local guest fixture: exhausted",
+  },
 ];
 const widths = ["390", "768", "1280", "Fit"];
 
@@ -21,8 +38,8 @@ export function LandingWorkbench() {
         <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1">
           <h1 className="text-sm font-semibold">Galaxy landing preview</h1>
           <p className="text-xs text-muted-foreground">
-            Development only. Real public pages; sign-in and chat retain their
-            normal checks.
+            Development only. Local guest fixtures make no provider requests.
+            Public pages, sign-in and chat retain their normal checks.
           </p>
           <a
             className="ml-auto inline-flex min-h-11 items-center text-sm underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-ring"
