@@ -22,7 +22,9 @@ export default async function PreviewPage({
       scenario={scenario}
       theme={params.theme ?? "system"}
       dialog={
-        ["profile", "appearance", "security"].includes(params.dialog ?? "")
+        ["profile", "appearance", "security", "providers"].includes(
+          params.dialog ?? "",
+        )
           ? params.dialog
           : undefined
       }
