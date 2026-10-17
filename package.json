@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "biome check",
-    "format": "biome format --write"
+    "format": "biome format --write",
+    "f01:smoke": "node scripts/f01-vendor-smoke.mjs"
   },
   "dependencies": {
     "@ai-sdk/openai": "^2.0.32",
