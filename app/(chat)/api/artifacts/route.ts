@@ -10,6 +10,7 @@ import {
   mutateArtifact,
   readArtifact,
 } from "@/lib/artifacts/service";
+import { tableDownloadResponse } from "@/lib/artifacts/table-download";
 import { requireChatAccess } from "@/lib/auth/access";
 import { AppError } from "@/lib/errors";
 import { errorResponse } from "@/lib/http/error-response";
@@ -21,14 +22,16 @@ const privateHeaders = {
 };
 export async function GET(request: Request) {
   try {
-    const access = await requireChatAccess(request.headers);
     const params = new URL(request.url).searchParams;
+    const download = params.get("download");
+    if (download === "csv" || download === "xlsx")
+      return tableDownloadResponse(request);
+    const access = await requireChatAccess(request.headers);
     const id = params.get("id");
     if (id && !artifactIdentifier.safeParse(id).success)
       throw new AppError("not_found", 404);
     if (id) {
       const document = await readArtifact(access.userId, id);
-      const download = params.get("download");
       if (
         document.kind === "chart" &&
         download &&
@@ -54,7 +57,7 @@ export async function GET(request: Request) {
           headers: {
             ...privateHeaders,
             "content-type":
-              document.kind === "chart"
+              document.kind === "chart" || document.kind === "table"
                 ? "application/json; charset=utf-8"
                 : "text/plain; charset=utf-8",
             "content-disposition": `attachment; filename="${artifactFilename(document.title, document.kind)}"`,
