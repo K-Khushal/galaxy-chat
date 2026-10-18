@@ -12,6 +12,7 @@ const pages = [
   { path: "/guest", label: "Guest (public)" },
   { path: "/preview/ui?context=1", label: "Local memory & projects fixture" },
   { path: "/preview/ui?attachments=1", label: "Local attachments fixture" },
+  { path: "/preview/ui?tools=1", label: "Local tools fixture" },
   {
     path: "/preview/ui?guest=available",
     label: "Local guest fixture: available",
