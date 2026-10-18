@@ -59,6 +59,18 @@ test("F12-B owned explicit CSV revisions stay immutable and preserve typed negat
     content: firstSource,
   });
 
+  const source = await GET(
+    await f.request(`/api/artifacts?id=${id}&download=source`),
+  );
+  expect(source.status).toBe(200);
+  expect(source.headers.get("content-type")).toBe(
+    "application/json; charset=utf-8",
+  );
+  expect(source.headers.get("content-disposition")).toContain(
+    'filename="Typed-table.table.json"',
+  );
+  expect(await source.text()).toBe(firstSource);
+
   const csv1 = await GET(
     await f.request(`/api/artifacts?id=${id}&version=1&download=csv`),
   );
