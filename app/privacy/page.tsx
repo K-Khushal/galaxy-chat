@@ -38,6 +38,13 @@ export default function PrivacyPage() {
           artifact source is not automatically added to model context. Guest and
           temporary exchanges cannot create saved artifacts.
         </p>
+        <p>
+          Typed table CSV and XLSX files are generated only when an invited
+          owner downloads a selected immutable revision. The generated file is
+          returned as a private, non-cached attachment and is not retained as a
+          new storage object. CSV may add a leading tab to formula-like text;
+          the saved source revision is not changed.
+        </p>
       </section>
       <section>
         <h2>Private files and extracted context</h2>

@@ -59,9 +59,10 @@ export function HomeSections() {
         <p className={styles.roadmap}>
           <span>Implemented for the gated beta:</span> text conversations,
           explicit memory, projects, temporary chat, private attachments when
-          storage is configured, versioned Markdown, HTML, and chart artifacts,
-          bounded tools with reviewed provider models, and account controls.{" "}
-          <span>Still ahead:</span> search and browser work.
+          storage is configured, versioned Markdown, HTML, chart, and
+          typed-table artifacts, bounded tools with reviewed provider models,
+          and account controls. <span>Still ahead:</span> search and browser
+          work.
         </p>
       </section>
       <section
