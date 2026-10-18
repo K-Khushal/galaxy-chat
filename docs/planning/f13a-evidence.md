@@ -2,6 +2,8 @@
 
 Scope: child #32 of #17. This is an offline implementation slice, not live-provider acceptance. No account, infrastructure, deployment, billing configuration or paid inference was used. Tools default off; the basic-chat path is unchanged.
 
+Accepted application-fix source: `ecb868d449981eabb162d9e4368fed562661ca17`. Development-harness picker follow-up: `15fcfde264ab22b1723c6a70b3a25db99c806d71`. The older `b48754ab471a7b45f7f6fde6b12a9fc8923dacd8` pin below is the source of the broad full-suite baseline, not the latest accepted application source.
+
 ## Implemented boundaries
 
 `ai@7.0.143` bundled agent/loop-control/tool-approval docs and source, the installed Next 16.4.2 route-handler guide, and repository UI/button standards were read before implementation. Runtime uses `ToolLoopAgent`, typed `tool` schemas, explicit `isStepCount(3)`, `toolApproval`, and zero SDK retries. No handwritten model loop, auxiliary inference, platform tool adapter, web search, MCP, sandbox or executable external-write tool exists.
@@ -34,7 +36,7 @@ Focused proof includes exactly three model dispatches; a shared 512-output-token
 
 ## UI review handoff
 
-Root review uses the explicitly enabled development `F04_UI_HARNESS=1` harness at `/preview/ui?tools=1`. It renders the same production workbench/trace/approval components with an offline client. Modes cover run, tools off, all five tool states, and an inert approve/deny/revoke fixture. Idle action names remain stable while busy, a spinner plus `aria-busy` communicates pending work, immediate ref guards prevent duplicate actions, result text is escaped/wrapped, and the layout stays in natural document flow. The preview continues to return 404 in production. Root browser evidence at 390px and short height, keyboard, reduced motion and production preview gating must be recorded separately; this worker started no server/browser. Real-phone touch and provider behavior are not implied by fixture screenshots.
+Root review used the explicitly enabled development `F04_UI_HARNESS=1` harness at `/preview/ui?tools=1`. It renders the same production workbench/trace/approval components with an offline client. Modes cover run, tools off, all five tool states, and an inert approve/deny/revoke fixture. Idle action names remain stable while busy, a spinner plus `aria-busy` communicates pending work, immediate ref guards prevent duplicate actions, result text is escaped/wrapped, and the layout stays in natural document flow. The preview continues to return 404 in production. Root's desktop fixture review passed ready-model, explicit-key, model-revision, checkbox, request/ceiling/acknowledgement gating, queued-to-completed, all tool states, escaped untrusted result and accurate inert approval denial checks without an actual provider request. Its screenshot is `/private/tmp/galaxy-f13a-approval-denied.png`. Real-phone touch and provider behavior are not implied; root retains the remaining CUA checks.
 
 ## Separate live gates
 
@@ -42,7 +44,7 @@ Real-model tool protocol, maximum output semantics, complete input/output/reason
 
 ## Final combined verification and writer handoff
 
-Frozen application source: `b48754ab471a7b45f7f6fde6b12a9fc8923dacd8` on `codex/f13-tools`, including reviewed main `e4ec439eeb321c0a0f4ddf2aa32ce07326f2d6be`. The preceding feature checkpoint is `26bba3a`; the main inheritance merge is `0d9177c`. Only this evidence file changed after the final source pin.
+Frozen pre-review full-suite baseline source: `b48754ab471a7b45f7f6fde6b12a9fc8923dacd8` on `codex/f13-tools`, including reviewed main `e4ec439eeb321c0a0f4ddf2aa32ce07326f2d6be`. The preceding feature checkpoint is `26bba3a`; the main inheritance merge is `0d9177c`. Only this evidence file changed after that baseline source pin.
 
 All commands below were serialized through the shared check runner and passed against that frozen combined source:
 
@@ -75,3 +77,11 @@ All commands below were serialized through the shared check runner and passed ag
 - `git diff --check`: passed before the source commit and again for the evidence update.
 
 The prior frozen-source full-suite result remains the broad regression baseline: **169 pass / 1 inherited native-Postgres skip / 0 fail**, **1,780 assertions**. This follow-up adds one runtime regression and changes only the abort boundary and approval copy; its current-source validation is the focused F13 suite plus lint, standalone typecheck and strict webpack build above. Separate real-provider, hosted-execution and billing gates remain unchanged. No server/browser, paid inference, push, PR, deployment, provisioning, cloud login or billing change was used for this remediation.
+
+## Development picker follow-up and independent rerun
+
+Harness-only source `15fcfde264ab22b1723c6a70b3a25db99c806d71` adds exactly one `Local tools fixture` option targeting `/preview/ui?tools=1` to the existing development landing picker. It changes no production route, authentication boundary or provider behavior. Focused Biome passed for the changed file. The preview/gate suite passed **10 tests / 49 assertions**, including the requirement that the landing preview returns Next 404 outside explicit development opt-in. `git diff --check` passed before the source commit.
+
+An independent exact three-file F13 run first reported **26 pass / 1 fail / 1 unhandled error**, with the first durable-SDK integration case crossing Bun's default five-second deadline at **5.347s**. The accompanying `CONNECTION_ENDED` was secondary: `betaFixture` registers `onTestFinished(close)`, so timeout cleanup closed the database/socket while the still-running async body advanced. The same case then passed alone at **1.723s**, passed **5/5** immediate isolated repetitions between **1.012s and 1.503s** (**90 assertions**), and the identical runtime/integration/UI command passed **27/27 tests / 237 assertions** with the case at **1.550s**. All later cases in the failed run had passed, and no queue hang or lifecycle race reproduced. No application-source or timeout change was made for this single host-timing excursion.
+
+This evidence update is the only change after the harness-only source pin. Writer released with the checkout clean and the shared host-check lock free. Root owns remaining CUA, independent checks, GitHub/PR/CI/merge and live gates. No push, PR, deployment, cloud login, billing change or paid inference was performed.
