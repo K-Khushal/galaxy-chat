@@ -164,10 +164,14 @@ export default function HelpPage() {
           positional cell must be text, a finite number, or a boolean; formulas
           and workbook uploads are not supported. The preview is a paginated
           accessible data table. Choose a saved revision, then download CSV or a
-          single-sheet XLSX. CSV protects formula-like text by adding a leading
-          tab in the downloaded field; typed negative numbers remain numbers,
-          and the saved JSON is unchanged. XLSX stores text explicitly and
-          contains no formulas, macros, external references, or active links.
+          single-sheet XLSX. CSV reduces formula-injection risk by adding a
+          leading tab to formula-like text; typed negative numbers remain
+          numbers, and the saved JSON is unchanged. This is not a universal
+          guarantee across spreadsheet applications. Downloads still need
+          compatibility checks in supported versions of Microsoft Excel,
+          LibreOffice Calc, Apple Numbers, and Google Sheets. XLSX stores text
+          explicitly and contains no formulas, macros, external references, or
+          active links.
         </p>
         <p>
           Each artifact allows 128 KiB of source per revision and 40 revisions.

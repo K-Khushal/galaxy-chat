@@ -3,7 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
 import * as XLSX from "xlsx";
 import { sampleChart } from "../lib/artifacts/chart-spec";
-import { sampleTable } from "../lib/artifacts/table-spec";
+import { sampleTable, tableLimits } from "../lib/artifacts/table-spec";
 import { betaFixture, env, secret } from "./helpers/beta-fixture";
 import { rejectionOf } from "./helpers/rejection";
 
@@ -11,6 +11,9 @@ mock.module("server-only", () => ({}));
 const { GET, POST } = await import("../app/(chat)/api/artifacts/route");
 const { mutateArtifact, readArtifact, readArtifactRevision } = await import(
   "../lib/artifacts/service"
+);
+const { tableDownloadResponse } = await import(
+  "../lib/artifacts/table-download"
 );
 const { exportOwnedAccount } = await import("../lib/actions/account/account");
 
@@ -166,6 +169,44 @@ test("F12-B owned XLSX is one typed sheet and table restore/account export reuse
   const account = await exportOwnedAccount("alice");
   expect(account.artifacts.map((artifact) => artifact.kind)).toEqual(["table"]);
   expect(account.artifactRevisions).toHaveLength(3);
+  expect(f.seen).toHaveLength(0);
+});
+
+test("F12-B signed owned revision responses enforce the generated 8 MiB boundary", async () => {
+  const f = await fixture();
+  const { id } = await mutateArtifact("alice", create);
+  const request = await f.request(
+    `/api/artifacts?id=${id}&version=1&download=xlsx`,
+  );
+  const exact = await tableDownloadResponse(request, (format, spec) => {
+    expect(format).toBe("xlsx");
+    expect(spec).toEqual(first);
+    const bytes = new Uint8Array(tableLimits.exportBytes);
+    bytes[0] = 0x50;
+    bytes[bytes.length - 1] = 0x4b;
+    return bytes;
+  });
+  expect(exact.status).toBe(200);
+  expect(exact.headers.get("content-length")).toBe(
+    String(tableLimits.exportBytes),
+  );
+  expect(exact.headers.get("content-disposition")).toContain(
+    'filename="Typed-table-v1.xlsx"',
+  );
+  const exactBody = new Uint8Array(await exact.arrayBuffer());
+  expect(exactBody).toHaveLength(tableLimits.exportBytes);
+  expect(exactBody[0]).toBe(0x50);
+  expect(exactBody.at(-1)).toBe(0x4b);
+
+  const over = await tableDownloadResponse(
+    await f.request(`/api/artifacts?id=${id}&version=1&download=xlsx`),
+    () => new Uint8Array(tableLimits.exportBytes + 1),
+  );
+  expect(over.status).toBe(413);
+  expect(over.headers.get("content-disposition")).toBeNull();
+  expect(await over.json()).toEqual({
+    error: { id: "artifact_export_limit" },
+  });
   expect(f.seen).toHaveLength(0);
 });
 

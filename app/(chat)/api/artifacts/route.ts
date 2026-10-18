@@ -4,21 +4,17 @@ import {
   artifactFilename,
   artifactIdentifier,
   artifactLimits,
-  tableExportFilename,
 } from "@/lib/artifacts/contract";
 import {
   listArtifacts,
   mutateArtifact,
   readArtifact,
-  readArtifactRevision,
 } from "@/lib/artifacts/service";
-import { tableCsv } from "@/lib/artifacts/table-csv";
-import { parseTableSource, tableExportFits } from "@/lib/artifacts/table-spec";
+import { tableDownloadResponse } from "@/lib/artifacts/table-download";
 import { requireChatAccess } from "@/lib/auth/access";
 import { AppError } from "@/lib/errors";
 import { errorResponse } from "@/lib/http/error-response";
 import { assertSameOrigin } from "@/lib/http/origin";
-import { privateDownloadHeaders } from "@/lib/http/private-download";
 
 const privateHeaders = {
   "cache-control": "private, no-store",
@@ -26,53 +22,15 @@ const privateHeaders = {
 };
 export async function GET(request: Request) {
   try {
-    const access = await requireChatAccess(request.headers);
     const params = new URL(request.url).searchParams;
+    const download = params.get("download");
+    if (download === "csv" || download === "xlsx")
+      return tableDownloadResponse(request);
+    const access = await requireChatAccess(request.headers);
     const id = params.get("id");
     if (id && !artifactIdentifier.safeParse(id).success)
       throw new AppError("not_found", 404);
     if (id) {
-      const download = params.get("download");
-      if (download === "csv" || download === "xlsx") {
-        const rawVersion = params.get("version") ?? "";
-        if (!/^[1-9]\d*$/.test(rawVersion))
-          throw new AppError("invalid_artifact", 400);
-        const version = Number(rawVersion);
-        if (
-          !Number.isSafeInteger(version) ||
-          version > artifactLimits.revisions
-        )
-          throw new AppError("invalid_artifact", 400);
-        const revision = await readArtifactRevision(access.userId, id, version);
-        if (revision.kind !== "table")
-          throw new AppError("invalid_artifact", 400);
-        const parsed = parseTableSource(revision.content);
-        if (!parsed.success) throw new AppError("invalid_artifact", 400);
-        const bytes =
-          download === "csv"
-            ? tableCsv(parsed.data)
-            : (await import("@/lib/artifacts/table-xlsx")).tableXlsx(
-                parsed.data,
-              );
-        if (!tableExportFits(bytes))
-          throw new AppError("artifact_export_limit", 413);
-        const filename = tableExportFilename(
-          revision.title,
-          revision.version,
-          download,
-        );
-        return new Response(bytes.slice().buffer, {
-          headers: privateDownloadHeaders({
-            contentType:
-              download === "csv"
-                ? "text/csv; charset=utf-8; header=present"
-                : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            filename,
-            fallback: filename,
-            length: bytes.byteLength,
-          }),
-        });
-      }
       const document = await readArtifact(access.userId, id);
       if (
         document.kind === "chart" &&
