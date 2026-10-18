@@ -186,7 +186,7 @@ export function ToolsWorkbench({
       {!catalog ? (
         <output>Loading tools…</output>
       ) : catalog.models.length === 0 ? (
-        <output className="rounded-lg border border-border p-4 text-sm">
+        <output className="block rounded-lg border border-border p-4 text-sm">
           Tools are off. A reviewed model and provider spending controls must be
           configured before a run is available.
         </output>

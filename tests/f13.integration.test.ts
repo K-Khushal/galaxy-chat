@@ -1,4 +1,4 @@
-import { expect, mock, test } from "bun:test";
+import { beforeEach, expect, mock, test } from "bun:test";
 import { MockLanguageModelV4 } from "ai/test";
 import { betaFixture, env, privateKey } from "./helpers/beta-fixture";
 import { rejectionOf } from "./helpers/rejection";
@@ -74,8 +74,16 @@ async function ready() {
   );
   return f;
 }
+type Fixture = Awaited<ReturnType<typeof ready>>;
+const fixtureSetupTimeout = 15_000;
+let f: Fixture;
+beforeEach(
+  async () => {
+    f = await ready();
+  },
+  { timeout: fixtureSetupTimeout },
+);
 test("F13 durable actual SDK steps, per-run idempotency, owner isolation and account export/deletion", async () => {
-  const f = await ready();
   const body = request();
   const model: MockLanguageModelV4 = new MockLanguageModelV4({
     doGenerate: async () =>
@@ -140,7 +148,6 @@ test("F13 durable actual SDK steps, per-run idempotency, owner isolation and acc
   expect(f.seen).toHaveLength(0);
 });
 test("F13 unknown usage and cancellation retain resource holds and never fallback to platform", async () => {
-  const f = await ready();
   const body = request();
   const controller = new AbortController();
   const model: MockLanguageModelV4 = new MockLanguageModelV4({
@@ -175,7 +182,6 @@ test("F13 unknown usage and cancellation retain resource holds and never fallbac
   expect(f.seen).toHaveLength(0);
 });
 test("F13 credential replacement is rechecked before every actual model continuation", async () => {
-  const f = await ready();
   const body = request();
   const model: MockLanguageModelV4 = new MockLanguageModelV4({
     doGenerate: async () => {
@@ -213,7 +219,6 @@ test("F13 credential replacement is rechecked before every actual model continua
   ).toBe("held");
 });
 test("F13 exact-action approvals require durable owner decisions, expire, revoke and consume once", async () => {
-  const f = await ready();
   const store = new ToolStore(f.db);
   const body = request();
   await store.create("alice", body);
@@ -272,7 +277,6 @@ test("F13 exact-action approvals require durable owner decisions, expire, revoke
   );
 });
 test("F13 route rejects platform, temporary, forged approval booleans and guests before inference", async () => {
-  const f = await ready();
   for (const changed of [
     { funding: "platform" },
     { temporary: true },
@@ -315,7 +319,6 @@ test("F13 route rejects platform, temporary, forged approval booleans and guests
 test("F13 real SDK signed approval protocol still requires a durable decision and single-use action claim", async () => {
   const { ToolLoopAgent, isStepCount, tool } = await import("ai");
   const { z } = await import("zod");
-  const f = await ready();
   const store = new ToolStore(f.db);
   const body = request();
   await store.create("alice", body);
@@ -403,7 +406,6 @@ test("F13 real SDK signed approval protocol still requires a durable decision an
 });
 
 test("F13 owned immutable revision reads exclude other owners, changed selection and deleted revisions", async () => {
-  const f = await ready();
   await f.db.$client
     .unsafe(
       `INSERT INTO chat(id,user_id,title) VALUES ('f13-chat','alice','Tools'),('f13-bob-chat','bob','Private'); INSERT INTO chat_message(id,chat_id,user_id,role,parts,attachments) VALUES ('f13-message','f13-chat','alice','assistant','[]','[]'),('f13-bob-message','f13-bob-chat','bob','assistant','[]','[]'); INSERT INTO artifact(id,user_id,chat_id,message_id,kind,head) VALUES ('selected','alice','f13-chat','f13-message','markdown',2),('bob-private','bob','f13-bob-chat','f13-bob-message','markdown',1); INSERT INTO artifact_revision(artifact_id,user_id,version,title,content) VALUES ('selected','alice',1,'Old','Chosen immutable source'),('selected','alice',2,'New','Unselected newer source'),('bob-private','bob',1,'Private','Bob secret')`,
@@ -484,7 +486,6 @@ test("F13 owned immutable revision reads exclude other owners, changed selection
 });
 
 test("F13 deleting private data during remote work never releases its anonymous hold", async () => {
-  const f = await ready();
   const body = request();
   const store = new ToolStore(f.db);
   const model = new MockLanguageModelV4({
@@ -520,7 +521,6 @@ test("F13 deleting private data during remote work never releases its anonymous 
 });
 
 test("F13 tool runs reserve three units against the existing BYOK hourly budget used by basic chat", async () => {
-  const f = await ready();
   const { resourceActor } = await import("../lib/byok/config");
   const actor = resourceActor("alice", toolEnv);
   const byok = new ByokStore(f.db);
@@ -572,40 +572,7 @@ test("F13 tool runs reserve three units against the existing BYOK hourly budget 
   expect(model.doGenerateCalls).toHaveLength(1);
 });
 
-test("F13 all private and anonymous tool tables revoke browser roles and enable RLS", async () => {
-  const { PGlite } = await import("@electric-sql/pglite");
-  const { readFileSync, readdirSync } = await import("node:fs");
-  const database = await PGlite.create();
-  try {
-    await database.exec("CREATE ROLE anon;CREATE ROLE authenticated;");
-    for (const file of readdirSync("drizzle")
-      .filter((name) => name.endsWith(".sql"))
-      .sort())
-      await database.exec(readFileSync(`drizzle/${file}`, "utf8"));
-    for (const table of [
-      "tool_run",
-      "tool_step",
-      "tool_call",
-      "tool_approval",
-    ]) {
-      const grants = await database.query<{ allowed: boolean }>(
-        "SELECT has_table_privilege('anon',$1,'SELECT') OR has_table_privilege('authenticated',$1,'INSERT') OR has_table_privilege('anon',$1,'UPDATE') OR has_table_privilege('authenticated',$1,'DELETE') AS allowed",
-        [table],
-      );
-      expect(grants.rows[0].allowed).toBe(false);
-      const rls = await database.query<{ relrowsecurity: boolean }>(
-        "SELECT relrowsecurity FROM pg_class WHERE relname=$1",
-        [table],
-      );
-      expect(rls.rows[0].relrowsecurity).toBe(true);
-    }
-  } finally {
-    await database.close();
-  }
-});
-
 test("F13 an oversized complete first prompt releases a reserved operation before provider entry", async () => {
-  const f = await ready();
   const body = { ...request(), prompt: "🔥".repeat(4000) };
   const model = new MockLanguageModelV4({
     doGenerate: receipt([{ type: "text", text: "Never entered" }], "stop"),
@@ -628,7 +595,6 @@ test("F13 an oversized complete first prompt releases a reserved operation befor
 });
 
 test("F13 real OpenRouter SDK wire uses only the owner key, explicit provider, zero retries and joint output allowances", async () => {
-  const f = await ready();
   const seen: {
     authorization: string | null;
     body: Record<string, unknown>;

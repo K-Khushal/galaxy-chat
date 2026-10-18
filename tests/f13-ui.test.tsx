@@ -1,7 +1,10 @@
 import { expect, test } from "bun:test";
+import { Window } from "happy-dom";
+import { act } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ActionApproval } from "../components/tools/action-approval";
-import { ToolTrace } from "../components/tools/tools-workbench";
+import { ToolsWorkbench, ToolTrace } from "../components/tools/tools-workbench";
+import type { ToolClient } from "../lib/tools/client";
 import { microdollarsFromUSD, type ToolState } from "../lib/tools/contract";
 
 test("F13 tool results remain escaped untrusted text across every visible state", () => {
@@ -64,4 +67,54 @@ test("F13 USD ceilings parse decimal money without floating point multiplication
   expect(microdollarsFromUSD("2000")).toBe(2_000_000_000);
   for (const value of ["-1", "Infinity", "1e3", "0.0000001", "2001", "0", ""])
     expect(microdollarsFromUSD(value)).toBeUndefined();
+});
+
+test("F13 disabled tools notice renders as one block box", async () => {
+  const window = new Window();
+  const globals = {
+    window,
+    document: window.document,
+    Event: window.Event,
+    navigator: window.navigator,
+    HTMLElement: window.HTMLElement,
+    IS_REACT_ACT_ENVIRONMENT: true,
+  };
+  const saved = Object.entries(globals).map(([name, value]) => {
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, name);
+    Object.defineProperty(globalThis, name, {
+      value,
+      configurable: true,
+      writable: true,
+    });
+    return { name, descriptor };
+  });
+  const client: ToolClient = {
+    catalog: async () => ({ models: [], credentials: [], revisions: [] }),
+    run: async () => {
+      throw new Error("fixture_run_unavailable");
+    },
+    view: async () => {
+      throw new Error("fixture_view_unavailable");
+    },
+    remove: async () => {},
+  };
+  const { createRoot } = await import("react-dom/client");
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  try {
+    await act(async () => root.render(<ToolsWorkbench client={client} />));
+    const output = [...container.querySelectorAll("output")].find((node) =>
+      node.textContent?.includes("Tools are off"),
+    );
+    expect(output).toBeDefined();
+    expect(output?.classList.contains("block")).toBe(true);
+  } finally {
+    await act(async () => root.unmount());
+    await window.happyDOM.close();
+    for (const { name, descriptor } of saved) {
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+      else Reflect.deleteProperty(globalThis, name);
+    }
+  }
 });
