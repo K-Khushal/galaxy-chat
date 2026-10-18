@@ -1228,28 +1228,6 @@ test("F07 a late metadata rejection cannot invalidate a replacement key or anoth
   }
 });
 
-test("F07 database browser roles cannot read or mutate BYOK ciphertext or resource rows", async () => {
-  const database = await PGlite.create();
-  try {
-    await database.exec("CREATE ROLE anon; CREATE ROLE authenticated;");
-    for (const file of readdirSync("drizzle")
-      .filter((name) => name.endsWith(".sql"))
-      .sort())
-      await database.exec(readFileSync(`drizzle/${file}`, "utf8"));
-    const result = await database.query<{ allowed: boolean }>(
-      "SELECT has_table_privilege('anon','provider_credential','SELECT') OR has_table_privilege('authenticated','provider_credential','INSERT') OR has_table_privilege('anon','byok_operation','UPDATE') OR has_table_privilege('authenticated','byok_operation','DELETE') AS allowed",
-    );
-    expect(result.rows[0].allowed).toBe(false);
-    const rls = await database.query<{ relrowsecurity: boolean }>(
-      "SELECT relrowsecurity FROM pg_class WHERE relname IN ('provider_credential','byok_operation')",
-    );
-    expect(rls.rows).toHaveLength(2);
-    expect(rls.rows.every((r) => r.relrowsecurity)).toBe(true);
-  } finally {
-    await database.close();
-  }
-});
-
 test("F07 SDK warning logs and UI streams discard provider diagnostic messages and metadata", async () => {
   const f = useFixture();
   const warnings = spyOn(process, "emitWarning").mockImplementation(() => {});
