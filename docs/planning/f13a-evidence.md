@@ -57,3 +57,21 @@ The full suite covers the inherited F10 attachment/PDF/image/payload/context/cle
 The real OpenRouter package was also exercised with wholly intercepted local JSON responses: two SDK calls used the owner's key, explicit provider/no fallback, 170/171 output allowances and untrusted continuation results. A subsequent fake HTTP 500 generated exactly one attempt, retained its conservative hold, and leaked no provider diagnostic or key into private exports. No live inference request occurred.
 
 Writer released after this evidence-only commit. All test sockets/databases, typecheck and build processes finished; no implementation-owned server or browser was started and no host check lock remains held. Root owns independent review, browser checks, GitHub/PR/CI/merge and any remaining live gates. Original and other managed checkouts were not modified. No push, PR, deployment, provisioning, cloud login, billing change or paid call was performed by this worker.
+
+## Issue #32 specification-review remediation
+
+Frozen follow-up source: `ecb868d449981eabb162d9e4368fed562661ca17` on `codex/f13-tools`, based on the prior evidence commit `e402cd3e55eaafaf750afc5bbb050a1994b982b8`. Only this evidence file changed after the follow-up source pin.
+
+The runtime now rechecks the combined deadline/caller abort signal immediately after the awaited `running` event and before invoking the tool hook. This closes the deterministic window in which cancellation could win while the event hook was pending but `readRevision` would still be invoked when that hook resolved. The regression aborts during the pending event, releases it, drains the continuation and requires zero revision reads, one model entry and no completed event. It was observed failing before the runtime change and passes against the frozen source (**1 test / 7 assertions**).
+
+The exact-action approval UI no longer says that approval lasts five minutes. It now explains that approval expires no later than 20 seconds after the original run started, matching the server-owned run deadline. The rendering regression requires the 20-second/original-run wording and excludes the stale five-minute claim (**1 test / 10 assertions**).
+
+All commands below were serialized through the shared check runner and passed against the frozen follow-up source:
+
+- Focused F13 runtime, integration and UI suite: **27 pass / 0 fail**, **237 assertions across 3 files**. This includes the real 20-second uncooperative-provider test, the cancellation-during-event regression, durable approvals and the intercepted local OpenRouter fixture. The integration fixture used an ephemeral loopback socket; the initial restricted run failed only because socket binding was denied, and the identical permitted run passed.
+- `bun run lint`: **284 files**, no fixes or errors.
+- `bun run typecheck`: passed with incremental output disabled.
+- `bun run build --webpack`: passed strict compilation and generated-route TypeScript, generated all **25/25** static pages, and completed final build traces. The initial restricted run could not write `.next`; the identical permitted run passed.
+- `git diff --check`: passed before the source commit and again for the evidence update.
+
+The prior frozen-source full-suite result remains the broad regression baseline: **169 pass / 1 inherited native-Postgres skip / 0 fail**, **1,780 assertions**. This follow-up adds one runtime regression and changes only the abort boundary and approval copy; its current-source validation is the focused F13 suite plus lint, standalone typecheck and strict webpack build above. Separate real-provider, hosted-execution and billing gates remain unchanged. No server/browser, paid inference, push, PR, deployment, provisioning, cloud login or billing change was used for this remediation.
