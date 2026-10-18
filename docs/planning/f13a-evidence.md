@@ -2,7 +2,7 @@
 
 Scope: child #32 of #17. This is an offline implementation slice, not live-provider acceptance. No account, infrastructure, deployment, billing configuration or paid inference was used. Tools default off; the basic-chat path is unchanged.
 
-Current follow-up source: `6b56f72b6cb849708c1fb0fdf2e6ca210ed0ab38`. It contains the accepted application fixes from `ecb868d449981eabb162d9e4368fed562661ca17` and the development-harness picker from `15fcfde264ab22b1723c6a70b3a25db99c806d71`. The older `b48754ab471a7b45f7f6fde6b12a9fc8923dacd8` pin below is the source of the broad full-suite baseline, not the latest application source.
+Current combined source: `7032790263302809e019846290ea8b51ceb1a0f4`. Application source `e3c7a38261086575b6f1a6ab4833e169a04eacf6` contains the accepted F13 fixes, development-harness picker, F12 chart inheritance from main `08268ec7c6d4719f1476ab65488b0ad95920644c`, and accurate combined public copy. The current tip adds only the measured F06/F07 test-fixture setup separation described below. Older pins remain as historical verification points.
 
 ## Implemented boundaries
 
@@ -89,3 +89,21 @@ Source `6b56f72b6cb849708c1fb0fdf2e6ca210ed0ab38` moves the repeated PGlite/data
 The corrected focused runtime/integration/UI/RLS suite passed **28 tests / 239 assertions across 4 files** in **63.38s** under the same slow host conditions. Total setup-plus-behavior durations of **5.805s** and **5.721s** passed without socket errors, proving the setup hook owns that time while the behavior deadline remains intact. The disabled-tools DOM-render regression separately passed with the other UI tests (**4 tests / 31 assertions**). Focused Biome passed **4 files**, standalone typecheck passed with incremental output disabled, and `git diff --check` passed. No debug instrumentation remains.
 
 This evidence update is the only change after the current follow-up source pin. Writer released with the checkout clean and the shared host-check lock free. Root owns browser recheck, independent review/checks, GitHub/PR/CI/merge and live gates. No push, PR, deployment, cloud login, billing change or paid inference was performed.
+
+## F12 inheritance and final combined verification
+
+Main `08268ec7c6d4719f1476ab65488b0ad95920644c` was inherited in application-source merge `e3c7a38261086575b6f1a6ab4833e169a04eacf6`. The resolved migration manifest preserves `0008_tools` before `0009_chart_artifacts`. The landing development picker preserves both `/preview/charts` and `/preview/ui?tools=1`. Account export retains tool runs/calls/approvals, attachments with extracted text, and artifact/revision rows including chart kinds. Attachment preparation, immutable payload checks and atomic final-entry validation remain wired through the chat and BYOK service. Public home/help copy now describes both chart artifacts and bounded BYOK tools; search and browser work remain identified as roadmap features.
+
+The first merged full run reported **175 pass / 1 skip / 8 fail**, **2,665 assertions across 28 files** in **234.57s**. All F12 and F13 cases passed. Seven F07 cases and one F06 case crossed the unchanged five-second behavior deadline at **5.007–6.162s**; cleanup then produced secondary `CONNECTION_ENDED`/`fixture_retired` errors. An isolated F07 rerun passed **18/18**, while an isolated F06 rerun still had two cases cross five seconds, confirming host-dependent fixture pressure rather than a combined product assertion failure. A later seven-file F12/F13 run passed **39/40**; its sole F12 failure crossed the deadline at **5.041s**, while all 23 F13 cases passed. No F12 timeout was changed because the final full run passed it unchanged.
+
+An elapsed-only representative F07 probe measured **1.679s** in `PGlite.create()`, **96ms** applying migrations and **13ms** in socket/auth setup (**1.788s setup total**) versus **233ms** in the existing settings behavior. The probe logged no prompt, key or payload and was removed. Test-only source `7032790263302809e019846290ea8b51ceb1a0f4` uses the shared `setupFixtureBeforeEach` helper for F06/F07: each test still creates and closes its own isolated database, setup has a bounded **15-second** hook budget, and every behavior assertion keeps Bun's default **5-second** deadline. It does not reuse a database, make tests concurrent, raise behavior timeouts or change application code. The focused F06/F07 suite then passed **41/41 tests / 422 assertions** in **55.44s**.
+
+All final commands were serialized through the shared check runner and passed against `7032790263302809e019846290ea8b51ceb1a0f4` unless otherwise stated:
+
+- `bun run lint`: **294 files**, no fixes or errors.
+- `bun run typecheck`: passed with incremental output disabled.
+- `bun test`: **183 pass / 1 inherited native-Postgres skip / 0 fail**, **2,777 assertions**, **184 tests across 28 files**, **149.17s**. The actual 20-second uncooperative-provider test ran and passed. F12 chart integration and all F13 runtime/integration/UI/RLS cases passed.
+- `bun run build --webpack`: passed against application source `e3c7a38261086575b6f1a6ab4833e169a04eacf6`, including strict compilation, generated-route TypeScript, **25/25** static pages and final build traces. `/preview/charts`, `/api/tools` and `/chat/tools` are present with their intended dynamic/development gates.
+- `git diff --check`: passed for the application merge, test-only source and this evidence update.
+
+No live model/provider request, paid inference, deployment, push, PR, cloud login or billing/configuration change was performed. Root owns the independent source review, final browser recheck, GitHub/PR/CI/merge and the separate live gates.
