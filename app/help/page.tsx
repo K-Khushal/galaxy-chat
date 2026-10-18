@@ -139,9 +139,9 @@ export default function HelpPage() {
         <h2>Save an answer as an artifact</h2>
         <p>
           Under a saved assistant response, choose Create artifact, add a title,
-          and select Markdown, HTML, or Chart from JSON. You can also reopen
-          saved documents with Artifacts in the conversation header. Guest and
-          temporary conversations cannot save artifacts.
+          and select Markdown, HTML, Chart from JSON, or Typed table from JSON.
+          You can also reopen saved documents with Artifacts in the conversation
+          header. Guest and temporary conversations cannot save artifacts.
         </p>
         <p>
           Edit the source and choose Save revision. History lets you restore a
@@ -160,11 +160,26 @@ export default function HelpPage() {
           rendering a chart do not call a model.
         </p>
         <p>
+          Typed tables accept version 1 JSON with labeled columns and rows. Each
+          positional cell must be text, a finite number, or a boolean; formulas
+          and workbook uploads are not supported. The preview is a paginated
+          accessible data table. Choose a saved revision, then download CSV or a
+          single-sheet XLSX. CSV protects formula-like text by adding a leading
+          tab in the downloaded field; typed negative numbers remain numbers,
+          and the saved JSON is unchanged. XLSX stores text explicitly and
+          contains no formulas, macros, external references, or active links.
+        </p>
+        <p>
           Each artifact allows 128 KiB of source per revision and 40 revisions.
           Your account can store 50 artifacts and 8 MiB of revision source in
           total. Download a copy before deleting an artifact; deletion removes
           all of its revisions. Deleting its originating message, conversation,
           or account also removes the artifact.
+        </p>
+        <p>
+          A table can contain at most 10,000 rows, 50 columns, 200,000 value
+          slots, and 4,096 characters per text cell. Generated CSV and XLSX
+          files are limited to 8 MiB.
         </p>
       </section>
       <section>

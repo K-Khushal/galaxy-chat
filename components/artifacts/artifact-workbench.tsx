@@ -7,6 +7,7 @@ import {
   Loader2,
   RotateCcw,
   Save,
+  Table2,
   Trash2,
 } from "lucide-react";
 import dynamic from "next/dynamic";
@@ -39,6 +40,7 @@ import {
   artifactPreviewDocument,
   markdownPreviewDocument,
 } from "@/lib/artifacts/preview";
+import { parseTableSource } from "@/lib/artifacts/table-spec";
 
 const ChartPreview = dynamic(
   () => import("./chart-preview").then((module) => module.ChartPreview),
@@ -46,6 +48,16 @@ const ChartPreview = dynamic(
     loading: () => (
       <output className="p-4 text-sm text-muted-foreground">
         Loading chart preview…
+      </output>
+    ),
+  },
+);
+const TablePreview = dynamic(
+  () => import("./table-preview").then((module) => module.TablePreview),
+  {
+    loading: () => (
+      <output className="p-4 text-sm text-muted-foreground">
+        Loading table preview…
       </output>
     ),
   },
@@ -94,7 +106,7 @@ export function ArtifactPreview({
 }) {
   const document = useMemo(
     () =>
-      kind === "chart"
+      kind === "chart" || kind === "table"
         ? ""
         : kind === "html"
           ? artifactPreviewDocument(source)
@@ -102,6 +114,7 @@ export function ArtifactPreview({
     [source, kind],
   );
   if (kind === "chart") return <ChartPreview source={source} />;
+  if (kind === "table") return <TablePreview source={source} />;
   return (
     <iframe
       title={`${kind === "html" ? "HTML" : "Markdown"} artifact preview`}
@@ -167,11 +180,16 @@ export function ArtifactEditor({
     () => (document.kind === "chart" ? parseChartSource(content) : null),
     [document.kind, content],
   );
+  const tableValidation = useMemo(
+    () => (document.kind === "table" ? parseTableSource(content) : null),
+    [document.kind, content],
+  );
   const canSave =
     dirty &&
     title.trim().length > 0 &&
     !overLimit &&
     (!chartValidation || chartValidation.success) &&
+    (!tableValidation || tableValidation.success) &&
     document.version < artifactLimits.revisions;
   function fixtureDownload(format: "source" | "svg") {
     if (
@@ -275,7 +293,9 @@ export function ArtifactEditor({
           <label htmlFor={`${uid}-source`} className="text-sm font-medium">
             {document.kind === "chart"
               ? "Chart JSON"
-              : `${artifactKindLabel[document.kind]} source`}
+              : document.kind === "table"
+                ? "Table JSON"
+                : `${artifactKindLabel[document.kind]} source`}
           </label>
           <Textarea
             ref={sourceInput}
@@ -285,21 +305,37 @@ export function ArtifactEditor({
             disabled={busy}
             value={content}
             onChange={(event) => setContent(event.target.value)}
-            aria-invalid={chartValidation?.success === false}
+            aria-invalid={
+              chartValidation?.success === false ||
+              tableValidation?.success === false
+            }
             aria-describedby={
-              document.kind === "chart" ? `${uid}-chart-validation` : undefined
+              document.kind === "chart" || document.kind === "table"
+                ? `${uid}-structured-validation`
+                : undefined
             }
             className="min-h-64 flex-1 resize-none font-mono text-base leading-6 [tab-size:2]"
           />
           {document.kind === "chart" && (
             <p
-              id={`${uid}-chart-validation`}
+              id={`${uid}-structured-validation`}
               role={chartValidation?.success === false ? "alert" : undefined}
               className={`text-sm ${chartValidation?.success === false ? "text-destructive" : "text-muted-foreground"}`}
             >
               {chartValidation?.success === false
                 ? chartValidation.error
                 : "Valid chart JSON. Preview your changes, then save a revision. Use null for a missing value."}
+            </p>
+          )}
+          {document.kind === "table" && (
+            <p
+              id={`${uid}-structured-validation`}
+              role={tableValidation?.success === false ? "alert" : undefined}
+              className={`text-sm ${tableValidation?.success === false ? "text-destructive" : "text-muted-foreground"}`}
+            >
+              {tableValidation?.success === false
+                ? tableValidation.error
+                : "Valid table JSON. Cells may be text, finite numbers, or booleans. Preview your changes, then save a revision."}
             </p>
           )}
           <span
@@ -317,7 +353,9 @@ export function ArtifactEditor({
           <p className="text-sm text-muted-foreground">
             {document.kind === "chart"
               ? "Preview of your current edits. Saving adds a revision; downloads use the last saved revision."
-              : "Safe reading preview. Links, scripts, images, external resources, and custom styles are disabled."}
+              : document.kind === "table"
+                ? "Preview of your current edits. CSV and XLSX downloads use the explicitly selected saved revision."
+                : "Safe reading preview. Links, scripts, images, external resources, and custom styles are disabled."}
           </p>
           <ArtifactPreview source={content} kind={document.kind} />
         </TabsContent>
@@ -462,7 +500,9 @@ export function ArtifactEditor({
               ? "HTML source (.txt)"
               : document.kind === "chart"
                 ? "chart JSON"
-                : "Markdown"}
+                : document.kind === "table"
+                  ? "table JSON"
+                  : "Markdown"}
           </a>
         </Button>
         {document.kind === "chart" && (
@@ -486,6 +526,30 @@ export function ArtifactEditor({
               Download saved SVG
             </a>
           </Button>
+        )}
+        {document.kind === "table" &&
+          (["csv", "xlsx"] as const).map((format) =>
+            fixture ? (
+              <Button key={format} variant="outline" disabled>
+                Download revision {selected} {format.toUpperCase()}
+              </Button>
+            ) : (
+              <Button key={format} variant="outline" asChild>
+                <a
+                  href={`/api/artifacts?id=${encodeURIComponent(document.id)}&version=${encodeURIComponent(selected)}&download=${format}`}
+                  download
+                >
+                  Download revision {selected} {format.toUpperCase()}
+                </a>
+              </Button>
+            ),
+          )}
+        {document.kind === "table" && (
+          <p className="basis-full text-xs text-muted-foreground">
+            CSV adds a leading tab to formula-like text so spreadsheet apps keep
+            it as text. XLSX stores those values as explicit text cells. The
+            saved JSON is unchanged.
+          </p>
         )}
         <Button
           variant="ghost"
@@ -720,11 +784,19 @@ function ArtifactPanel({
                 <option value="markdown">Markdown document</option>
                 <option value="html">HTML document</option>
                 <option value="chart">Chart from JSON</option>
+                <option value="table">Typed table from JSON</option>
               </select>
               {kind === "chart" && (
                 <p className="text-sm text-muted-foreground">
                   The response must contain a complete version 1 chart JSON spec
                   for bar, line, area, or scatter. No model call is made.
+                </p>
+              )}
+              {kind === "table" && (
+                <p className="text-sm text-muted-foreground">
+                  The response must contain a complete version 1 table JSON spec
+                  with positional text, finite-number, or boolean cells. No
+                  model call is made.
                 </p>
               )}
               <Button
@@ -774,6 +846,8 @@ function ArtifactPanel({
                     />
                   ) : item.kind === "chart" ? (
                     <ChartNoAxesCombined className="shrink-0" />
+                  ) : item.kind === "table" ? (
+                    <Table2 className="shrink-0" />
                   ) : item.kind === "html" ? (
                     <FileCode2 className="shrink-0" />
                   ) : (

@@ -7,11 +7,12 @@ export const artifactLimits = {
   ownerBytes: 8 * 1024 * 1024,
   requestBytes: 800 * 1024,
 } as const;
-export const artifactKind = z.enum(["markdown", "html", "chart"]);
+export const artifactKind = z.enum(["markdown", "html", "chart", "table"]);
 export const artifactKindLabel = {
   markdown: "Markdown",
   html: "HTML",
   chart: "Chart",
+  table: "Table",
 } as const;
 export const artifactIdentifier = z
   .string()
@@ -89,7 +90,17 @@ export function artifactFilename(title: string, kind: ArtifactKind) {
       .replace(/^-+|-+$/g, "")
       .slice(0, 72) || "artifact";
   // Source is deliberately delivered as text, never as an executable HTML page.
-  return `${stem}.${kind === "html" ? "html.txt" : kind === "chart" ? "chart.json" : "md"}`;
+  return `${stem}.${kind === "html" ? "html.txt" : kind === "chart" ? "chart.json" : kind === "table" ? "table.json" : "md"}`;
+}
+export function tableExportFilename(
+  title: string,
+  version: number,
+  format: "csv" | "xlsx",
+) {
+  return artifactFilename(title, "table").replace(
+    /\.table\.json$/,
+    `-v${version}.${format}`,
+  );
 }
 export function artifactSource(parts: unknown, kind: ArtifactKind) {
   if (!Array.isArray(parts)) return "";
@@ -104,13 +115,17 @@ export function artifactSource(parts: unknown, kind: ArtifactKind) {
     )
     .join("\n\n");
   const fenced =
-    /^\s*```(html|markdown|md|chart|json)\s*\n([\s\S]*?)\n```\s*$/i.exec(text);
+    /^\s*```(html|markdown|md|chart|table|json)\s*\n([\s\S]*?)\n```\s*$/i.exec(
+      text,
+    );
   return fenced &&
     (kind === "chart"
       ? ["chart", "json"].includes(fenced[1].toLowerCase())
-      : kind === "html"
-        ? fenced[1].toLowerCase() === "html"
-        : ["markdown", "md"].includes(fenced[1].toLowerCase()))
+      : kind === "table"
+        ? ["table", "json"].includes(fenced[1].toLowerCase())
+        : kind === "html"
+          ? fenced[1].toLowerCase() === "html"
+          : ["markdown", "md"].includes(fenced[1].toLowerCase()))
     ? fenced[2]
     : text;
 }
@@ -124,6 +139,7 @@ export function artifactError(id: string) {
       "This artifact has 40 revisions. Download the source or create another artifact.",
     artifact_storage_limit:
       "Artifact storage is full. Download and delete an older artifact to make space.",
+    artifact_export_limit: "The generated file exceeds the 8 MiB export limit.",
     invalid_artifact:
       "Check the title and source. Content must fit within 128 KiB.",
     not_found:

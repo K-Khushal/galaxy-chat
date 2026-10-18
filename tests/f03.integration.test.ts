@@ -148,6 +148,7 @@ beforeAll(async () => {
     "0006_attachments",
     "0007_artifacts",
     "0009_chart_artifacts",
+    "0010_table_artifacts",
   ]);
 
   await db

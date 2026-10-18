@@ -19,9 +19,15 @@ import {
   artifactMutation,
   artifactSource,
 } from "./contract";
+import { parseTableSource } from "./table-spec";
 
 const owned = (id: string, userId: string) =>
   and(eq(artifact.id, id), eq(artifact.userId, userId));
+function validContent(kind: string, content: string) {
+  if (kind === "chart") return parseChartSource(content).success;
+  if (kind === "table") return parseTableSource(content).success;
+  return true;
+}
 function summary(
   row: typeof artifact.$inferSelect,
   title: string,
@@ -91,6 +97,34 @@ export async function readArtifact(
     })),
   };
 }
+export async function readArtifactRevision(
+  userId: string,
+  id: string,
+  version: number,
+) {
+  const row = (
+    await requireDb()
+      .select({ kind: artifact.kind, revision: artifactRevision })
+      .from(artifact)
+      .innerJoin(
+        artifactRevision,
+        and(
+          eq(artifactRevision.artifactId, artifact.id),
+          eq(artifactRevision.userId, userId),
+          eq(artifactRevision.version, version),
+        ),
+      )
+      .where(owned(id, userId))
+      .limit(1)
+  )[0];
+  if (!row) throw new AppError("not_found", 404);
+  return {
+    kind: artifactKind.parse(row.kind),
+    version: row.revision.version,
+    title: row.revision.title,
+    content: row.revision.content,
+  };
+}
 export async function mutateArtifact(
   userId: string,
   raw: unknown,
@@ -134,7 +168,7 @@ export async function mutateArtifact(
       const source = artifactSource(origin[0].parts, input.kind);
       if (!source.trim() || !artifactContent.safeParse(source).success)
         throw new AppError("invalid_artifact", 400);
-      if (input.kind === "chart" && !parseChartSource(source).success)
+      if (!validContent(input.kind, source))
         throw new AppError("invalid_artifact", 400);
       const count = await tx
         .select({ count: sql<number>`count(*)::integer` })
@@ -195,7 +229,7 @@ export async function mutateArtifact(
         content = input.content;
         title = input.title;
       }
-      if (row.kind === "chart" && !parseChartSource(content).success)
+      if (!validContent(row.kind, content))
         throw new AppError("invalid_artifact", 400);
       await tx
         .update(artifact)

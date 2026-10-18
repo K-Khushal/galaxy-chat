@@ -4,6 +4,7 @@ import { requireChatAccess } from "@/lib/auth/access";
 import { AppError } from "@/lib/errors";
 import { errorResponse } from "@/lib/http/error-response";
 import { assertSameOrigin } from "@/lib/http/origin";
+import { privateDownloadHeaders } from "@/lib/http/private-download";
 
 function attachmentError(error: unknown, id: string) {
   const response = errorResponse(error, id);
@@ -31,15 +32,12 @@ export function attachmentHandlers(
             request.signal,
           );
           return new Response(new Uint8Array(bytes).buffer, {
-            headers: {
-              "Content-Type": "application/octet-stream",
-              "Content-Disposition": `attachment; filename="attachment"; filename*=UTF-8''${encodeURIComponent(name).replace(/['()*]/g, (char) => `%${char.charCodeAt(0).toString(16)}`)}`,
-              "Content-Length": String(bytes.length),
-              "Cache-Control": "private, no-store",
-              "X-Content-Type-Options": "nosniff",
-              "Content-Security-Policy": "sandbox; default-src 'none'",
-              "Referrer-Policy": "no-referrer",
-            },
+            headers: privateDownloadHeaders({
+              contentType: "application/octet-stream",
+              filename: name,
+              fallback: "attachment",
+              length: bytes.length,
+            }),
           });
         }
         return NextResponse.json(
