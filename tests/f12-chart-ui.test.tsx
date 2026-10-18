@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import { Window } from "happy-dom";
+import { act, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ArtifactEditor } from "../components/artifacts/artifact-workbench";
 import {
@@ -6,6 +8,61 @@ import {
   ChartPreview,
 } from "../components/artifacts/chart-preview";
 import { sampleChart } from "../lib/artifacts/chart-spec";
+
+async function chartDom() {
+  const window = new Window();
+  Object.defineProperty(window.HTMLElement.prototype, "getBoundingClientRect", {
+    configurable: true,
+    value: () => ({
+      x: 0,
+      y: 0,
+      width: 800,
+      height: 288,
+      top: 0,
+      right: 800,
+      bottom: 288,
+      left: 0,
+      toJSON: () => ({}),
+    }),
+  });
+  const values = {
+    window,
+    document: window.document,
+    Event: window.Event,
+    navigator: window.navigator,
+    HTMLElement: window.HTMLElement,
+    SVGElement: window.SVGElement,
+    ResizeObserver: window.ResizeObserver,
+    IS_REACT_ACT_ENVIRONMENT: true,
+  };
+  const saved = Object.entries(values).map(([name, value]) => {
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, name);
+    Object.defineProperty(globalThis, name, {
+      value,
+      configurable: true,
+      writable: true,
+    });
+    return { name, descriptor };
+  });
+  const { createRoot } = await import("react-dom/client");
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  return {
+    container,
+    render: async (node: ReactNode) => {
+      await act(async () => root.render(node));
+    },
+    close: async () => {
+      await act(async () => root.unmount());
+      await window.happyDOM.close();
+      for (const { name, descriptor } of saved) {
+        if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+        else Reflect.deleteProperty(globalThis, name);
+      }
+    },
+  };
+}
 
 test("F12 chart previews expose an accessible description and equivalent scoped data table with exact values and explicit missing cells", () => {
   for (const type of ["bar", "line", "area", "scatter"] as const) {
@@ -83,4 +140,29 @@ test("F12 invalid and hostile charts fail closed while the editor remains labele
   expect(html).toContain("&lt;script&gt;");
   expect(html).not.toContain("<script>");
   expect(html).not.toContain("<img");
+});
+
+test("F12 large sparse line and area charts plot every isolated numeric value", async () => {
+  const ui = await chartDom();
+  try {
+    for (const type of ["line", "area"] as const) {
+      const spec = sampleChart(type);
+      spec.series = [{ label: "Sparse values" }];
+      spec.rows = Array.from({ length: 81 }, (_, index) => ({
+        label: `Row ${index + 1}`,
+        values: [[5, 40, 75].includes(index) ? index + 1 : null],
+      }));
+      await ui.render(<ChartPreview source={JSON.stringify(spec)} />);
+      const marks = ui.container.querySelectorAll(
+        `.recharts-${type}-dots circle[cx][cy]`,
+      );
+      expect(marks).toHaveLength(3);
+      for (const mark of marks) {
+        expect(Number.isFinite(Number(mark.getAttribute("cx")))).toBe(true);
+        expect(Number.isFinite(Number(mark.getAttribute("cy")))).toBe(true);
+      }
+    }
+  } finally {
+    await ui.close();
+  }
 });

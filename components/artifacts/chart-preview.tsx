@@ -7,6 +7,7 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  Dot,
   Line,
   LineChart,
   Scatter,
@@ -33,6 +34,41 @@ import {
   chartValue,
   parseChartSource,
 } from "@/lib/artifacts/chart-spec";
+
+type CategoryPoint = { x?: number | null; y?: number | null };
+type CategoryDotProps = {
+  index?: number;
+  cx?: number;
+  cy?: number;
+  fill?: string;
+  stroke?: string;
+  points?: CategoryPoint[];
+};
+
+function isPlottedPoint(point: CategoryPoint | undefined) {
+  return Number.isFinite(point?.x) && Number.isFinite(point?.y);
+}
+
+function IsolatedCategoryDot({
+  index,
+  cx,
+  cy,
+  fill,
+  stroke,
+  points,
+}: CategoryDotProps) {
+  if (
+    index === undefined ||
+    !points ||
+    !isPlottedPoint(points[index]) ||
+    isPlottedPoint(points[index - 1]) ||
+    isPlottedPoint(points[index + 1])
+  )
+    return null;
+  return (
+    <Dot cx={cx} cy={cy} r={3} fill={fill} stroke={stroke} strokeWidth={2} />
+  );
+}
 
 export function ChartPreview({ source }: { source: string }) {
   const result = useMemo(() => parseChartSource(source), [source]);
@@ -114,6 +150,8 @@ function ValidChart({ spec }: { spec: ChartSpec }) {
     stroke: chartColors[index],
     fill: chartColors[index],
   });
+  const categoryDots =
+    categoryData.length <= 80 ? true : <IsolatedCategoryDot />;
   const chart =
     spec.type === "bar" ? (
       <BarChart data={categoryData} margin={margin}>
@@ -141,7 +179,7 @@ function ValidChart({ spec }: { spec: ChartSpec }) {
             strokeDasharray={chartDashes[index]}
             isAnimationActive={false}
             connectNulls={false}
-            dot={categoryData.length <= 80}
+            dot={categoryDots}
           />
         ))}
       </LineChart>
@@ -159,7 +197,7 @@ function ValidChart({ spec }: { spec: ChartSpec }) {
             strokeDasharray={chartDashes[index]}
             isAnimationActive={false}
             connectNulls={false}
-            dot={categoryData.length <= 80}
+            dot={categoryDots}
             baseValue={0}
           />
         ))}
