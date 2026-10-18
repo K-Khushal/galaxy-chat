@@ -546,9 +546,10 @@ export function ArtifactEditor({
           )}
         {document.kind === "table" && (
           <p className="basis-full text-xs text-muted-foreground">
-            CSV adds a leading tab to formula-like text so spreadsheet apps keep
-            it as text. XLSX stores those values as explicit text cells. The
-            saved JSON is unchanged.
+            CSV adds a leading tab to formula-like text to help mitigate formula
+            injection. Behavior varies by spreadsheet app; verify the downloaded
+            file before opening it. XLSX stores those values as explicit text
+            cells. The saved JSON is unchanged.
           </p>
         )}
         <Button
