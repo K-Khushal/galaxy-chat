@@ -139,9 +139,9 @@ export default function HelpPage() {
         <h2>Save an answer as an artifact</h2>
         <p>
           Under a saved assistant response, choose Create artifact, add a title,
-          and select Markdown or HTML. You can also reopen saved documents with
-          Artifacts in the conversation header. Guest and temporary
-          conversations cannot save artifacts.
+          and select Markdown, HTML, or Chart from JSON. You can also reopen
+          saved documents with Artifacts in the conversation header. Guest and
+          temporary conversations cannot save artifacts.
         </p>
         <p>
           Edit the source and choose Save revision. History lets you restore a
@@ -150,11 +150,38 @@ export default function HelpPage() {
           Markdown or HTML source as a text file; Galaxy does not run it.
         </p>
         <p>
+          Charts accept a version 1 JSON spec for bar, line, area, or scatter
+          plots, with a title, description, labeled axes, series, and rows.
+          Preview includes an equivalent data table. Use null for missing
+          values; at most eight series and 2,000 scalar value slots, including
+          missing values, are allowed (scatter pairs, including missing pairs,
+          count as two). Unknown fields, code, and remote data are rejected.
+          Save a revision to download its chart JSON or inert SVG. Editing and
+          rendering a chart do not call a model.
+        </p>
+        <p>
           Each artifact allows 128 KiB of source per revision and 40 revisions.
           Your account can store 50 artifacts and 8 MiB of revision source in
           total. Download a copy before deleting an artifact; deletion removes
           all of its revisions. Deleting its originating message, conversation,
           or account also removes the artifact.
+        </p>
+      </section>
+      <section id="tools">
+        <h2>Run bounded tools with your provider key</h2>
+        <p>
+          Open Tools to ask a reviewed BYOK model to use arithmetic or read the
+          exact saved artifact revisions you select. A run allows up to three
+          model steps and four tool calls within 20 seconds. Tool results are
+          untrusted, and no search, browser, external write, connector, or code
+          execution tool is available.
+        </p>
+        <p>
+          Choose the provider model and set an application cost ceiling at or
+          above its estimate, then acknowledge that your provider still bills
+          the key. The estimate and application ceiling cannot guarantee the
+          provider bill, so keep provider spending controls enabled. If no
+          reviewed model or usable key is configured, Tools stays off.
         </p>
       </section>
       <section>
@@ -183,7 +210,8 @@ export default function HelpPage() {
           history; provider retention and anonymous cost records are separate.
           Private attachment support requires configured storage and reviewed
           model capabilities. Artifacts can be created explicitly from saved
-          assistant replies. Tools, search, and browser work remain roadmap
+          assistant replies. Bounded tools require a reviewed BYOK model and
+          provider spending controls. Search and browser work remain roadmap
           features. Live guest verification, provider behavior, deployment, and
           the release quality gate still require verification before public
           beta.
