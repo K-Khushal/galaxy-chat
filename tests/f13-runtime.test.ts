@@ -334,3 +334,46 @@ test("F13 SDK-generated invalid-input tool errors cannot bypass the per-result c
   expect(h.claims).toEqual([0]);
   expect(h.events).toEqual([]);
 });
+
+test("F13 cancellation while the running event waits prevents revision dispatch after it resolves", async () => {
+  const h = harness();
+  const controller = new AbortController();
+  const running = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const model = new MockLanguageModelV4({
+    doGenerate: receipt([
+      call("cancel-before-read", "readRevision", {
+        artifactId: "selected",
+        version: 2,
+      }),
+    ]),
+  });
+  const outcome = rejectionOf(
+    runToolAgent({
+      model,
+      prompt: "Read the selected revision",
+      revisions: [{ artifactId: "selected", version: 2 }],
+      approvalSecret: secret,
+      signal: controller.signal,
+      hooks: {
+        ...h.hooks,
+        event: async (event) => {
+          await h.hooks.event(event);
+          if (event.state === "running") {
+            running.resolve();
+            await release.promise;
+          }
+        },
+      },
+    }),
+  );
+  await running.promise;
+  controller.abort();
+  release.resolve();
+  expect(await outcome).toBeDefined();
+  // Drain the event's continuation even when the outer abort has already won.
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(h.reads).toBe(0);
+  expect(model.doGenerateCalls).toHaveLength(1);
+  expect(h.events.filter((event) => event.state === "completed")).toEqual([]);
+});

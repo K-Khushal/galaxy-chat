@@ -46,8 +46,8 @@ export function ActionApproval({
         {argumentsText}
       </pre>
       <p className="text-sm">
-        Cost ceiling: {cost}. Approval expires in five minutes and can be used
-        once.
+        Cost ceiling: {cost}. Approval expires no later than 20 seconds after
+        the original run started and can be used once.
       </p>
       <output className="block text-sm">Approval {state}</output>
       <div className="flex flex-wrap gap-2">

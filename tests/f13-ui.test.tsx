@@ -50,6 +50,9 @@ test("F13 approval presentation exposes exact target, arguments and cost without
   expect(html).toContain("Approve action");
   expect(html).toContain("Deny action");
   expect(html).toContain("$0.01");
+  expect(html).toContain("20 seconds after");
+  expect(html).toContain("the original run started");
+  expect(html).not.toContain("five minutes");
   expect(html).toContain("&lt;script&gt;");
   expect(html).not.toContain("<script>");
   expect(html).not.toContain("<img");

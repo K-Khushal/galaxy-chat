@@ -184,6 +184,7 @@ export async function runToolAgent(options: {
   ) => {
     signal.throwIfAborted();
     await options.hooks.event({ id, name, state: "running" });
+    signal.throwIfAborted();
     try {
       const output = boundedToolResult(await abortable(run(), signal));
       signal.throwIfAborted();
