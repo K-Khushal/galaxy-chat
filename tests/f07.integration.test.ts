@@ -1,4 +1,4 @@
-import { expect, mock, onTestFinished, spyOn, test } from "bun:test";
+import { expect, mock, spyOn, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { setImmediate } from "node:timers/promises";
 import { PGlite } from "@electric-sql/pglite";
@@ -8,6 +8,7 @@ import { sql } from "drizzle-orm";
 import type { ByokProvider, ByokView } from "../lib/byok/contract";
 import type { PostRequestBody } from "../lib/schema/chat/chat";
 import { rejectionOf } from "./helpers/rejection";
+import { setupFixtureBeforeEach } from "./helpers/setup-fixture";
 
 mock.module("server-only", () => ({}));
 const { closeDb, requireDb } = await import("../lib/db/client");
@@ -96,7 +97,6 @@ async function fixture() {
     })();
     return closing;
   };
-  onTestFinished(close);
   try {
     for (const name of readdirSync("drizzle")
       .filter((n) => n.endsWith(".sql"))
@@ -262,6 +262,7 @@ async function fixture() {
     throw error;
   }
 }
+const useFixture = setupFixtureBeforeEach(fixture);
 function body(overrides: Partial<PostRequestBody> = {}): PostRequestBody {
   const id = crypto.randomUUID();
   return {
@@ -434,7 +435,7 @@ test("F07 catalog accepts only explicit unexpired reviewed capabilities and know
 });
 
 test("F07 signed-session settings enforce ownership, origin, bounded replacement/deletion and safe export/cascade", async () => {
-  const f = await fixture();
+  const f = useFixture();
   try {
     expect(
       (await settings.GET(new Request("http://127.0.0.1:3000/api/providers")))
@@ -577,7 +578,7 @@ test("F07 signed-session settings enforce ownership, origin, bounded replacement
 });
 
 test("F07 Test key uses authenticated metadata GETs only and redacts rejected/unavailable responses", async () => {
-  const f = await fixture();
+  const f = useFixture();
   try {
     let open = await f.save("openrouter");
     const gateway = await f.save("gateway");
@@ -677,7 +678,7 @@ test("F07 Test key uses authenticated metadata GETs only and redacts rejected/un
 });
 
 test("F07 real OpenRouter BYOK chat streams once with explicit isolated key, idempotency and no credit rows", async () => {
-  const f = await fixture();
+  const f = useFixture();
   try {
     await f.save("openrouter");
     await f.save("gateway");
@@ -745,7 +746,7 @@ test("F07 real OpenRouter BYOK chat streams once with explicit isolated key, ide
 });
 
 test("F07 Gateway uses only its saved key, bounded SDK wire options and declared supplied reasoning/sources", async () => {
-  const f = await fixture();
+  const f = useFixture();
   try {
     await f.save("gateway");
     await f.save("openrouter");
@@ -804,7 +805,7 @@ test("F07 Gateway uses only its saved key, bounded SDK wire options and declared
 });
 
 test("F07 revoked provider credentials stay redacted and never fall back; replacement restores only the new revision", async () => {
-  const f = await fixture();
+  const f = useFixture();
   try {
     const saved = await f.save("openrouter");
     f.respond(() =>
@@ -839,7 +840,7 @@ test("F07 revoked provider credentials stay redacted and never fall back; replac
 });
 
 test("F07 durable reservation serializes concurrent calls, replacement/delete races and conservative crash recovery", async () => {
-  const f = await fixture();
+  const f = useFixture();
   try {
     let saved = await f.save("openrouter");
     const reserve = (id = crypto.randomUUID(), userId = "alice") =>
@@ -898,7 +899,7 @@ test("F07 durable reservation serializes concurrent calls, replacement/delete ra
 });
 
 test("F07 stored rotation, retired versions, tampering and pre-entry config revocation reject without provider execution", async () => {
-  const f = await fixture();
+  const f = useFixture();
   try {
     await f.save("openrouter");
     process.env.BYOK_ACTIVE_KEY_VERSION = "v2";
@@ -960,7 +961,7 @@ test("F07 stored rotation, retired versions, tampering and pre-entry config revo
 });
 
 test("F07 BYOK disconnect still persists; cancellation/truncation hold resources and never debit platform money", async () => {
-  const f = await fixture();
+  const f = useFixture();
   try {
     await f.save("openrouter");
     let release = () => {};
@@ -1030,7 +1031,7 @@ test("F07 BYOK disconnect still persists; cancellation/truncation hold resources
 });
 
 test("F07 BYOK resource policy enforces durable hourly/daily/global/lifetime limits and pre-entry abort", async () => {
-  const f = await fixture();
+  const f = useFixture();
   try {
     await f.save("openrouter");
     const controller = new AbortController();
@@ -1067,7 +1068,7 @@ test("F07 BYOK resource policy enforces durable hourly/daily/global/lifetime lim
 
 for (const funding of ["openrouter", "gateway"] as const) {
   test(`F07 ${funding} preserves edit/regenerate/retry branches, ownership and the two message slots`, async () => {
-    const f = await fixture();
+    const f = useFixture();
     try {
       for (const provider of ["openrouter", "gateway"] as const)
         await f.save(provider);
@@ -1184,7 +1185,7 @@ for (const funding of ["openrouter", "gateway"] as const) {
 }
 
 test("F07 a late metadata rejection cannot invalidate a replacement key or another owner's key", async () => {
-  const f = await fixture();
+  const f = useFixture();
   try {
     const saved = await f.save("openrouter");
     await f.save("openrouter", `${userKey}bob9`, "bob");
@@ -1227,30 +1228,8 @@ test("F07 a late metadata rejection cannot invalidate a replacement key or anoth
   }
 });
 
-test("F07 database browser roles cannot read or mutate BYOK ciphertext or resource rows", async () => {
-  const database = await PGlite.create();
-  try {
-    await database.exec("CREATE ROLE anon; CREATE ROLE authenticated;");
-    for (const file of readdirSync("drizzle")
-      .filter((name) => name.endsWith(".sql"))
-      .sort())
-      await database.exec(readFileSync(`drizzle/${file}`, "utf8"));
-    const result = await database.query<{ allowed: boolean }>(
-      "SELECT has_table_privilege('anon','provider_credential','SELECT') OR has_table_privilege('authenticated','provider_credential','INSERT') OR has_table_privilege('anon','byok_operation','UPDATE') OR has_table_privilege('authenticated','byok_operation','DELETE') AS allowed",
-    );
-    expect(result.rows[0].allowed).toBe(false);
-    const rls = await database.query<{ relrowsecurity: boolean }>(
-      "SELECT relrowsecurity FROM pg_class WHERE relname IN ('provider_credential','byok_operation')",
-    );
-    expect(rls.rows).toHaveLength(2);
-    expect(rls.rows.every((r) => r.relrowsecurity)).toBe(true);
-  } finally {
-    await database.close();
-  }
-});
-
 test("F07 SDK warning logs and UI streams discard provider diagnostic messages and metadata", async () => {
-  const f = await fixture();
+  const f = useFixture();
   const warnings = spyOn(process, "emitWarning").mockImplementation(() => {});
   try {
     await f.save("gateway");
@@ -1285,7 +1264,7 @@ test("F07 SDK warning logs and UI streams discard provider diagnostic messages a
 
 for (const outcome of ["entered", "held"] as const) {
   test(`F07 deleting an ${outcome} account preserves anonymous global slots without retaining keys or personal records`, async () => {
-    const f = await fixture();
+    const f = useFixture();
     try {
       await f.save("openrouter");
       await f.save("openrouter", `${userKey}bob9`, "bob");

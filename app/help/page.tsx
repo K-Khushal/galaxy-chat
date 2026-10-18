@@ -186,6 +186,23 @@ export default function HelpPage() {
           files are limited to 8 MiB.
         </p>
       </section>
+      <section id="tools">
+        <h2>Run bounded tools with your provider key</h2>
+        <p>
+          Open Tools to ask a reviewed BYOK model to use arithmetic or read the
+          exact saved artifact revisions you select. A run allows up to three
+          model steps and four tool calls within 20 seconds. Tool results are
+          untrusted, and no search, browser, external write, connector, or code
+          execution tool is available.
+        </p>
+        <p>
+          Choose the provider model and set an application cost ceiling at or
+          above its estimate, then acknowledge that your provider still bills
+          the key. The estimate and application ceiling cannot guarantee the
+          provider bill, so keep provider spending controls enabled. If no
+          reviewed model or usable key is configured, Tools stays off.
+        </p>
+      </section>
       <section>
         <h2>Report a problem</h2>
         <p>
@@ -212,7 +229,8 @@ export default function HelpPage() {
           history; provider retention and anonymous cost records are separate.
           Private attachment support requires configured storage and reviewed
           model capabilities. Artifacts can be created explicitly from saved
-          assistant replies. Tools, search, and browser work remain roadmap
+          assistant replies. Bounded tools require a reviewed BYOK model and
+          provider spending controls. Search and browser work remain roadmap
           features. Live guest verification, provider behavior, deployment, and
           the release quality gate still require verification before public
           beta.

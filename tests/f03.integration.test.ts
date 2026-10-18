@@ -147,6 +147,7 @@ beforeAll(async () => {
     "0005_explicit_context",
     "0006_attachments",
     "0007_artifacts",
+    "0008_tools",
     "0009_chart_artifacts",
     "0010_table_artifacts",
   ]);
