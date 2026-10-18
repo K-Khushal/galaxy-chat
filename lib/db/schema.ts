@@ -167,6 +167,7 @@ export const providerCredential = pgTable(
   (table) => [primaryKey({ columns: [table.userId, table.provider] })],
 );
 export const byokOperation = pgTable("byok_operation", {
+  resourceUnits: integer("resource_units").notNull().default(1),
   id: text("id").primaryKey(),
   actorKey: text("actor_key").notNull(),
   provider: text("provider").notNull(),

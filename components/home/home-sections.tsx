@@ -60,8 +60,8 @@ export function HomeSections() {
           <span>Implemented for the gated beta:</span> text conversations,
           explicit memory, projects, temporary chat, private attachments when
           storage is configured, versioned Markdown, HTML, and chart artifacts,
-          and account controls. <span>Still ahead:</span> tools, search, and
-          browser work.
+          bounded tools with reviewed provider models, and account controls.{" "}
+          <span>Still ahead:</span> search and browser work.
         </p>
       </section>
       <section

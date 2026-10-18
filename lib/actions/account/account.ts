@@ -21,6 +21,7 @@ import {
   user,
 } from "@/lib/db/schema";
 import { AppError } from "@/lib/errors";
+import { ToolStore } from "@/lib/tools/store";
 
 export type AccountProfile = {
   id: string;
@@ -32,6 +33,7 @@ export type AccountProfile = {
 
 export type AccountExport = {
   profile: AccountProfile;
+  toolData: Awaited<ReturnType<ToolStore["export"]>>;
   attachments: Array<AttachmentView & { extractedText: string }>;
   artifacts: Array<typeof artifact.$inferSelect>;
   artifactRevisions: Array<typeof artifactRevision.$inferSelect>;
@@ -100,6 +102,7 @@ export async function exportOwnedAccount(
 ): Promise<AccountExport> {
   const db = requireDb();
   const profile = await ownedProfile(userId);
+  const toolData = await new ToolStore(db).export(userId);
   const chats = await db
     .select({
       id: chatTable.id,
@@ -192,6 +195,7 @@ export async function exportOwnedAccount(
   }));
   return {
     profile,
+    toolData,
     attachments,
     artifacts,
     artifactRevisions,
