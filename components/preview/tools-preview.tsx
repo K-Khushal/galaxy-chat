@@ -23,6 +23,32 @@ const sample: ToolRunView = {
     { id: "f", name: "arithmetic", state: "failed" },
   ],
 };
+const searchSource: ToolRunView = {
+  ...sample,
+  answer: "A bounded fixture answer with source [[S1]].",
+  events: [
+    {
+      id: "search",
+      name: "webSearch",
+      state: "completed",
+      output: "Fixture evidence is untrusted.",
+    },
+  ],
+  search: {
+    status: "results",
+    retrievedAt: "2026-10-18T00:00:00.000Z",
+    sources: [
+      {
+        id: "S1",
+        title: "A deliberately long local source title that wraps on a phone",
+        url: "https://example.com/bounded-search-source",
+        hostname: "example.com",
+        snippet:
+          "A local untrusted snippet with <script> text that React renders inertly and enough content to exercise narrow wrapping.",
+      },
+    ],
+  },
+};
 export function ToolsPreview() {
   const [mode, setMode] = useState("run");
   const [approval, setApproval] = useState<
@@ -43,6 +69,21 @@ export function ToolsPreview() {
                 },
               ],
         credentials: [{ provider: "openrouter", testState: "valid" }],
+        searchProviders: [
+          {
+            provider: "tavily",
+            name: "Tavily Search",
+            priceRevision: "fixture-price",
+            estimateMicrodollars: 8000,
+          },
+        ],
+        searchCredentials: [
+          {
+            provider: "tavily",
+            maskedKey: "••••1234",
+            revision: crypto.randomUUID(),
+          },
+        ],
         revisions: [
           {
             artifactId: "selected-fixture",
@@ -75,11 +116,19 @@ export function ToolsPreview() {
     <div className="min-h-dvh bg-background">
       <div className="mx-auto max-w-3xl px-4 pt-4">
         <p className="text-xs leading-relaxed text-muted-foreground">
-          Local F13-A fixture. Uses the production components. No authentication
+          Local F13-B fixture. Uses the production components. No authentication
           or provider requests.
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
-          {["run", "off", "states", "approval"].map((m) => (
+          {[
+            "run",
+            "off",
+            "states",
+            "search",
+            "noresults",
+            "searcherror",
+            "approval",
+          ].map((m) => (
             <Button
               key={m}
               variant={mode === m ? "secondary" : "outline"}
@@ -91,7 +140,13 @@ export function ToolsPreview() {
                   ? "Tools off"
                   : m === "states"
                     ? "All tool states"
-                    : "Inert approval"}
+                    : m === "search"
+                      ? "Search sources"
+                      : m === "noresults"
+                        ? "Search no results"
+                        : m === "searcherror"
+                          ? "Search error"
+                          : "Inert approval"}
             </Button>
           ))}
         </div>
@@ -125,9 +180,34 @@ export function ToolsPreview() {
             Reset fixture
           </Button>
         </div>
-      ) : mode === "states" ? (
+      ) : ["states", "search", "noresults", "searcherror"].includes(mode) ? (
         <div className="mx-auto max-w-3xl p-4">
-          <ToolTrace run={sample} />
+          <ToolTrace
+            run={
+              mode === "search"
+                ? searchSource
+                : mode === "noresults"
+                  ? {
+                      ...searchSource,
+                      answer: "No current search evidence was returned.",
+                      search: { status: "no_results", sources: [] },
+                    }
+                  : mode === "searcherror"
+                    ? {
+                        ...searchSource,
+                        answer: "Search evidence was unavailable.",
+                        events: [
+                          {
+                            id: "search",
+                            name: "webSearch",
+                            state: "failed",
+                          },
+                        ],
+                        search: { status: "provider_error", sources: [] },
+                      }
+                    : sample
+            }
+          />
         </div>
       ) : (
         <ToolsWorkbench key={mode} client={client} />

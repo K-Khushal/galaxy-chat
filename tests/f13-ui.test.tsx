@@ -69,6 +69,56 @@ test("F13 USD ceilings parse decimal money without floating point multiplication
     expect(microdollarsFromUSD(value)).toBeUndefined();
 });
 
+test("F13-B search provenance renders escaped snippets and distinct terminal states", () => {
+  const sourceHtml = renderToStaticMarkup(
+    <ToolTrace
+      run={{
+        id: "search",
+        state: "completed",
+        answer: "Answer [[S1]]",
+        events: [{ id: "s", name: "webSearch", state: "completed" }],
+        search: {
+          status: "results",
+          retrievedAt: "2026-10-18T00:00:00.000Z",
+          sources: [
+            {
+              id: "S1",
+              title: "<script>unsafe()</script>",
+              url: "https://example.com/safe",
+              hostname: "example.com",
+              snippet: '<img src="https://evil.invalid"> untrusted',
+            },
+          ],
+        },
+      }}
+    />,
+  );
+  expect(sourceHtml).toContain("Search snippet · untrusted");
+  expect(sourceHtml).toContain("example.com");
+  expect(sourceHtml).toContain("noopener");
+  expect(sourceHtml).toContain("&lt;script&gt;");
+  expect(sourceHtml).not.toContain("<script>");
+  expect(sourceHtml).not.toContain("<img");
+  for (const [status, copy] of [
+    ["not_used", "authorized but not used"],
+    ["no_results", "no usable results"],
+    ["provider_error", "did not return usable evidence"],
+  ] as const) {
+    const html = renderToStaticMarkup(
+      <ToolTrace
+        run={{
+          id: status,
+          state: "completed",
+          answer: "",
+          events: [],
+          search: { status, sources: [] },
+        }}
+      />,
+    );
+    expect(html).toContain(copy);
+  }
+});
+
 test("F13 disabled tools notice renders as one block box", async () => {
   const window = new Window();
   const globals = {

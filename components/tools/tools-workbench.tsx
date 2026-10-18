@@ -34,7 +34,9 @@ export function ToolTrace({ run }: { run: ToolRunView }) {
               <span className="font-medium">
                 {event.name === "readRevision"
                   ? "Read selected revision"
-                  : "Arithmetic"}
+                  : event.name === "webSearch"
+                    ? "Search the web"
+                    : "Arithmetic"}
               </span>
               <span className="text-sm text-muted-foreground">
                 {event.state}
@@ -58,6 +60,60 @@ export function ToolTrace({ run }: { run: ToolRunView }) {
           {run.answer}
         </p>
       )}
+      {run.search && (
+        <section
+          aria-label="Search sources"
+          className="rounded-lg border border-border p-4"
+        >
+          <h3 className="text-sm font-medium">Search sources</h3>
+          {run.search.status === "not_used" && (
+            <p className="mt-2 text-sm text-muted-foreground">
+              Search was authorized but not used for this answer.
+            </p>
+          )}
+          {run.search.status === "provider_error" && (
+            <p className="mt-2 text-sm text-muted-foreground">
+              The search provider did not return usable evidence. Its cost may
+              remain held.
+            </p>
+          )}
+          {run.search.status === "no_results" && (
+            <p className="mt-2 text-sm text-muted-foreground">
+              The search completed with no usable results.
+            </p>
+          )}
+          {run.search.status === "results" && (
+            <ol className="mt-3 space-y-3">
+              {run.search.sources.map((source) => (
+                <li
+                  key={source.id}
+                  className="min-w-0 rounded-md bg-muted p-3 text-sm"
+                >
+                  <a
+                    className="font-medium underline underline-offset-4"
+                    href={source.url}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                  >
+                    {source.id} · {source.title || source.hostname}
+                  </a>
+                  <p className="break-all text-xs text-muted-foreground">
+                    {source.hostname}
+                  </p>
+                  <p className="mt-2 break-words">
+                    Search snippet · untrusted: {source.snippet}
+                  </p>
+                  {run.search?.retrievedAt && (
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Retrieved {run.search.retrievedAt}
+                    </p>
+                  )}
+                </li>
+              ))}
+            </ol>
+          )}
+        </section>
+      )}
     </section>
   );
 }
@@ -72,6 +128,11 @@ export function ToolsWorkbench({
   const [selected, setSelected] = useState<string[]>([]);
   const [ceiling, setCeiling] = useState("");
   const [ack, setAck] = useState(false);
+  const [searchProvider, setSearchProvider] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchCeiling, setSearchCeiling] = useState("");
+  const [searchBudgetAck, setSearchBudgetAck] = useState(false);
+  const [searchPrivacyAck, setSearchPrivacyAck] = useState(false);
   const [pending, setPending] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [run, setRun] = useState<ToolRunView | null>(null);
@@ -101,6 +162,20 @@ export function ToolsWorkbench({
       (c) => c.provider === model.funding && c.testState !== "invalid",
     );
   const cost = microdollarsFromUSD(ceiling) ?? 0;
+  const search = (catalog?.searchProviders ?? []).find(
+    (provider) => provider.provider === searchProvider,
+  );
+  const searchCredential = (catalog?.searchCredentials ?? []).find(
+    (credential) => credential.provider === search?.provider,
+  );
+  const searchCost = microdollarsFromUSD(searchCeiling) ?? 0;
+  const searchReady =
+    !search ||
+    (!!searchCredential &&
+      searchQuery.trim().length > 0 &&
+      searchBudgetAck &&
+      searchPrivacyAck &&
+      searchCost >= search.estimateMicrodollars);
   const ready =
     !!model &&
     !!keyReady &&
@@ -108,8 +183,9 @@ export function ToolsWorkbench({
     prompt.trim().length > 0 &&
     Number.isSafeInteger(cost) &&
     cost >= model.estimateMicrodollars;
+  const canSubmit = ready && searchReady;
   async function submit() {
-    if (busy.current || !ready || !model) return;
+    if (busy.current || !canSubmit || !model) return;
     busy.current = true;
     setPending(true);
     setError("");
@@ -145,6 +221,20 @@ export function ToolsWorkbench({
           revisions: (catalog?.revisions ?? [])
             .filter((r) => selected.includes(`${r.artifactId}:${r.version}`))
             .map(({ artifactId, version }) => ({ artifactId, version })),
+          ...(search && searchCredential
+            ? {
+                search: {
+                  provider: "tavily" as const,
+                  query: searchQuery,
+                  credentialRevision: searchCredential.revision,
+                  priceRevision: search.priceRevision,
+                  estimateMicrodollars: search.estimateMicrodollars,
+                  ceilingMicrodollars: searchCost,
+                  providerBudgetAcknowledged: true as const,
+                  querySharingAcknowledged: true as const,
+                },
+              }
+            : {}),
         },
         controller.signal,
       );
@@ -273,6 +363,132 @@ export function ToolsWorkbench({
               </div>
             )}
           </fieldset>
+          {(catalog.searchProviders ?? []).length > 0 && (
+            <fieldset
+              disabled={pending}
+              className="space-y-3 rounded-lg border border-border p-4"
+            >
+              <legend className="px-1 text-sm font-medium">
+                Web search (optional)
+              </legend>
+              <p className="text-sm leading-relaxed text-muted-foreground">
+                Search uses a separately encrypted Tavily key. Your model key
+                and platform credits do not pay for it.
+              </p>
+              <label
+                htmlFor="search-provider"
+                className="block text-sm font-medium"
+              >
+                Search provider
+              </label>
+              <select
+                id="search-provider"
+                className="min-h-11 w-full rounded-md border border-input bg-background px-3 text-base"
+                value={searchProvider}
+                onChange={(event) => {
+                  const next = (catalog.searchProviders ?? []).find(
+                    (item) => item.provider === event.target.value,
+                  );
+                  setSearchProvider(event.target.value);
+                  setSearchCeiling(
+                    next ? String(next.estimateMicrodollars / 1_000_000) : "",
+                  );
+                  setSearchBudgetAck(false);
+                  setSearchPrivacyAck(false);
+                }}
+              >
+                <option value="">Do not search</option>
+                {(catalog.searchProviders ?? []).map((provider) => (
+                  <option key={provider.provider} value={provider.provider}>
+                    {provider.name} — your separate key
+                  </option>
+                ))}
+              </select>
+              {search && !searchCredential && (
+                <p className="text-sm text-destructive">
+                  Add your Tavily search key in Account &amp; settings before
+                  running.
+                </p>
+              )}
+              {search && searchCredential && (
+                <p className="text-xs text-muted-foreground">
+                  Search key {searchCredential.maskedKey} · revision{" "}
+                  {searchCredential.revision}
+                </p>
+              )}
+              {search && (
+                <>
+                  <label
+                    htmlFor="search-query"
+                    className="block text-sm font-medium"
+                  >
+                    Exact query sent to Tavily
+                  </label>
+                  <Input
+                    id="search-query"
+                    value={searchQuery}
+                    maxLength={256}
+                    onChange={(event) => {
+                      setSearchQuery(event.target.value);
+                      setSearchPrivacyAck(false);
+                    }}
+                  />
+                  <label
+                    htmlFor="search-ceiling"
+                    className="block text-sm font-medium"
+                  >
+                    Search ceiling (USD)
+                  </label>
+                  <Input
+                    id="search-ceiling"
+                    type="number"
+                    inputMode="decimal"
+                    min={0}
+                    step="0.000001"
+                    value={searchCeiling}
+                    onChange={(event) => {
+                      setSearchCeiling(event.target.value);
+                      setSearchBudgetAck(false);
+                    }}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Current reviewed worst-case cash equivalent:{" "}
+                    {dollars(search.estimateMicrodollars)} for one basic
+                    request. Free credits do not make this estimate zero.
+                  </p>
+                  <label className="flex min-h-11 items-start gap-3 py-1 text-sm leading-relaxed">
+                    <input
+                      className="mt-1"
+                      type="checkbox"
+                      checked={searchBudgetAck}
+                      onChange={(event) =>
+                        setSearchBudgetAck(event.target.checked)
+                      }
+                    />
+                    <span>
+                      I set a Tavily account limit and authorize this search
+                      ceiling.
+                    </span>
+                  </label>
+                  <label className="flex min-h-11 items-start gap-3 py-1 text-sm leading-relaxed">
+                    <input
+                      className="mt-1"
+                      type="checkbox"
+                      checked={searchPrivacyAck}
+                      onChange={(event) =>
+                        setSearchPrivacyAck(event.target.checked)
+                      }
+                    />
+                    <span>
+                      Send this exact query to Tavily and potentially its
+                      search-index providers. I did not include personal or
+                      sensitive information.
+                    </span>
+                  </label>
+                </>
+              )}
+            </fieldset>
+          )}
           <div className="space-y-2">
             <label htmlFor="tool-prompt" className="text-sm font-medium">
               Request
@@ -329,7 +545,7 @@ export function ToolsWorkbench({
           <div className="flex flex-wrap gap-2">
             <Button
               type="submit"
-              disabled={!ready || pending}
+              disabled={!canSubmit || pending}
               aria-busy={pending}
             >
               {pending && (
