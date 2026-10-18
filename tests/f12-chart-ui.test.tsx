@@ -7,7 +7,7 @@ import {
   ChartDataTable,
   ChartPreview,
 } from "../components/artifacts/chart-preview";
-import { sampleChart } from "../lib/artifacts/chart-spec";
+import { chartTick, sampleChart } from "../lib/artifacts/chart-spec";
 
 async function chartDom() {
   const window = new Window();
@@ -165,4 +165,23 @@ test("F12 large sparse line and area charts plot every isolated numeric value", 
   } finally {
     await ui.close();
   }
+});
+
+test("F12 preview tick formatting preserves astral labels at the truncation boundary", () => {
+  const label = `${"A".repeat(14)}😀Z`;
+  const spec = sampleChart("line");
+  spec.rows[0].label = label;
+  const preview = renderToStaticMarkup(
+    <ChartPreview source={JSON.stringify(spec)} />,
+  );
+  const tick = chartTick(label);
+  expect(preview).toContain(label);
+  expect(tick).toBe(label);
+  expect(tick).not.toContain("�");
+  expect(
+    [...tick].every((char) => {
+      const code = char.codePointAt(0) ?? 0;
+      return code < 0xd800 || code > 0xdfff;
+    }),
+  ).toBe(true);
 });

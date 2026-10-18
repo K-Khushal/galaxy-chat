@@ -6,6 +6,7 @@ import {
   chartTick,
   chartValue,
   parseChartSource,
+  truncateChartText,
 } from "./chart-spec";
 
 const escapeXml = (value: string) =>
@@ -183,5 +184,5 @@ function renderSvg(spec: ChartSpec) {
   return svg.join("");
 }
 function chartTickTitle(value: string, length = 76) {
-  return value.length > length ? `${value.slice(0, length - 1)}…` : value;
+  return truncateChartText(value, length);
 }

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { Window } from "happy-dom";
 import { fromHtml } from "hast-util-from-html";
 import { chartSvg } from "../lib/artifacts/chart-export";
 import {
@@ -247,4 +248,34 @@ test("F12 SVG export is deterministic fixed inert markup with finite geometry an
     })),
   };
   expect(chartSvg(JSON.stringify(max))?.length).toBeLessThan(300_000);
+});
+
+test("F12 SVG truncation preserves astral labels as valid Unicode and XML", async () => {
+  const tickBoundary = `${"A".repeat(14)}😀Z`;
+  const spec = sampleChart("line");
+  spec.title = `${"T".repeat(74)}😀Z`;
+  spec.description = `${"D".repeat(106)}😀Z`;
+  spec.series[0].label = `${"S".repeat(42)}😀Z`;
+  spec.rows[0].label = tickBoundary;
+  const svg = chartSvg(JSON.stringify(spec));
+  expect(svg).not.toBeNull();
+  expect(
+    [...(svg ?? "")].every((char) => {
+      const code = char.codePointAt(0) ?? 0;
+      return code < 0xd800 || code > 0xdfff;
+    }),
+  ).toBe(true);
+
+  const window = new Window();
+  try {
+    const xml = new window.DOMParser().parseFromString(
+      svg ?? "",
+      "image/svg+xml",
+    );
+    expect(xml.querySelector("parsererror")).toBeNull();
+    expect(xml.documentElement?.textContent).toContain(tickBoundary);
+    expect(xml.documentElement?.textContent).not.toContain("�");
+  } finally {
+    await window.happyDOM.close();
+  }
 });

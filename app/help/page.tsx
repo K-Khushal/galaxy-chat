@@ -153,10 +153,11 @@ export default function HelpPage() {
           Charts accept a version 1 JSON spec for bar, line, area, or scatter
           plots, with a title, description, labeled axes, series, and rows.
           Preview includes an equivalent data table. Use null for missing
-          values; at most eight series and 2,000 numeric cells are allowed
-          (scatter x/y pairs count as two). Unknown fields, code, and remote
-          data are rejected. Save a revision to download its chart JSON or inert
-          SVG. Editing and rendering a chart do not call a model.
+          values; at most eight series and 2,000 scalar value slots, including
+          missing values, are allowed (scatter pairs, including missing pairs,
+          count as two). Unknown fields, code, and remote data are rejected.
+          Save a revision to download its chart JSON or inert SVG. Editing and
+          rendering a chart do not call a model.
         </p>
         <p>
           Each artifact allows 128 KiB of source per revision and 40 revisions.

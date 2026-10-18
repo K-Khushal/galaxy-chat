@@ -90,7 +90,7 @@ export const chartSpec = z
         code: "custom",
         path: ["rows"],
         message:
-          "Use at most 2,000 numeric cells (scatter pairs count as two).",
+          "Use at most 2,000 scalar value slots, including missing values (scatter pairs, including missing pairs, count as two).",
       });
     for (const [index, row] of spec.rows.entries())
       if (row.values.length !== spec.series.length)
@@ -131,7 +131,7 @@ export function parseChartSource(source: string): ChartParseResult {
     return {
       success: false,
       error:
-        "Check chart version 1, type, title, description, axes, series and rows. Use only supported fields, finite numbers within ±1 trillion, and at most 8 series / 2,000 cells.",
+        "Check chart version 1, type, title, description, axes, series and rows. Use only supported fields, finite numbers within ±1 trillion, and at most 8 series / 2,000 scalar value slots including missing values.",
     };
   }
   return { success: true, data: result.data };
@@ -160,9 +160,14 @@ export const chartDashes = [
 ] as const;
 export const chartValue = (value: number | null) =>
   value === null ? "Missing" : String(value);
+export function truncateChartText(value: string, length: number) {
+  const characters = [...value];
+  return characters.length > length
+    ? `${characters.slice(0, length - 1).join("")}…`
+    : value;
+}
 export const chartTick = (value: string | number) => {
-  const label = String(value);
-  return label.length > 16 ? `${label.slice(0, 15)}…` : label;
+  return truncateChartText(String(value), 16);
 };
 export function chartDomain(
   values: number[],
