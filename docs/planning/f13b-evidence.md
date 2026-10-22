@@ -1,6 +1,6 @@
 # F13-B bounded owner-funded web search
 
-Scope: child #33 of #17, built on merged F13-A source `15a6b4bf1b7689dd5b2b74cba123d7ca1d64fa5a`. Frozen application source and tests: `d56a89f24fe27d319cb6ae436a168c6891ce12ed` on `codex/f13-search`. This is an offline implementation slice. Search remains disabled by default. No provider account, real key, paid query, model request, deployment, cloud login or billing change was used.
+Scope: child #33 of #17, built on merged F13-A source `15a6b4bf1b7689dd5b2b74cba123d7ca1d64fa5a`. Original implementation source and tests: `d56a89f24fe27d319cb6ae436a168c6891ce12ed`. Recovered security corrections are frozen at `7d63a051b91e63d90536f417b667ed4099dcee1c` on `codex/f13-search`, after table integration `d937dc7`. This is an offline implementation slice. Search remains disabled by default. No provider account, real key, paid query, model request, deployment, cloud login or billing change was used.
 
 ## Provider and funding boundary
 
@@ -10,9 +10,9 @@ Activation requires `SEARCH_TOOLS_ENABLED=1`, a strict operator-verified snapsho
 
 ## Implemented bounds
 
-The adapter uses only `POST https://api.tavily.com/search`, Bearer auth to that fixed origin, `redirect: "error"`, basic depth, one chunk per source, at most five results, no answer/raw content/images/favicon/date, no automatic parameters, usage reporting and safe search. It makes one attempt with a 10-second deadline inside the inherited 20-second tool run. Content length and the streamed body are capped at 64 KiB before JSON parsing. The exact authorized query is 1–256 characters; a byte-different or repeated model query is denied before search credential entry.
+The adapter uses only `POST https://api.tavily.com/search`, Bearer auth to that fixed origin, Workers-compatible `redirect: "manual"` with explicit rejection and body cancellation for every 3xx, basic depth, one chunk per source, at most five results, no answer/raw content/images/favicon/date, no automatic parameters, usage reporting and safe search. It makes one attempt with a 10-second deadline inside the inherited 20-second tool run. Content length and the streamed body are capped at 64 KiB before JSON parsing. The exact authorized query is 1–256 characters; a byte-different or repeated model query is denied before search credential entry.
 
-Only canonical HTTP(S) result URLs with a hostname and no credentials survive. Fragments are removed, duplicate URLs are dropped, result URLs are never fetched, text controls are removed, title/snippet/URL lengths are bounded and trailing evidence is reduced until the complete JSON is at most 4 KiB. Stable server IDs `S1`–`S5` follow provider rank. The stored private evidence contains the canonical title, URL, hostname, snippet, server retrieval timestamp and one-credit receipt. Empty valid evidence is `no_results`; provider/contract failures are `provider_error`. React renders snippets as escaped text labeled untrusted and uses `noreferrer noopener` links. Provider source parts and inline `[[S1]]` tokens must resolve to the same stored ID and canonical URL; forged IDs or mismatched URLs fail.
+Only canonical HTTP(S) result URLs with a hostname and no credentials survive. Fragments are removed, duplicate URLs are dropped, result URLs are never fetched, text controls are removed, title/snippet/URL lengths are bounded and trailing evidence is reduced until the complete final untrusted tool envelope, including both JSON serialization layers, is at most 4 KiB. Evidence is reduced before persistence and ID/citation use, so the model receives complete parseable evidence matching the persisted sources. Stable server IDs `S1`–`S5` follow provider rank. The stored private evidence contains the canonical title, URL, hostname, snippet, server retrieval timestamp and one-credit receipt. Empty valid evidence is `no_results`; provider/contract failures are `provider_error`. React renders snippets as escaped text labeled untrusted and uses `noreferrer noopener` links. Provider source parts and inline `[[S1]]` tokens must resolve to the same stored ID and canonical URL; forged IDs or mismatched URLs fail.
 
 Search reuses the F13-A three-step, four-call, 512-output-token, 12,000-input-byte and 20-second model limits. It adds at most one paid search. The model sees a bounded untrusted envelope and cannot obtain the search key. If an authorized search is unused, the answer and trace say so instead of claiming grounding.
 
@@ -20,7 +20,7 @@ Search reuses the F13-A three-step, four-call, 512-output-token, 12,000-input-by
 
 Migration `0011_search_tools.sql` is reserved for this child; `0010` belongs to a separately inherited slice. The private `search_credential` row is owner/provider/revision scoped, uses the existing AES-256-GCM keyring with search-specific `galaxy-search-aes256gcm-v1` AAD, supports revision compare-and-swap replacement/revocation, has browser-role revocation and RLS, appears only as masked metadata in account export and cascades on account deletion.
 
-The anonymous `byok_operation` audit adds `kind='search'`, the verified price revision, reserved/actual microdollars and receipt credits. It contains no user ID, query, result URL/snippet, provider body or secret. The private tool call links to it. Under the shared advisory lock, reservation atomically rechecks owner/run/call/deadline, key revision, price proof, absence of another search, inherited actor/global concurrency/rate/record limits and all configured search request/spend caps. Entry rechecks the current credential and commits before outbound work. Pre-entry cancellation/revocation releases the reservation. After entry, only a valid echoed query with `usage.credits === 1` settles complete; abort, timeout, transport/provider error, malformed/oversized body, query mismatch or missing/unexpected usage remains held. One credit is a provider usage unit, not proof of a cash charge.
+The anonymous `byok_operation` audit adds `kind='search'`, the verified price revision, reserved/actual microdollars and receipt credits. It contains no user ID, query, result URL/snippet, provider body or secret. The private tool call links to it. Under the shared advisory lock, reservation atomically rechecks owner/run/call/deadline, key revision, price proof, absence of another search, inherited actor/global concurrency/rate/record limits and all configured search request/spend caps. Entry resolves the current price proof after awaiting the shared advisory lock, comparing expiry, full original snapshot identity, reserved cost and selection revision; it rechecks the current credential and commits before outbound work. Pre-entry cancellation/revocation releases the reservation. After entry, only a valid echoed query with `usage.credits === 1` settles complete; abort, timeout, transport/provider error, malformed/oversized body, query mismatch or missing/unexpected usage remains held. One credit is a provider usage unit, not proof of a cash charge.
 
 Private query/evidence lives in the owned run/call and is included in export/deletion. Anonymous resource/cost rows survive deletion so account deletion cannot reset caps or erase unresolved liabilities.
 
@@ -41,6 +41,29 @@ Final checks against frozen source `d56a89f24fe27d319cb6ae436a168c6891ce12ed`:
 - `git diff --check`: passed before the source commit. The checkout was clean after source commit and before this evidence-only file.
 
 The development `/preview/ui?tools=1` fixture uses production components and fake clients only. It includes search funding controls plus completed sources, no-results and provider-error modes with a deliberately long hostile-looking snippet for narrow-screen review. `/preview/landing` retains the local tools picker. Root owns the desktop/phone browser walkthrough; this worker started no server or browser.
+
+## Recovered security corrections (October 22)
+
+Frozen source `7d63a051b91e63d90536f417b667ed4099dcee1c` preserves the interrupted worker edits and completes all five review categories:
+
+- Workers-compatible manual redirects reject and cancel every 3xx body without a second destination or key forwarding.
+- Final locked entry compares the full original price snapshot, revision and reserved cost with currently valid configuration. A deterministic gate around completion of the real shared-lock SQL changes expiry, cost or same-ID verification identity while entry waits; all three are rejected while the operation remains unentered and releasable.
+- Both declared and streamed 64-KiB overflow cancel transport. The entered integration case retains its anonymous unknown-cost hold and makes one attempt.
+- Title/snippet normalization removes Unicode `Cc` and `Cf` characters, including C1 and bidirectional formatting controls, while normalizing visible whitespace.
+- A shared serializer measures the final double-serialized untrusted envelope before evidence persistence. An actual `MockLanguageModelV4` continuation receives at most 4,096 bytes, `truncated: false`, complete parseable evidence equal to the persisted sources/IDs, and a valid `[[S1]]` citation. Both persisted model-step input counts remain at most 12,000 bytes. The inherited joint-context rejection regression remains in the focused suite.
+
+The preserved private API cache headers and search privacy/funding disclosures are included. No configuration enables search.
+
+Recovery validation uses the restored serialized runner with `fcntl` lock `/private/tmp/galaxy-heavy-checks.lock`. `bun run typecheck` passed. `bun run lint` checked **317 files** with no errors or fixes. The combined F13-B/F13-A/table run passed 59 tests and exposed one test-only SQL column typo in the newly added joint-cap assertion (`tool_step.operation_id`, corrected from `run_id`); the affected full F13-B integration file then passed **12 tests / 71 assertions / 0 failures** in **18.06s**, including the actual SDK envelope and locked-price regressions. The final full-suite/build/integrity results below validate the recovered frozen source; the original implementation checks above remain historical evidence.
+
+Final recovery checks against frozen source `7d63a051b91e63d90536f417b667ed4099dcee1c`:
+
+- `bun test`: **215 pass / 1 skip / 0 fail**, **3,143 assertions**, **216 tests across 34 files**, **168.34s**. The one inherited native-PostgreSQL F10/F11 concurrency case needs its explicit database URL; no F13 test is skipped.
+- `bunx next build --webpack`: Next **16.4.2** strict build passed compilation, generated-route TypeScript, static page generation and final traces. Recovery log: `/private/tmp/galaxy-search-recovery-build.log`.
+- `bun run f01:integrity`: passed.
+- `git diff --check`: passed. Application source stayed unchanged throughout the full suite and build; only this evidence file was edited.
+
+The full-suite log is `/private/tmp/galaxy-search-recovery-full.log`. No worker check or server remains running after these results. Independent root re-review, browser validation, PR/CI and merge are still separate release gates. No server, browser session, cloud account, provider/model request or paid operation was started by this recovery worker.
 
 ## Separate live gates
 
