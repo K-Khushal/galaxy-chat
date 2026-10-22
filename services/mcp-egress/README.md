@@ -60,7 +60,8 @@ Default bind is `127.0.0.1:8788`; `::1` is also allowed. Wildcard binds `0.0.0.0
 requires a verified client certificate and the HMAC. No other bind spelling or
 hostname is accepted. Optional concurrency/connection caps are
 `MCP_EGRESS_CONCURRENCY` (default 4, max 32) and
-`MCP_EGRESS_MAX_CONNECTIONS` (default 32, max 128).
+`MCP_EGRESS_MAX_CONNECTIONS` (default 32, max 128). `MCP_EGRESS_CONCURRENCY` bounds
+both ingress handler slots and underlying replay-work permits.
 
 A profile is immutable `{profileId, revision, purpose}` policy. This example is
 illustrative only, uses reserved example domains, and is not an approved server:
@@ -147,6 +148,15 @@ created. Retain nonces until their expiry; operator maintenance may delete only
 rows where `expires_at < clock_timestamp()`. Never use untrusted request time as
 a cleanup cutoff. PostgreSQL errors, bodies, tokens, envelopes, signatures and
 queried URLs are not logged.
+
+Underlying replay-work permits are bounded by `MCP_EGRESS_CONCURRENCY` and remain
+owned until the actual `consume()` query settles, even when caller disconnects or
+request deadlines win the ingress race. Prompt cancellation rejects the caller
+immediately and denies late DNS or dialing, but retains the permit until the underlying
+promise resolves or rejects. Excess replay work fails closed with `busy` (HTTP 503)
+without enqueuing additional `consume()` operations. While storage is blackholed,
+bounded capacity may remain exhausted rather than accumulating unbounded jobs;
+operators must monitor storage responsiveness accordingly.
 
 Activation requires independent source/security review, real hosted networking,
 mTLS/secret provisioning, durable replay/RLS and clock/cleanup operations, endpoint

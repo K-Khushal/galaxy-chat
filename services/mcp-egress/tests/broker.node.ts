@@ -13,6 +13,7 @@ import { PGLiteSocketServer } from "@electric-sql/pglite-socket";
 import postgres from "postgres";
 import { createBroker } from "../src/broker.js";
 import { loadConfig } from "../src/config.js";
+import type { TransportDependencies } from "../src/pinned-https.js";
 import {
   canonical,
   openCredential,
@@ -550,6 +551,346 @@ test("hung replay respects operation abort/deadline and cannot dial later", asyn
   await assert.rejects(pending, /cancelled/);
   await new Promise((resolve) => setTimeout(resolve, 100));
   assert.equal(resolves, 0);
+});
+
+test("bounded replay permits retain capacity across aborted requests and release on settlement", async () => {
+  let dnsResolves = 0;
+  let upstreamCalls = 0;
+  const fixture = await upstream(cert, (_req, res) => {
+    upstreamCalls++;
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end("{}");
+  });
+  const dial = offlineDial(fixture.port, cert.ca);
+  const deps = {
+    ...dial.dependencies,
+    resolve: async (hostname: string) => {
+      dnsResolves++;
+      const resolver = dial.dependencies.resolve;
+      assert.ok(resolver, "offline resolver must be defined");
+      return resolver(hostname);
+    },
+  };
+
+  const pending: Array<{
+    requestId: string;
+    resolve: (consumed: boolean) => void;
+    reject: (err: Error) => void;
+  }> = [];
+  let outstanding = 0;
+  let maxConcurrent = 0;
+  let totalConsumeCalls = 0;
+
+  const fakeStore: ReplayStore = {
+    durable: true,
+    ready: async () => {},
+    consume: (requestId: string) => {
+      totalConsumeCalls++;
+      outstanding++;
+      if (outstanding > maxConcurrent) {
+        maxConcurrent = outstanding;
+      }
+      return new Promise<boolean>((resolve, reject) => {
+        pending.push({
+          requestId,
+          resolve: (val) => {
+            outstanding--;
+            resolve(val);
+          },
+          reject: (err) => {
+            outstanding--;
+            reject(err);
+          },
+        });
+      });
+    },
+  };
+
+  const CONCURRENCY = 2;
+  const c = { ...config(), concurrency: CONCURRENCY };
+  const broker = createBroker(c, fakeStore, deps);
+
+  try {
+    // 1. Submit distinct signed envelopes and abort against blocked fake ReplayStore
+    const e1 = envelope();
+    const ac1 = new AbortController();
+    const p1 = broker(e1, sign(e1, c.hmacKey), ac1.signal);
+    const startAbort1 = Date.now();
+    ac1.abort();
+    await assert.rejects(p1, /cancelled/);
+    const abortDuration1 = Date.now() - startAbort1;
+    assert(abortDuration1 < 100, "abort must be prompt");
+    assert.equal(outstanding, 1);
+    assert.equal(totalConsumeCalls, 1);
+
+    const e2 = envelope();
+    const ac2 = new AbortController();
+    const p2 = broker(e2, sign(e2, c.hmacKey), ac2.signal);
+    const startAbort2 = Date.now();
+    ac2.abort();
+    await assert.rejects(p2, /cancelled/);
+    const abortDuration2 = Date.now() - startAbort2;
+    assert(abortDuration2 < 100, "abort must be prompt");
+    assert.equal(outstanding, 2);
+    assert.equal(totalConsumeCalls, 2);
+    assert.equal(maxConcurrent, CONCURRENCY);
+
+    // 2. Capacity is saturated by abandoned consume operations.
+    // Excess requests with distinct signed envelopes must fail busy with zero new consume/DNS.
+    for (let i = 0; i < 5; i++) {
+      const excessEnv = envelope();
+      await assert.rejects(
+        broker(excessEnv, sign(excessEnv, c.hmacKey), signal()),
+        /busy/,
+      );
+    }
+    assert.equal(
+      totalConsumeCalls,
+      2,
+      "zero new consume calls for excess requests",
+    );
+    assert.equal(outstanding, 2, "outstanding count never exceeds concurrency");
+    assert.equal(maxConcurrent, 2, "maxConcurrent never exceeds concurrency");
+    assert.equal(dnsResolves, 0, "zero DNS calls for excess requests");
+    assert.equal(upstreamCalls, 0, "zero upstream calls");
+
+    // 3. Eventual consume resolution releases exactly one permit
+    const firstOp = pending.shift();
+    assert.ok(firstOp, "pending consume operation must exist");
+    firstOp.resolve(true);
+    await setImmediate();
+    assert.equal(outstanding, 1);
+
+    // Now 1 permit is available. A later valid request can proceed into consume!
+    const e3 = envelope();
+    const p3 = broker(e3, sign(e3, c.hmacKey), signal());
+    await setImmediate();
+    assert.equal(totalConsumeCalls, 3);
+    assert.equal(outstanding, 2);
+
+    // Excess request again rejected with busy
+    const excess2 = envelope();
+    await assert.rejects(
+      broker(excess2, sign(excess2, c.hmacKey), signal()),
+      /busy/,
+    );
+    assert.equal(totalConsumeCalls, 3);
+
+    // 4. Eventual consume rejection releases exactly one permit
+    const secondOp = pending.shift();
+    assert.ok(secondOp, "pending consume operation must exist");
+    secondOp.reject(new Error("db failure"));
+    await setImmediate();
+    assert.equal(outstanding, 1);
+
+    // Settle e3 successfully and verify it completes
+    const thirdOp = pending.shift();
+    assert.ok(thirdOp, "pending consume operation must exist");
+    thirdOp.resolve(true);
+    const res3 = await p3;
+    assert.equal(res3.status, 200);
+    assert.equal(outstanding, 0);
+    assert.equal(dnsResolves, 1);
+    assert.equal(upstreamCalls, 1);
+
+    // Verify neither e1 nor e2 ever dialed or performed DNS after late settlement
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(
+      dnsResolves,
+      1,
+      "abandoned requests must not dial after late settlement",
+    );
+    assert.equal(
+      upstreamCalls,
+      1,
+      "abandoned requests must not reach upstream",
+    );
+
+    // 5. Subsequent valid request can proceed normally
+    const e4 = envelope();
+    const p4 = broker(e4, sign(e4, c.hmacKey), signal());
+    await setImmediate();
+    assert.equal(totalConsumeCalls, 4);
+    assert.equal(outstanding, 1);
+    const fourthOp = pending.shift();
+    assert.ok(fourthOp, "pending consume operation must exist");
+    fourthOp.resolve(true);
+    const res4 = await p4;
+    assert.equal(res4.status, 200);
+    assert.equal(outstanding, 0);
+    assert.equal(dnsResolves, 2);
+    assert.equal(upstreamCalls, 2);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("synchronous consume throw releases permit immediately without leaking capacity", async () => {
+  let attempts = 0;
+  let dials = 0;
+  const store: ReplayStore = {
+    durable: true,
+    ready: async () => {},
+    consume: () => {
+      attempts++;
+      if (attempts === 1) {
+        throw new Error("sync failure");
+      }
+      return Promise.resolve(true);
+    },
+  };
+  const c = { ...config(), concurrency: 1 };
+  const broker = createBroker(c, store, {
+    resolve: async () => [],
+    connect: () => {
+      dials++;
+      throw new Error("must not dial");
+    },
+  });
+  const e1 = envelope();
+  await assert.rejects(
+    broker(e1, sign(e1, c.hmacKey), signal()),
+    /sync failure/,
+  );
+  const e2 = envelope();
+  await assert.rejects(
+    broker(e2, sign(e2, c.hmacKey), signal()),
+    /destination/,
+  );
+  assert.equal(attempts, 2);
+  assert.equal(dials, 0);
+});
+
+test("blackholed storage bounds capacity and deadline abort remains prompt", async () => {
+  let consumes = 0;
+  let dials = 0;
+  const store: ReplayStore = {
+    durable: true,
+    ready: async () => {},
+    consume: () => {
+      consumes++;
+      return new Promise(() => {});
+    },
+  };
+  const c = { ...config(), concurrency: 1 };
+  let dnsResolves = 0;
+  const broker = createBroker(c, store, {
+    resolve: async () => {
+      dnsResolves++;
+      return [];
+    },
+    connect: () => {
+      dials++;
+      throw new Error("must not dial");
+    },
+  });
+  const e1 = envelope(undefined, undefined, { deadline: Date.now() + 30 });
+  const start = Date.now();
+  await assert.rejects(broker(e1, sign(e1, c.hmacKey), signal()), /timeout/);
+  const elapsed = Date.now() - start;
+  assert(elapsed < 150, "deadline timeout must be prompt");
+  assert.equal(consumes, 1);
+
+  for (let i = 0; i < 3; i++) {
+    const next = envelope();
+    await assert.rejects(broker(next, sign(next, c.hmacKey), signal()), /busy/);
+  }
+  assert.equal(consumes, 1, "no new consume calls while capacity exhausted");
+  assert.equal(dnsResolves, 0, "zero DNS calls");
+  assert.equal(dials, 0, "zero dials");
+});
+
+test("server ingress disconnect releases connection slot but retains replay permit until settle", async () => {
+  let pendingResolve: ((val: boolean) => void) | undefined;
+  let consumeCalls = 0;
+  let dnsResolves = 0;
+  let dials = 0;
+  const store: ReplayStore = {
+    durable: true,
+    ready: async () => {},
+    consume: () => {
+      consumeCalls++;
+      if (consumeCalls === 1) {
+        return new Promise((resolve) => {
+          pendingResolve = resolve;
+        });
+      }
+      return Promise.resolve(true);
+    },
+  };
+  const deps: TransportDependencies = {
+    resolve: async () => {
+      dnsResolves++;
+      return [];
+    },
+    connect: () => {
+      dials++;
+      throw new Error("must not dial");
+    },
+  };
+  const c = { ...config(), concurrency: 1 };
+  const app = await createBrokerServer(c, store, deps);
+  await new Promise<void>((resolve) => app.server.listen(0, c.bind, resolve));
+  const port = (app.server.address() as AddressInfo).port;
+
+  const e1 = envelope();
+  const req1 = request({
+    host: "127.0.0.1",
+    port,
+    path: "/v1/egress",
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-mcp-signature": sign(e1, c.hmacKey),
+    },
+  });
+  req1.on("error", () => {});
+  req1.end(JSON.stringify(e1));
+
+  try {
+    while (consumeCalls === 0) {
+      await setImmediate();
+    }
+    assert.equal(consumeCalls, 1);
+
+    req1.destroy();
+    while (!req1.destroyed) {
+      await setImmediate();
+    }
+    await setImmediate();
+
+    // Authentication precedes replay check: tampered request gets 401
+    const bad = envelope();
+    const unauthRes = await ingress(port, bad, "0".repeat(64));
+    assert.equal(unauthRes.status, 401);
+    assert.equal(consumeCalls, 1);
+
+    // Valid signed request gets 503 busy because replay permit is still held
+    const e2 = envelope();
+    const busyRes = await ingress(port, e2, sign(e2, c.hmacKey));
+    assert.equal(busyRes.status, 503);
+    assert.equal(busyRes.text, '{"error":"busy"}');
+    assert.equal(consumeCalls, 1, "zero new consume calls while busy");
+    assert.equal(dnsResolves, 0, "zero DNS calls while busy");
+
+    // Settle the abandoned consume deterministically
+    assert.ok(pendingResolve, "first consume must have a pending resolver");
+    pendingResolve(true);
+    await setImmediate();
+
+    // Now valid signed request can proceed: second consume resolves immediately,
+    // proceeds to offline transport (resolve returns [], failing with destination 502)
+    const e3 = envelope();
+    const okRes = await ingress(port, e3, sign(e3, c.hmacKey));
+    assert.equal(okRes.status, 502);
+    assert.equal(okRes.text, '{"error":"destination"}');
+    assert.equal(consumeCalls, 2);
+    assert.equal(dnsResolves, 1, "only valid request resolved DNS");
+    assert.equal(dials, 0, "zero dials");
+  } finally {
+    req1.destroy();
+    await app.close();
+  }
 });
 
 test("strict envelope byte/hash/time/credential formats fail closed", () => {

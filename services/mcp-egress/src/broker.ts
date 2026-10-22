@@ -70,6 +70,7 @@ export function createBroker(
   store: ReplayStore,
   dependencies: TransportDependencies = {},
 ) {
+  let replayActive = 0;
   return async (
     input: unknown,
     signature: unknown,
@@ -86,15 +87,44 @@ export function createBroker(
         p.purpose === e.purpose,
     );
     if (!profile) fail("invalid_request");
+    if (signal.aborted) fail("cancelled");
+    if (Date.now() >= e.deadline) fail("timeout");
+    if (replayActive >= config.concurrency) fail("busy");
+    replayActive++;
+    let released = false;
+    const releasePermit = () => {
+      if (!released) {
+        released = true;
+        replayActive--;
+      }
+    };
+    let consumePromise: Promise<boolean>;
+    try {
+      consumePromise = Promise.resolve(
+        store.consume(e.requestId, e.issuedAt + 60_000, now),
+      );
+    } catch (error) {
+      releasePermit();
+      throw error;
+    }
+    consumePromise.then(
+      () => releasePermit(),
+      () => releasePermit(),
+    );
     const consumed = await new Promise<boolean>((resolve, reject) => {
       const abort = () => {
         cleanup();
         reject(new BrokerError("cancelled"));
       };
+      const remaining = e.deadline - Date.now();
+      if (remaining <= 0) {
+        reject(new BrokerError("timeout"));
+        return;
+      }
       const timer = setTimeout(() => {
         cleanup();
         reject(new BrokerError("timeout"));
-      }, e.deadline - Date.now());
+      }, remaining);
       const cleanup = () => {
         clearTimeout(timer);
         signal.removeEventListener("abort", abort);
@@ -104,7 +134,7 @@ export function createBroker(
         abort();
         return;
       }
-      store.consume(e.requestId, e.issuedAt + 60_000, now).then(
+      consumePromise.then(
         (result) => {
           cleanup();
           resolve(result);

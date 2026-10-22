@@ -19,5 +19,7 @@ jobs:
       - run: bun run f01:integrity
       - run: bun run lint
       - run: bun run typecheck
+      - run: npm --prefix services/mcp-egress run check
+      - run: npm --prefix services/mcp-egress run test
       - run: bun test
       - run: bun run build
