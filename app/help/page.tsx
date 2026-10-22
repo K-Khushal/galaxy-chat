@@ -186,6 +186,37 @@ export default function HelpPage() {
           files are limited to 8 MiB.
         </p>
       </section>
+      <section id="images">
+        <h2>Generate a private image when configured</h2>
+        <p>
+          Image generation is disabled by default. An Image choice appears only
+          after an operator reviews one exact OpenRouter model, endpoint, price,
+          and expiry and configures private storage. Your saved OpenRouter key
+          pays; Galaxy supplies application storage and capacity. Before
+          Generate, review the exact provider, estimate, application ceiling,
+          and required provider-budget acknowledgement. The estimate and ceiling
+          gate dispatch but cannot guarantee your provider bill or fees. Set
+          provider spending limits.
+        </p>
+        <p>
+          Each explicit request generates one 1024 × 1024 PNG of at most 4 MiB,
+          with no automatic retry, fallback, rewrite, or upscale. Editing and
+          masks are unavailable because the adapter has no verified input
+          support. Galaxy sends your prompt to OpenRouter and the selected
+          provider and stores a canonical private PNG with immutable provenance.
+          Restore adds a revision referencing the same image. Download selects
+          an explicit revision through an ownership-checked private route.
+          Images share the private-file storage, object, and transfer limits.
+        </p>
+        <p>
+          Cancel stops pre-entry work. Entered requests may still run and incur
+          charges; unknown outcomes stay held and are never retried
+          automatically. Deletion queues private objects, including repeated
+          cleanup for unresolved writes. Live model compatibility, provider
+          pricing and spending controls, abort receipts, and hosted
+          storage/download behavior still need verification before activation.
+        </p>
+      </section>
       <section id="tools">
         <h2>Run bounded tools with your provider key</h2>
         <p>

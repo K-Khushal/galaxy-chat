@@ -60,9 +60,10 @@ export function HomeSections() {
           <span>Implemented for the gated beta:</span> text conversations,
           explicit memory, projects, temporary chat, private attachments when
           storage is configured, versioned Markdown, HTML, chart, and
-          typed-table artifacts, bounded tools with reviewed provider models,
-          and account controls. <span>Still ahead:</span> search and browser
-          work.
+          typed-table artifacts, default-off image generation with a reviewed
+          OpenRouter endpoint and your provider key, bounded tools with reviewed
+          provider models, and account controls. <span>Still ahead:</span>{" "}
+          search and browser work.
         </p>
       </section>
       <section

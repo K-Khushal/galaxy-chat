@@ -2,6 +2,7 @@ import { and, asc, desc, eq, ilike, type SQL, sql } from "drizzle-orm";
 import type { AppUsage } from "@/lib/ai/usage";
 import { cleanupAfterDeletion } from "@/lib/attachments/service";
 import { lockAttachments } from "@/lib/attachments/store";
+import { lockByokResources } from "@/lib/byok/store";
 import { requireDb } from "@/lib/db/client";
 import { chatMessage, chat as chatTable } from "@/lib/db/schema";
 import { AppError } from "@/lib/errors";
@@ -231,6 +232,7 @@ export async function deleteChat(id: string, userId: string): Promise<boolean> {
   const db = requireDb();
   let hasAttachments = false;
   const deleted = await db.transaction(async (tx) => {
+    await lockByokResources(tx);
     await lockAttachments(tx);
     const owned = await tx
       .select({ id: chatTable.id })
@@ -243,7 +245,7 @@ export async function deleteChat(id: string, userId: string): Promise<boolean> {
     hasAttachments = Boolean(
       (
         await tx.execute(
-          sql`SELECT id FROM attachment WHERE chat_id=${id} AND user_id=${userId} LIMIT 1`,
+          sql`SELECT id FROM attachment WHERE chat_id=${id} AND user_id=${userId} UNION ALL SELECT id FROM image_object WHERE chat_id=${id} AND user_id=${userId} LIMIT 1`,
         )
       )[0],
     );

@@ -47,6 +47,30 @@ export default function PrivacyPage() {
         </p>
       </section>
       <section>
+        <h2>Generated images</h2>
+        <p>
+          When an operator enables reviewed image generation and you explicitly
+          choose Generate, Galaxy sends your prompt to OpenRouter and the
+          selected provider using your saved key. Your provider key pays.
+          Provider processing and retention policies apply. Galaxy stores your
+          private prompt, reviewed model and price snapshot, request state,
+          immutable provenance, and canonical PNG in private storage. Guest and
+          temporary exchanges cannot save images. Editing and masks are
+          unavailable.
+        </p>
+        <p>
+          Exports include generation and object metadata, digests, and
+          provenance; image bytes are downloaded separately through the owned
+          revision control. Exports contain no provider key, binary image body,
+          or signed storage URL. Artifact, message, conversation, and account
+          deletion queue private object cleanup. Unresolved writes may need
+          repeated cleanup, and anonymous provider holds survive deletion.
+          Cancellation cannot recall entered provider work or guarantee its
+          bill. Live provider and hosted storage verification remains pending;
+          image generation is disabled by default.
+        </p>
+      </section>
+      <section>
         <h2>Private files and extracted context</h2>
         <p>
           When enabled, files uploaded to a saved conversation live in a private

@@ -21,6 +21,7 @@ import {
   user,
 } from "@/lib/db/schema";
 import { AppError } from "@/lib/errors";
+import { ImageStore } from "@/lib/images/store";
 import { ToolStore } from "@/lib/tools/store";
 
 export type AccountProfile = {
@@ -33,6 +34,7 @@ export type AccountProfile = {
 
 export type AccountExport = {
   profile: AccountProfile;
+  imageData: Awaited<ReturnType<ImageStore["export"]>>;
   toolData: Awaited<ReturnType<ToolStore["export"]>>;
   attachments: Array<AttachmentView & { extractedText: string }>;
   artifacts: Array<typeof artifact.$inferSelect>;
@@ -102,6 +104,7 @@ export async function exportOwnedAccount(
 ): Promise<AccountExport> {
   const db = requireDb();
   const profile = await ownedProfile(userId);
+  const imageData = await new ImageStore(db).export(userId);
   const toolData = await new ToolStore(db).export(userId);
   const chats = await db
     .select({
@@ -196,6 +199,7 @@ export async function exportOwnedAccount(
   return {
     profile,
     toolData,
+    imageData,
     attachments,
     artifacts,
     artifactRevisions,
@@ -223,7 +227,7 @@ export async function deleteOwnedAccount(userId: string) {
     hasAttachments = Boolean(
       (
         await tx.execute(
-          sql`SELECT id FROM attachment WHERE user_id=${userId} LIMIT 1`,
+          sql`SELECT id FROM attachment WHERE user_id=${userId} UNION ALL SELECT id FROM image_object WHERE user_id=${userId} LIMIT 1`,
         )
       )[0],
     );
