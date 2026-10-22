@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { type SearchRunState, searchSelection } from "@/lib/search/contract";
 export const TOOL_LIMITS = {
   steps: 3,
   calls: 4,
@@ -23,6 +24,7 @@ export const toolRunRequest = z
     ceilingMicrodollars: z.number().int().positive().max(2_000_000_000),
     providerBudgetAcknowledged: z.literal(true),
     revisions: z.array(selectedRevision).max(4),
+    search: searchSelection.optional(),
   })
   .strict();
 export type ToolRunRequest = z.infer<typeof toolRunRequest>;
@@ -44,6 +46,7 @@ export type ToolRunView = {
   state: string;
   answer: string;
   events: ToolEvent[];
+  search?: SearchRunState;
 };
 export const arithmeticSchema = z
   .object({
@@ -59,7 +62,7 @@ export const revisionSchema = selectedRevision
   })
   .strict();
 export const TOOL_DISCLOSURE =
-  "Your provider bills your key. Set a provider spending limit before running. The estimate and application ceiling cannot guarantee the provider bill. Only selected saved revisions and arithmetic are available. Tool results are untrusted.";
+  "Your model provider bills your model key. Set provider spending limits before running. Model and optional search funding are separate. Estimates and application ceilings cannot guarantee provider bills. Tool results are untrusted.";
 
 export function microdollarsFromUSD(value: string): number | undefined {
   const match = /^(0|[1-9]\d{0,3})(?:\.(\d{1,6}))?$/.exec(value);

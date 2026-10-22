@@ -166,6 +166,24 @@ export const providerCredential = pgTable(
   },
   (table) => [primaryKey({ columns: [table.userId, table.provider] })],
 );
+export const searchCredential = pgTable(
+  "search_credential",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    provider: text("provider").notNull(),
+    revision: text("revision").notNull(),
+    keyVersion: text("key_version").notNull(),
+    nonce: text("nonce").notNull(),
+    ciphertext: text("ciphertext").notNull(),
+    maskedKey: text("masked_key").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.provider] })],
+);
 export const byokOperation = pgTable("byok_operation", {
   resourceUnits: integer("resource_units").notNull().default(1),
   id: text("id").primaryKey(),
@@ -175,6 +193,10 @@ export const byokOperation = pgTable("byok_operation", {
   kind: text("kind").notNull(),
   digest: text("digest").notNull(),
   state: text("state").notNull(),
+  priceRevision: text("price_revision"),
+  reservedMicrodollars: integer("reserved_microdollars"),
+  actualMicrodollars: integer("actual_microdollars"),
+  receiptCredits: integer("receipt_credits"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),

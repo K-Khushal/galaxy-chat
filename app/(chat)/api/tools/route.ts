@@ -5,15 +5,24 @@ import { boundedJson } from "@/lib/credits/http";
 import { AppError } from "@/lib/errors";
 import { errorResponse } from "@/lib/http/error-response";
 import { assertSameOrigin } from "@/lib/http/origin";
+import { resolveSearchConfig } from "@/lib/search/config";
+import { SearchStore } from "@/lib/search/store";
 import { toolEstimate, toolModels } from "@/lib/tools/config";
 import { toolRunRequest } from "@/lib/tools/contract";
 import { startToolRun } from "@/lib/tools/service";
 import { ToolStore } from "@/lib/tools/store";
 export const maxDuration = 30;
+const privateHeaders = { "cache-control": "private, no-store" };
+function privateError(error: unknown) {
+  const response = errorResponse(error, "tools_request_failed");
+  response.headers.set("cache-control", "private, no-store");
+  return response;
+}
 export async function GET(request: Request) {
   try {
     const access = await requireChatAccess(request.headers);
     const id = new URL(request.url).searchParams.get("id");
+    const search = resolveSearchConfig(process.env);
     return Response.json(
       id
         ? await new ToolStore().view(access.userId, id)
@@ -25,12 +34,25 @@ export async function GET(request: Request) {
               estimateMicrodollars: toolEstimate(m),
             })),
             credentials: await new ByokStore().credentials(access.userId),
+            searchProviders: search
+              ? [
+                  {
+                    provider: "tavily" as const,
+                    name: "Tavily Search",
+                    priceRevision: search.snapshot.id,
+                    estimateMicrodollars: search.snapshot.worstCaseMicrodollars,
+                  },
+                ]
+              : [],
+            searchCredentials: await new SearchStore().credentials(
+              access.userId,
+            ),
             revisions: await new ToolStore().catalogRevisions(access.userId),
           },
-      { headers: { "cache-control": "no-store" } },
+      { headers: privateHeaders },
     );
   } catch (error) {
-    return errorResponse(error, "tools_request_failed");
+    return privateError(error);
   }
 }
 const mutation = z.discriminatedUnion("action", [
@@ -59,16 +81,13 @@ export async function POST(request: Request) {
           env: process.env,
           signal: request.signal,
         }),
-        { headers: { "cache-control": "no-store" } },
+        { headers: privateHeaders },
       );
     const store = new ToolStore();
     if (body.action === "delete") await store.remove(access.userId, body.id);
     else await store.decideApproval(access.userId, body.id, body.decision);
-    return Response.json(
-      { ok: true },
-      { headers: { "cache-control": "no-store" } },
-    );
+    return Response.json({ ok: true }, { headers: privateHeaders });
   } catch (error) {
-    return errorResponse(error, "tools_request_failed");
+    return privateError(error);
   }
 }

@@ -1,0 +1,14 @@
+# F13-B independent review and offline verification
+
+Application/tests frozen at `29007358184d2563aeb6fab517c635b783a9bd1f`, based on merged table main `4d5a1e8`. Separate Spec and Standards rereviews found no remaining actionable findings. They verified the five initial security corrections and four subsequent functional/accounting corrections; no live-provider claim follows from that review.
+
+- Final provider entry revalidates complete current price snapshot, expiry and amount after the shared lock; pre-entry release restores monetary capacity while request counters remain retained. Entered ambiguity stays held.
+- The actual SDK model prompt receives the separately authorized query as user data, counted in the joint 12-KiB middleware bound; approval still requires the exact query and one executed search.
+- Workers-compatible manual redirects are rejected and bodies canceled; declared/streamed response overflow cancels transport. Normalization strips controls and preserves surrogate pairs within unchanged schema bounds.
+- The final wrapped 4-KiB tool result remains complete JSON with exactly the persisted citation/source map. Views select the operation-linked executed call even after an earlier denied attempt.
+
+Root independently repeated focused search tests: **25 pass, 0 fail, 187 assertions, 18.77 s**. Required frozen-source checks: **222 pass, one inherited optional native-PostgreSQL concurrency skip, 0 fail, 3,207 assertions** across 223 tests/34 files (147.38 s); strict types, lint317, vendor integrity and Webpack production build all passed. The native-PG skip is inherited F10/F11 evidence and does not hide any search test.
+
+Root CUA browser checks used the development-only harness and production components, with fake local clients: desktop1280 separate model/search payer controls, exact query, independent ceilings, spending/privacy acknowledgements and gated run button; source title, canonical hostname, untrusted inert script text and retrieval timestamp; 390px dark source wrapping/vertical reachability, and light no-results/provider-error disclosures. Screenshots: `/private/tmp/galaxy-f13b-desktop-sources.png`, `/private/tmp/galaxy-f13b-phone-dark-sources-scrolled.png`, `/private/tmp/galaxy-f13b-phone-light-search-error.png`. No source link was visited and no provider request was sent. The initial development harness 404 was corrected by enabling its documented development-only flag; cold HMR reset the preview selection once. Both temporary root servers are stopped.
+
+Search remains default-off. Actual Tavily/model credentials, operator price/funding proof, provider abort/receipt/billing behavior, hosted runtime/network, OAuth, production budgets and device/assistive-technology checks remain pending. This completes only locally verified code acceptance for child #33; mixed live-acceptance issues stay open.

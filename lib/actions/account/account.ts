@@ -22,6 +22,7 @@ import {
 } from "@/lib/db/schema";
 import { AppError } from "@/lib/errors";
 import { ImageStore } from "@/lib/images/store";
+import { SearchStore } from "@/lib/search/store";
 import { ToolStore } from "@/lib/tools/store";
 
 export type AccountProfile = {
@@ -42,6 +43,7 @@ export type AccountExport = {
   memories: Array<typeof memory.$inferSelect>;
   projects: Array<typeof project.$inferSelect>;
   providerCredentials: CredentialView[];
+  searchCredentials: Awaited<ReturnType<SearchStore["credentials"]>>;
   byokOperations: Array<{
     id: string;
     provider: string;
@@ -165,6 +167,7 @@ export async function exportOwnedAccount(
     .from(project)
     .where(eq(project.userId, userId));
   const providerCredentials = await new ByokStore(db).credentials(userId);
+  const searchCredentials = await new SearchStore(db).credentials(userId);
   let actor: string | undefined;
   try {
     actor = resourceActor(userId, process.env);
@@ -211,6 +214,7 @@ export async function exportOwnedAccount(
     branches,
     runs,
     providerCredentials,
+    searchCredentials,
     byokOperations,
   };
 }

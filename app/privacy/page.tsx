@@ -112,6 +112,13 @@ export default function PrivacyPage() {
           exports. Encryption at rest does not protect against a compromised
           application host or change a provider’s policies.
         </p>
+        <p>
+          Optional web search uses a separate encrypted Tavily key. Only after
+          you select search and approve the exact query does Tavily, and
+          potentially its search-index providers, receive that query. Search
+          snippets and source links are saved with the owned tool run. The model
+          key and platform credits do not fund search.
+        </p>
       </section>
       <section>
         <h2>Export or delete your data</h2>

@@ -221,10 +221,12 @@ export default function HelpPage() {
         <h2>Run bounded tools with your provider key</h2>
         <p>
           Open Tools to ask a reviewed BYOK model to use arithmetic or read the
-          exact saved artifact revisions you select. A run allows up to three
-          model steps and four tool calls within 20 seconds. Tool results are
-          untrusted, and no search, browser, external write, connector, or code
-          execution tool is available.
+          exact saved artifact revisions you select. If search is configured,
+          you may separately authorize one exact Tavily query with its own key,
+          price snapshot, ceiling, and privacy acknowledgement. A run allows up
+          to three model steps and four tool calls within 20 seconds. Tool and
+          search results are untrusted; browser, external write, connector, and
+          code execution tools are unavailable.
         </p>
         <p>
           Choose the provider model and set an application cost ceiling at or
@@ -261,10 +263,11 @@ export default function HelpPage() {
           Private attachment support requires configured storage and reviewed
           model capabilities. Artifacts can be created explicitly from saved
           assistant replies. Bounded tools require a reviewed BYOK model and
-          provider spending controls. Search and browser work remain roadmap
-          features. Live guest verification, provider behavior, deployment, and
-          the release quality gate still require verification before public
-          beta.
+          provider spending controls. Optional bounded search requires separate
+          Tavily funding and reviewed operator configuration. Browser work
+          remains a roadmap feature. Live guest verification, provider behavior,
+          deployment, and the release quality gate still require verification
+          before public beta.
         </p>
       </section>
     </InfoPage>

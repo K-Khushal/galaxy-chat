@@ -150,6 +150,8 @@ beforeAll(async () => {
     "0008_tools",
     "0009_chart_artifacts",
     "0010_table_artifacts",
+    "0011_search_tools",
+    "0012_mcp_egress_replay",
     "0013_image_artifacts",
   ]);
 
