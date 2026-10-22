@@ -813,3 +813,521 @@ test("F13-B search credentials are owner-scoped, revision-bound and never expose
     await rejectionOf(new SearchStore(f.db).delete("alice", revision)),
   ).toBeDefined();
 });
+
+test("F13-B model receives separately authorized query as explicitly labelled user data within 12-KiB accounting", async () => {
+  const arbitraryQuery = "arbitrary-authorized-query-🔭-9876";
+  const requestBody = await body(arbitraryQuery);
+  requestBody.prompt = "Use the authorized search and summarize it.";
+
+  let generation = 0;
+  const model = new MockLanguageModelV4({
+    doGenerate: async (params) => {
+      generation++;
+      if (generation === 1) {
+        const userMsg = params.prompt.find((m) => m.role === "user");
+        const sysMsg = params.prompt.find((m) => m.role === "system");
+
+        const sysText =
+          typeof sysMsg?.content === "string"
+            ? sysMsg.content
+            : JSON.stringify(sysMsg?.content ?? "");
+        expect(sysText).not.toContain(arbitraryQuery);
+
+        const userText = Array.isArray(userMsg?.content)
+          ? userMsg.content.map((p) => ("text" in p ? p.text : "")).join("")
+          : String(userMsg?.content ?? "");
+        expect(userText).toContain(
+          `Authorized search query: ${arbitraryQuery}`,
+        );
+
+        const match = /Authorized search query:\s*(.+)$/m.exec(userText);
+        const extractedQuery = match ? match[1].trim() : "";
+
+        return receipt([
+          {
+            type: "tool-call",
+            toolCallId: "search-a",
+            toolName: "webSearch",
+            input: JSON.stringify({ query: extractedQuery }),
+          },
+        ]);
+      }
+      return receipt(
+        [
+          {
+            type: "source",
+            sourceType: "url",
+            id: "S1",
+            url: "https://example.com/",
+            title: "Result Title",
+          },
+          { type: "text", text: "Answer with [[S1]]" },
+        ],
+        "stop",
+      );
+    },
+  });
+
+  const adapterCalls: string[] = [];
+  const view = await startToolRun({
+    userId: "alice",
+    request: requestBody,
+    env: searchEnv,
+    model,
+    searchAdapter: async ({ query }) => {
+      adapterCalls.push(query);
+      return {
+        status: "results",
+        retrievedAt: "2026-10-18T00:00:00.000Z",
+        usageCredits: 1,
+        sources: [
+          {
+            id: "S1",
+            title: "Result Title",
+            url: "https://example.com/",
+            hostname: "example.com",
+            snippet: "Snippet text",
+          },
+        ],
+      };
+    },
+  });
+
+  expect(adapterCalls).toEqual([arbitraryQuery]);
+  expect(view.state).toBe("completed");
+  expect(view.search?.status).toBe("results");
+  expect(view.answer).toContain("[[S1]]");
+
+  const steps = await f.db.$client.unsafe(
+    "SELECT input_bytes FROM tool_step WHERE operation_id=$1",
+    [requestBody.id],
+  );
+  expect(steps).toHaveLength(2);
+  for (const step of steps) {
+    expect(step.input_bytes).toBeLessThanOrEqual(12000);
+  }
+});
+
+test("F13-B pre-entry release returns monetary reservation capacity under exact 8000 microdollar cap", async () => {
+  const searches = new SearchStore(f.db);
+  const config = resolveSearchConfig(searchEnv);
+  if (!config) throw new Error("fixture config missing");
+
+  const exactCapConfig = {
+    ...config,
+    caps: {
+      ...config.caps,
+      actorDailyMicrodollars: 8000,
+      globalDailyMicrodollars: 8000,
+    },
+  };
+
+  const req1 = await body("release-capacity-1");
+  await runningSearchCall(req1, "call-1");
+  const op1 = crypto.randomUUID();
+
+  await searches.reserve({
+    id: op1,
+    runId: req1.id,
+    callId: "call-1",
+    userId: "alice",
+    selection: req1.search,
+    config: exactCapConfig,
+    digest: resourceDigest("call-1", searchEnv),
+    env: searchEnv,
+  });
+
+  const reqFail = await body("release-capacity-fail");
+  await runningSearchCall(reqFail, "call-fail");
+  expect(
+    await rejectionOf(
+      searches.reserve({
+        id: crypto.randomUUID(),
+        runId: reqFail.id,
+        callId: "call-fail",
+        userId: "alice",
+        selection: reqFail.search,
+        config: exactCapConfig,
+        digest: resourceDigest("call-fail", searchEnv),
+        env: searchEnv,
+      }),
+    ),
+  ).toMatchObject({ id: "search_resource_limited" });
+
+  await searches.finish(op1, "alice", "before_entry", searchEnv);
+  const [releasedRow] = await f.db.$client.unsafe(
+    "SELECT state FROM byok_operation WHERE id=$1",
+    [op1],
+  );
+  expect(releasedRow).toMatchObject({ state: "released" });
+
+  const req2 = await body("release-capacity-2");
+  await runningSearchCall(req2, "call-2");
+  const op2 = crypto.randomUUID();
+  await searches.reserve({
+    id: op2,
+    runId: req2.id,
+    callId: "call-2",
+    userId: "alice",
+    selection: req2.search,
+    config: exactCapConfig,
+    digest: resourceDigest("call-2", searchEnv),
+    env: searchEnv,
+  });
+
+  await searches.enter({
+    id: op2,
+    runId: req2.id,
+    callId: "call-2",
+    userId: "alice",
+    selection: req2.search,
+    snapshot: exactCapConfig.snapshot,
+    env: searchEnv,
+  });
+  const [enteredRow] = await f.db.$client.unsafe(
+    "SELECT state FROM byok_operation WHERE id=$1",
+    [op2],
+  );
+  expect(enteredRow).toMatchObject({ state: "entered" });
+
+  const req3 = await body("release-capacity-3");
+  await runningSearchCall(req3, "call-3");
+  expect(
+    await rejectionOf(
+      searches.reserve({
+        id: crypto.randomUUID(),
+        runId: req3.id,
+        callId: "call-3",
+        userId: "alice",
+        selection: req3.search,
+        config: exactCapConfig,
+        digest: resourceDigest("call-3", searchEnv),
+        env: searchEnv,
+      }),
+    ),
+  ).toMatchObject({ id: "search_resource_limited" });
+
+  await searches.finish(op2, "alice", "before_entry", searchEnv);
+  const [heldRow] = await f.db.$client.unsafe(
+    "SELECT state,reserved_microdollars FROM byok_operation WHERE id=$1",
+    [op2],
+  );
+  expect(heldRow).toMatchObject({
+    state: "held",
+    reserved_microdollars: 8000,
+  });
+
+  const req4 = await body("release-capacity-4");
+  await runningSearchCall(req4, "call-4");
+  expect(
+    await rejectionOf(
+      searches.reserve({
+        id: crypto.randomUUID(),
+        runId: req4.id,
+        callId: "call-4",
+        userId: "alice",
+        selection: req4.search,
+        config: exactCapConfig,
+        digest: resourceDigest("call-4", searchEnv),
+        env: searchEnv,
+      }),
+    ),
+  ).toMatchObject({ id: "search_resource_limited" });
+
+  const countConfig = {
+    ...config,
+    caps: {
+      ...config.caps,
+      actorDailyRequests: 2,
+      actorDailyMicrodollars: 96000,
+      globalDailyMicrodollars: 800000,
+    },
+  };
+  const reqCount = await body("release-count-limit");
+  await runningSearchCall(reqCount, "call-count");
+  expect(
+    await rejectionOf(
+      searches.reserve({
+        id: crypto.randomUUID(),
+        runId: reqCount.id,
+        callId: "call-count",
+        userId: "alice",
+        selection: reqCount.search,
+        config: countConfig,
+        digest: resourceDigest("call-count", searchEnv),
+        env: searchEnv,
+      }),
+    ),
+  ).toMatchObject({ id: "search_resource_limited" });
+});
+
+test("F13-B 100+ emoji and mixed-script sources persist through tool run, parse schema and fit envelope", async () => {
+  const requestBody = await body("unicode sources run");
+  let generation = 0;
+  const model = new MockLanguageModelV4({
+    doGenerate: async () =>
+      ++generation === 1
+        ? receipt([
+            {
+              type: "tool-call",
+              toolCallId: "search-u",
+              toolName: "webSearch",
+              input: JSON.stringify({ query: requestBody.search.query }),
+            },
+          ])
+        : receipt([{ type: "text", text: "Answer [[S1]]" }], "stop"),
+  });
+
+  const view = await startToolRun({
+    userId: "alice",
+    request: requestBody,
+    env: searchEnv,
+    model,
+    searchAdapter: ({ key, query, signal }) =>
+      runTavilySearch({
+        key,
+        query,
+        signal,
+        fetcher: Object.assign(
+          async () =>
+            Response.json({
+              query,
+              results: [
+                {
+                  title: "🔥".repeat(120),
+                  url: "https://example.com/emojis",
+                  content: "🚀".repeat(400),
+                },
+                {
+                  title: `\u202E\u0627\u0644\u0639\u0631\u0628\u064A\u0629 \u4E2D\u6587 ${"🌟".repeat(90)}`,
+                  url: "https://example.com/mixed",
+                  content: `\u0085\u200E ${"🎉".repeat(380)} text`,
+                },
+              ],
+              usage: { credits: 1 },
+            }),
+          { preconnect: fetch.preconnect },
+        ),
+      }),
+  });
+
+  expect(view.state).toBe("completed");
+  expect(view.search?.status).toBe("results");
+  expect(view.search?.sources).toHaveLength(2);
+  expect(view.search?.sources[0].id).toBe("S1");
+  expect(view.search?.sources[1].id).toBe("S2");
+  for (const s of view.search?.sources ?? []) {
+    expect(s.title.length).toBeLessThanOrEqual(160);
+    expect(s.snippet.length).toBeLessThanOrEqual(700);
+  }
+  const viewJson = JSON.stringify(view);
+  const hasLoneSurrogate =
+    /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(
+      viewJson,
+    );
+  expect(hasLoneSurrogate).toBe(false);
+  expect(viewJson).not.toMatch(/[\p{Cc}\p{Cf}]/u);
+});
+
+test("F13-B search view reflects executed search after earlier denied mismatch", async () => {
+  const requestBody = await body("authorized query D");
+  let generation = 0;
+  let adapterCalls = 0;
+
+  const model = new MockLanguageModelV4({
+    doGenerate: async () => {
+      generation++;
+      if (generation === 1) {
+        return receipt([
+          {
+            type: "tool-call",
+            toolCallId: "wrong-query-call",
+            toolName: "webSearch",
+            input: JSON.stringify({ query: "denied wrong query" }),
+          },
+        ]);
+      }
+      if (generation === 2) {
+        return receipt([
+          {
+            type: "tool-call",
+            toolCallId: "correct-query-call",
+            toolName: "webSearch",
+            input: JSON.stringify({ query: requestBody.search.query }),
+          },
+        ]);
+      }
+      return receipt(
+        [
+          {
+            type: "source",
+            sourceType: "url",
+            id: "S1",
+            url: "https://example.com/",
+            title: "Source Title",
+          },
+          { type: "text", text: "Answer grounded in [[S1]]" },
+        ],
+        "stop",
+      );
+    },
+  });
+
+  const view = await startToolRun({
+    userId: "alice",
+    request: requestBody,
+    env: searchEnv,
+    model,
+    searchAdapter: async () => {
+      adapterCalls++;
+      return {
+        status: "results",
+        retrievedAt: "2026-10-18T00:00:00.000Z",
+        usageCredits: 1,
+        sources: [
+          {
+            id: "S1",
+            title: "Source Title",
+            url: "https://example.com/",
+            hostname: "example.com",
+            snippet: "Snippet text",
+          },
+        ],
+      };
+    },
+  });
+
+  expect(adapterCalls).toBe(1);
+  expect(view.state).toBe("completed");
+  expect(view.events.map((e) => [e.name, e.state])).toEqual([
+    ["webSearch", "denied"],
+    ["webSearch", "completed"],
+  ]);
+  expect(view.search?.status).toBe("results");
+  expect(view.search?.sources[0].id).toBe("S1");
+  expect(view.answer).toContain("[[S1]]");
+  expect(view.answer).not.toContain("Search was authorized but not used");
+
+  const rows = await f.db.$client.unsafe(
+    "SELECT state,reserved_microdollars,actual_microdollars,receipt_credits FROM byok_operation WHERE kind='search'",
+  );
+  expect(rows).toHaveLength(1);
+  expect(rows[0]).toMatchObject({
+    state: "complete",
+    reserved_microdollars: 8000,
+    actual_microdollars: 8000,
+    receipt_credits: 1,
+  });
+});
+
+test("F13-B search view reflects no_results when executed search has no results after earlier denial", async () => {
+  const requestBody = await body("empty query D");
+  let generation = 0;
+  let adapterCalls = 0;
+
+  const model = new MockLanguageModelV4({
+    doGenerate: async () => {
+      generation++;
+      if (generation === 1) {
+        return receipt([
+          {
+            type: "tool-call",
+            toolCallId: "denied-call",
+            toolName: "webSearch",
+            input: JSON.stringify({ query: "denied wrong query" }),
+          },
+        ]);
+      }
+      if (generation === 2) {
+        return receipt([
+          {
+            type: "tool-call",
+            toolCallId: "empty-call",
+            toolName: "webSearch",
+            input: JSON.stringify({ query: requestBody.search.query }),
+          },
+        ]);
+      }
+      return receipt([{ type: "text", text: "No results found" }], "stop");
+    },
+  });
+
+  const view = await startToolRun({
+    userId: "alice",
+    request: requestBody,
+    env: searchEnv,
+    model,
+    searchAdapter: async () => {
+      adapterCalls++;
+      return {
+        status: "no_results",
+        retrievedAt: "2026-10-18T00:00:00.000Z",
+        usageCredits: 1,
+        sources: [],
+      };
+    },
+  });
+
+  expect(adapterCalls).toBe(1);
+  expect(view.state).toBe("completed");
+  expect(view.search?.status).toBe("no_results");
+  expect(view.search?.sources).toHaveLength(0);
+});
+
+test("F13-B search view reflects provider_error when executed search fails after earlier denial", async () => {
+  const requestBody = await body("failed query D");
+  let generation = 0;
+  let adapterCalls = 0;
+
+  const model = new MockLanguageModelV4({
+    doGenerate: async () => {
+      generation++;
+      if (generation === 1) {
+        return receipt([
+          {
+            type: "tool-call",
+            toolCallId: "denied-call",
+            toolName: "webSearch",
+            input: JSON.stringify({ query: "denied wrong query" }),
+          },
+        ]);
+      }
+      if (generation === 2) {
+        return receipt([
+          {
+            type: "tool-call",
+            toolCallId: "failing-call",
+            toolName: "webSearch",
+            input: JSON.stringify({ query: requestBody.search.query }),
+          },
+        ]);
+      }
+      return receipt([{ type: "text", text: "Search failed" }], "stop");
+    },
+  });
+
+  const view = await startToolRun({
+    userId: "alice",
+    request: requestBody,
+    env: searchEnv,
+    model,
+    searchAdapter: async () => {
+      adapterCalls++;
+      throw new Error("provider exploded");
+    },
+  });
+
+  expect(adapterCalls).toBe(1);
+  expect(view.state).toBe("completed");
+  expect(view.events.map((e) => [e.name, e.state])).toEqual([
+    ["webSearch", "denied"],
+    ["webSearch", "failed"],
+  ]);
+  expect(view.search?.status).toBe("provider_error");
+  expect(view.search?.sources).toHaveLength(0);
+
+  const [operation] = await f.db.$client.unsafe(
+    "SELECT state FROM byok_operation WHERE kind='search'",
+  );
+  expect(operation).toMatchObject({ state: "held" });
+});

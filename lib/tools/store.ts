@@ -201,15 +201,24 @@ export class ToolStore {
       sql`SELECT id,state,answer,request FROM tool_run WHERE id=${id} AND user_id=${userId}`,
     );
     if (!run) throw new AppError("not_found", 404);
-    const events = await this.db.execute<ToolEvent>(
-      sql`SELECT id,name,state,output FROM tool_call WHERE run_id=${id}`,
+    const rows = await this.db.execute<
+      ToolEvent & { search_operation_id?: string | null }
+    >(
+      sql`SELECT id,name,state,output,search_operation_id FROM tool_call WHERE run_id=${id}`,
+    );
+    const events: ToolEvent[] = rows.map(
+      ({ search_operation_id: _op, ...event }) => event,
     );
     let search: SearchRunState | undefined;
     if (run.request.search) {
-      const event = [...events].find((item) => item.name === "webSearch");
+      const event =
+        rows.find(
+          (item) => item.name === "webSearch" && item.search_operation_id,
+        ) ??
+        rows.find(
+          (item) => item.name === "webSearch" && item.state !== "denied",
+        );
       if (!event) search = { status: "not_used", sources: [] };
-      else if (event.state === "denied")
-        search = { status: "not_used", sources: [] };
       else if (event.state !== "completed" || !event.output)
         search = { status: "provider_error", sources: [] };
       else {
@@ -226,7 +235,7 @@ export class ToolStore {
       }
     }
     const { request: _request, ...view } = run;
-    return { ...view, events: [...events], ...(search ? { search } : {}) };
+    return { ...view, events, ...(search ? { search } : {}) };
   }
   async remove(userId: string, id: string) {
     await this.db.transaction(async (tx) => {

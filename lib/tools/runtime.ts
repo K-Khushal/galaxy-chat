@@ -4,6 +4,7 @@ import { LIMITS } from "@/lib/credits/config";
 import { AppError } from "@/lib/errors";
 import { resolveCitations, validateCitationPart } from "@/lib/search/citations";
 import {
+  SEARCH_LIMITS,
   type SearchEvidence,
   type SearchSelection,
   searchToolSchema,
@@ -341,8 +342,11 @@ export async function runToolAgent(options: {
       return undefined;
     },
   });
+  const prompt = options.search
+    ? `${options.prompt}\n\nAuthorized search query: ${options.search.query.slice(0, SEARCH_LIMITS.queryCharacters)}`
+    : options.prompt;
   const result = await abortable(
-    agent.generate({ prompt: options.prompt, abortSignal: signal }),
+    agent.generate({ prompt, abortSignal: signal }),
     signal,
   );
   const cited = resolveCitations(result.text, searchEvidence);

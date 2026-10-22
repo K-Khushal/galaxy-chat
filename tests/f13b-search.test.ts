@@ -6,12 +6,16 @@ mock.module("server-only", () => ({}));
 const { TAVILY_ENDPOINT, runTavilySearch } = await import(
   "../lib/search/adapter"
 );
-const { SEARCH_LIMITS } = await import("../lib/search/contract");
+const { SEARCH_LIMITS, searchEvidenceSchema } = await import(
+  "../lib/search/contract"
+);
 const { resolveCitations, validateCitationPart } = await import(
   "../lib/search/citations"
 );
 const { resolveSearchConfig } = await import("../lib/search/config");
-const { boundedToolResult } = await import("../lib/tools/result-envelope");
+const { boundedToolResult, wrappedToolResultBytes } = await import(
+  "../lib/tools/result-envelope"
+);
 
 const enabled = {
   BYOK_RESOURCE_SECRET: "f13b-test-resource-secret-at-least-thirty-two",
@@ -354,4 +358,65 @@ test("F13-B search configuration defaults off and requires every current cap", (
       }),
     }),
   ).toBeUndefined();
+});
+
+test("F13-B adapter normalizes supplementary Unicode, preserves surrogate pairs and satisfies schema bounds", async () => {
+  const emojiTitle = "🔥".repeat(120);
+  const emojiSnippet = "🚀".repeat(400);
+  const mixedTitle = `\u202E\u0627\u0644\u0639\u0631\u0628\u064A\u0629 \u2066\u05E2\u05D1\u05E8\u05D9\u05EA \u4E2D\u6587 \u0939\u093F\u0928\u094D\u0926\u0940 ${"🌟".repeat(80)}`;
+  const mixedSnippet = `\u0085\u200E\u200F\u202A\u202C ${"🎉".repeat(360)} mixed boundary text`;
+
+  const fetcher: typeof fetch = Object.assign(
+    async () =>
+      Response.json({
+        query: "unicode test",
+        results: [
+          {
+            title: emojiTitle,
+            url: "https://example.com/emoji",
+            content: emojiSnippet,
+          },
+          {
+            title: mixedTitle,
+            url: "https://example.com/mixed",
+            content: mixedSnippet,
+          },
+        ],
+        usage: { credits: 1 },
+      }),
+    { preconnect: fetch.preconnect },
+  );
+
+  const result = await runTavilySearch({
+    key: "fixture-tavily-key-that-is-long-enough-1234",
+    query: "unicode test",
+    fetcher,
+    now: () => new Date("2026-10-18T00:00:00Z"),
+  });
+
+  expect(result.status).toBe("results");
+  expect(() => searchEvidenceSchema.parse(result)).not.toThrow();
+  expect(result.sources.map((s) => s.id)).toEqual(["S1", "S2"]);
+
+  for (const source of result.sources) {
+    expect(source.title.length).toBeLessThanOrEqual(
+      SEARCH_LIMITS.titleCharacters,
+    );
+    expect(source.snippet.length).toBeLessThanOrEqual(
+      SEARCH_LIMITS.snippetCharacters,
+    );
+    expect(source.title.length).toBeGreaterThan(0);
+    expect(source.snippet.length).toBeGreaterThan(0);
+  }
+
+  const serialized = JSON.stringify(result);
+  const hasLoneSurrogate =
+    /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(
+      serialized,
+    );
+  expect(hasLoneSurrogate).toBe(false);
+  expect(serialized).not.toMatch(/[\p{Cc}\p{Cf}]/u);
+  expect(wrappedToolResultBytes(result)).toBeLessThanOrEqual(
+    SEARCH_LIMITS.contextBytes,
+  );
 });

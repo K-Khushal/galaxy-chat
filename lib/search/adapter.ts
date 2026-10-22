@@ -29,11 +29,20 @@ const responseSchema = z
   .passthrough();
 
 function text(value: string, max: number) {
-  return [...value.replace(/[\t\n\r]+/g, " ").replace(/[\p{Cc}\p{Cf}]/gu, "")]
-    .slice(0, max)
-    .join("")
+  const wellFormed =
+    typeof value.toWellFormed === "function" ? value.toWellFormed() : value;
+  const normalized = wellFormed
+    .replace(/[\t\n\r]+/g, " ")
+    .replace(/[\p{Cc}\p{Cf}]/gu, "")
     .replace(/\s+/gu, " ")
     .trim();
+  if (normalized.length <= max) return normalized;
+  const cut =
+    normalized.charCodeAt(max - 1) >= 0xd800 &&
+    normalized.charCodeAt(max - 1) <= 0xdbff
+      ? max - 1
+      : max;
+  return normalized.slice(0, cut).trimEnd();
 }
 
 function safeUrl(value: string) {
@@ -73,7 +82,7 @@ function boundedEvidence(
     const last = result.sources.at(-1);
     if (!last) throw new AppError("search_result_limit", 502);
     if ([...last.snippet].length > 96)
-      last.snippet = [...last.snippet].slice(0, -64).join("");
+      last.snippet = [...last.snippet].slice(0, -64).join("").trimEnd();
     else result.sources.pop();
   }
   result.sources.forEach((source, index) => {

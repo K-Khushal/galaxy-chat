@@ -132,8 +132,8 @@ export class SearchStore {
         count(*) FILTER(WHERE kind='search' AND actor_key=${actor} AND created_at>=date_trunc('hour',now()))::integer actor_search_hourly,
         count(*) FILTER(WHERE kind='search' AND actor_key=${actor} AND created_at>=date_trunc('day',now()))::integer actor_search_daily,
         count(*) FILTER(WHERE kind='search' AND created_at>=date_trunc('day',now()))::integer global_search_daily,
-        COALESCE(sum(reserved_microdollars) FILTER(WHERE kind='search' AND actor_key=${actor} AND created_at>=date_trunc('day',now())),0)::integer actor_spend,
-        COALESCE(sum(reserved_microdollars) FILTER(WHERE kind='search' AND created_at>=date_trunc('day',now())),0)::integer global_spend,
+        COALESCE(sum(reserved_microdollars) FILTER(WHERE kind='search' AND state<>'released' AND actor_key=${actor} AND created_at>=date_trunc('day',now())),0)::integer actor_spend,
+        COALESCE(sum(reserved_microdollars) FILTER(WHERE kind='search' AND state<>'released' AND created_at>=date_trunc('day',now())),0)::integer global_spend,
         count(*) FILTER(WHERE actor_key=${actor})::integer actor_records,
         count(*)::integer global_records
         FROM byok_operation`);
