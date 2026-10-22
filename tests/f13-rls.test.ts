@@ -33,6 +33,7 @@ describe("F13 all private and anonymous tool tables revoke browser roles and ena
       "tool_step",
       "tool_call",
       "tool_approval",
+      "search_credential",
     ]) {
       const grants = await database.query<{ allowed: boolean }>(
         "SELECT has_table_privilege('anon',$1,'SELECT') OR has_table_privilege('authenticated',$1,'INSERT') OR has_table_privilege('anon',$1,'UPDATE') OR has_table_privilege('authenticated',$1,'DELETE') AS allowed",

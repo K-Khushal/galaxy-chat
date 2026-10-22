@@ -5,8 +5,17 @@ import type { EnvSource } from "@/lib/auth/env";
 import { resourceDigest } from "@/lib/byok/config";
 import { ByokStore } from "@/lib/byok/store";
 import { AppError } from "@/lib/errors";
+import { runTavilySearch } from "@/lib/search/adapter";
+import { resolveSearchConfig } from "@/lib/search/config";
+import {
+  SEARCH_LIMITS,
+  type SearchEvidence,
+  searchEvidenceSchema,
+} from "@/lib/search/contract";
+import { SearchStore } from "@/lib/search/store";
 import { resolveToolModel, toolEstimate } from "./config";
 import { TOOL_LIMITS, toolRunRequest } from "./contract";
+import { wrappedToolResultBytes } from "./result-envelope";
 import { runToolAgent } from "./runtime";
 import { ToolStore, validateRevisions } from "./store";
 
@@ -16,6 +25,11 @@ export async function startToolRun(options: {
   env: EnvSource;
   signal?: AbortSignal;
   model?: Parameters<typeof runToolAgent>[0]["model"];
+  searchAdapter?: (options: {
+    key: string;
+    query: string;
+    signal: AbortSignal;
+  }) => Promise<SearchEvidence>;
 }) {
   const signal = AbortSignal.any([
     AbortSignal.timeout(TOOL_LIMITS.timeoutMs),
@@ -36,8 +50,23 @@ export async function startToolRun(options: {
     request.ceilingMicrodollars < estimate
   )
     throw new AppError("tool_funding_confirmation_required", 409);
+  const searchConfig = request.search
+    ? resolveSearchConfig(options.env)
+    : undefined;
+  if (
+    request.search &&
+    (!searchConfig ||
+      request.search.priceRevision !== searchConfig.snapshot.id ||
+      request.search.estimateMicrodollars !==
+        searchConfig.snapshot.worstCaseMicrodollars ||
+      request.search.ceilingMicrodollars <
+        searchConfig.snapshot.worstCaseMicrodollars)
+  )
+    throw new AppError("search_funding_confirmation_required", 409);
+  const searchSelection = request.search;
   const store = new ToolStore();
   const byok = new ByokStore();
+  const searchStore = new SearchStore();
   await store.create(options.userId, request);
   let reserved = false;
   let entered = false;
@@ -106,6 +135,7 @@ export async function startToolRun(options: {
       model: deferred,
       prompt: request.prompt,
       revisions: request.revisions,
+      ...(request.search ? { search: request.search } : {}),
       approvalSecret,
       signal,
       ...(selected.adapter === "gateway"
@@ -148,6 +178,84 @@ export async function startToolRun(options: {
         event: (event) => store.event(options.userId, request.id, event),
         readRevision: (input) =>
           store.readRevision(options.userId, request.revisions, input),
+        ...(searchSelection && searchConfig
+          ? {
+              webSearch: async (input: { query: string }, callId: string) => {
+                const current = resolveSearchConfig(options.env);
+                if (
+                  !current ||
+                  JSON.stringify(current.snapshot) !==
+                    JSON.stringify(searchConfig.snapshot)
+                )
+                  throw new AppError("search_price_changed", 409);
+                const operationId = crypto.randomUUID();
+                let searchReserved = false;
+                let searchEntered = false;
+                try {
+                  await searchStore.reserve({
+                    id: operationId,
+                    runId: request.id,
+                    callId,
+                    userId: options.userId,
+                    selection: searchSelection,
+                    config: current,
+                    digest: resourceDigest(
+                      JSON.stringify({
+                        runId: request.id,
+                        callId,
+                        query: input.query,
+                        provider: "tavily",
+                        credentialRevision: searchSelection.credentialRevision,
+                        priceRevision: searchSelection.priceRevision,
+                      }),
+                      options.env,
+                    ),
+                    env: options.env,
+                  });
+                  searchReserved = true;
+                  signal.throwIfAborted();
+                  const key = await searchStore.enter({
+                    id: operationId,
+                    runId: request.id,
+                    callId,
+                    userId: options.userId,
+                    selection: searchSelection,
+                    snapshot: current.snapshot,
+                    env: options.env,
+                  });
+                  searchEntered = true;
+                  const evidence = searchEvidenceSchema.parse(
+                    await (options.searchAdapter ?? runTavilySearch)({
+                      key,
+                      query: input.query,
+                      signal,
+                    }),
+                  );
+                  if (
+                    wrappedToolResultBytes(evidence) >
+                    SEARCH_LIMITS.contextBytes
+                  )
+                    throw new AppError("search_result_limit", 502);
+                  await searchStore.finish(
+                    operationId,
+                    options.userId,
+                    "terminal",
+                    options.env,
+                  );
+                  return evidence;
+                } catch (error) {
+                  if (searchReserved)
+                    await searchStore.finish(
+                      operationId,
+                      options.userId,
+                      searchEntered ? "unknown" : "before_entry",
+                      options.env,
+                    );
+                  throw error;
+                }
+              },
+            }
+          : {}),
       },
     });
     await store.finish(options.userId, request.id, "completed", result.answer);

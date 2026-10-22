@@ -7,6 +7,17 @@ export type ToolCatalog = {
     estimateMicrodollars: number;
   }[];
   credentials: { provider: string; testState: string }[];
+  searchProviders?: {
+    provider: "tavily";
+    name: string;
+    priceRevision: string;
+    estimateMicrodollars: number;
+  }[];
+  searchCredentials?: {
+    provider: "tavily";
+    maskedKey: string;
+    revision: string;
+  }[];
   revisions: (SelectedRevision & { title: string })[];
 };
 export type ToolClient = {

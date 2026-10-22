@@ -6,6 +6,10 @@ import { lockByokResources } from "@/lib/byok/store";
 import { type DatabaseTransaction, requireDb } from "@/lib/db/client";
 import { AppError } from "@/lib/errors";
 import {
+  type SearchRunState,
+  searchEvidenceSchema,
+} from "@/lib/search/contract";
+import {
   type SelectedRevision,
   TOOL_LIMITS,
   type ToolEvent,
@@ -192,14 +196,46 @@ export class ToolStore {
       id: string;
       state: string;
       answer: string;
+      request: ToolRunRequest;
     }>(
-      sql`SELECT id,state,answer FROM tool_run WHERE id=${id} AND user_id=${userId}`,
+      sql`SELECT id,state,answer,request FROM tool_run WHERE id=${id} AND user_id=${userId}`,
     );
     if (!run) throw new AppError("not_found", 404);
-    const events = await this.db.execute<ToolEvent>(
-      sql`SELECT id,name,state,output FROM tool_call WHERE run_id=${id}`,
+    const rows = await this.db.execute<
+      ToolEvent & { search_operation_id?: string | null }
+    >(
+      sql`SELECT id,name,state,output,search_operation_id FROM tool_call WHERE run_id=${id}`,
     );
-    return { ...run, events: [...events] };
+    const events: ToolEvent[] = rows.map(
+      ({ search_operation_id: _op, ...event }) => event,
+    );
+    let search: SearchRunState | undefined;
+    if (run.request.search) {
+      const event =
+        rows.find(
+          (item) => item.name === "webSearch" && item.search_operation_id,
+        ) ??
+        rows.find(
+          (item) => item.name === "webSearch" && item.state !== "denied",
+        );
+      if (!event) search = { status: "not_used", sources: [] };
+      else if (event.state !== "completed" || !event.output)
+        search = { status: "provider_error", sources: [] };
+      else {
+        try {
+          const evidence = searchEvidenceSchema.parse(JSON.parse(event.output));
+          search = {
+            status: evidence.status,
+            retrievedAt: evidence.retrievedAt,
+            sources: evidence.sources,
+          };
+        } catch {
+          search = { status: "provider_error", sources: [] };
+        }
+      }
+    }
+    const { request: _request, ...view } = run;
+    return { ...view, events, ...(search ? { search } : {}) };
   }
   async remove(userId: string, id: string) {
     await this.db.transaction(async (tx) => {

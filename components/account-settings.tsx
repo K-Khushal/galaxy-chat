@@ -14,6 +14,7 @@ import {
   ProviderSettings,
   type ProviderSettingsClient,
 } from "@/components/provider-settings";
+import { SearchProviderSettings } from "@/components/search/search-provider-settings";
 import { CreditNotice } from "@/components/shell/credit-notice";
 import { ThemeControl } from "@/components/shell/theme-control";
 import { Button } from "@/components/ui/button";
@@ -221,6 +222,7 @@ export function SettingsDialog({
             </TabsContent>
             <TabsContent value="providers">
               <ProviderSettings client={providerClient} />
+              <SearchProviderSettings />
             </TabsContent>
             <TabsContent
               value="security"
