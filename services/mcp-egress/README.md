@@ -23,6 +23,9 @@ npm --prefix services/mcp-egress run start
 `MCP_EGRESS_BROKER_ENABLED=1`. Tests require Node 22+ and local OpenSSL to generate
 a temporary CA. The `.node.ts` names deliberately keep this suite out of Bun's
 app test discovery: native Node HTTPS/TLS behavior is the security boundary.
+The service `build` script cleans its dedicated output directory (`../../build/mcp-egress`)
+before compiling so stale compiled artifacts (such as prior `*.test.js` files) cannot linger
+and be erroneously discovered by root Bun test runners.
 Tests use only loopback TLS/SQL sockets and injected DNS; no public DNS, MCP,
 OAuth, provider, login, paid or cloud calls occur.
 
