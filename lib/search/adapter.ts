@@ -1,6 +1,7 @@
 import "server-only";
 import { z } from "zod";
 import { AppError } from "@/lib/errors";
+import { wrappedToolResultBytes } from "@/lib/tools/result-envelope";
 import {
   SEARCH_LIMITS,
   type SearchEvidence,
@@ -28,13 +29,11 @@ const responseSchema = z
   .passthrough();
 
 function text(value: string, max: number) {
-  return [...value]
-    .filter((character) => {
-      const code = character.codePointAt(0) ?? 0;
-      return code >= 32 && code !== 127;
-    })
+  return [...value.replace(/[\t\n\r]+/g, " ").replace(/[\p{Cc}\p{Cf}]/gu, "")]
     .slice(0, max)
-    .join("");
+    .join("")
+    .replace(/\s+/gu, " ")
+    .trim();
 }
 
 function safeUrl(value: string) {
@@ -70,9 +69,7 @@ function boundedEvidence(
     sources: kept,
     usageCredits: 1,
   };
-  while (
-    Buffer.byteLength(JSON.stringify(result)) > SEARCH_LIMITS.contextBytes
-  ) {
+  while (wrappedToolResultBytes(result) > SEARCH_LIMITS.contextBytes) {
     const last = result.sources.at(-1);
     if (!last) throw new AppError("search_result_limit", 502);
     if ([...last.snippet].length > 96)
@@ -88,8 +85,10 @@ function boundedEvidence(
 
 async function readBounded(response: Response) {
   const declared = response.headers.get("content-length");
-  if (declared && Number(declared) > SEARCH_LIMITS.transportBytes)
+  if (declared && Number(declared) > SEARCH_LIMITS.transportBytes) {
+    await cancelBody(response);
     throw new AppError("search_response_limit", 502);
+  }
   if (!response.body) throw new AppError("search_provider_failed", 502);
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -99,8 +98,10 @@ async function readBounded(response: Response) {
       const { done, value } = await reader.read();
       if (done) break;
       size += value.byteLength;
-      if (size > SEARCH_LIMITS.transportBytes)
+      if (size > SEARCH_LIMITS.transportBytes) {
+        await reader.cancel();
         throw new AppError("search_response_limit", 502);
+      }
       chunks.push(value);
     }
   } finally {
@@ -113,6 +114,14 @@ async function readBounded(response: Response) {
     offset += chunk.byteLength;
   }
   return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+}
+
+async function cancelBody(response: Response) {
+  try {
+    await response.body?.cancel();
+  } catch {
+    /* The response is already terminal; never retry or follow it. */
+  }
 }
 
 export async function runTavilySearch(options: {
@@ -153,13 +162,22 @@ export async function runTavilySearch(options: {
         "content-type": "application/json",
       },
       body: JSON.stringify(body),
-      redirect: "error",
+      // Cloudflare Workers supports manual redirects and rejects the `error`
+      // mode before dispatch. A 3xx is rejected explicitly below.
+      redirect: "manual",
       signal,
     });
   } catch {
     throw new AppError("search_provider_failed", 502);
   }
-  if (!response.ok) throw new AppError("search_provider_failed", 502);
+  if (response.status >= 300 && response.status < 400) {
+    await cancelBody(response);
+    throw new AppError("search_provider_failed", 502);
+  }
+  if (!response.ok) {
+    await cancelBody(response);
+    throw new AppError("search_provider_failed", 502);
+  }
   try {
     const parsed = responseSchema.parse(
       JSON.parse(await readBounded(response)),

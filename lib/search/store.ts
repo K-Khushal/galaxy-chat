@@ -6,7 +6,7 @@ import { validateKey } from "@/lib/byok/crypto";
 import { lockByokResources } from "@/lib/byok/store";
 import { type DatabaseTransaction, requireDb } from "@/lib/db/client";
 import { AppError } from "@/lib/errors";
-import type { SearchConfig } from "./config";
+import { resolveSearchConfig, type SearchConfig } from "./config";
 import type { SearchSelection } from "./contract";
 import { openSearchKey, sealSearchKey } from "./crypto";
 
@@ -167,8 +167,8 @@ export class SearchStore {
     runId: string;
     callId: string;
     userId: string;
-    credentialRevision: string;
-    priceRevision: string;
+    selection: SearchSelection;
+    snapshot: SearchConfig["snapshot"];
     env: EnvSource;
   }) {
     const actor = resourceActor(options.userId, options.env);
@@ -178,14 +178,26 @@ export class SearchStore {
         state: string;
         credential_revision: string;
         price_revision: string;
+        reserved_microdollars: number;
       }>(
-        sql`SELECT o.state,o.credential_revision,o.price_revision FROM byok_operation o JOIN tool_call c ON c.search_operation_id=o.id JOIN tool_run r ON r.id=c.run_id WHERE o.id=${options.id} AND o.actor_key=${actor} AND c.run_id=${options.runId} AND c.id=${options.callId} AND c.state='running' AND r.user_id=${options.userId} AND r.state='running' AND r.created_at>now()-interval '20 seconds'`,
+        sql`SELECT o.state,o.credential_revision,o.price_revision,o.reserved_microdollars FROM byok_operation o JOIN tool_call c ON c.search_operation_id=o.id JOIN tool_run r ON r.id=c.run_id WHERE o.id=${options.id} AND o.actor_key=${actor} AND c.run_id=${options.runId} AND c.id=${options.callId} AND c.state='running' AND r.user_id=${options.userId} AND r.state='running' AND r.created_at>now()-interval '20 seconds'`,
       );
+      // Resolve the final price proof only after the shared lock is held. A
+      // stale pre-reservation read cannot authorize provider entry.
+      const current = resolveSearchConfig(options.env);
       if (
         !operation ||
+        !current ||
         operation.state !== "reserved" ||
-        operation.credential_revision !== options.credentialRevision ||
-        operation.price_revision !== options.priceRevision
+        operation.credential_revision !==
+          options.selection.credentialRevision ||
+        operation.price_revision !== options.selection.priceRevision ||
+        operation.reserved_microdollars !==
+          options.selection.estimateMicrodollars ||
+        JSON.stringify(current.snapshot) !== JSON.stringify(options.snapshot) ||
+        current.snapshot.id !== operation.price_revision ||
+        current.snapshot.worstCaseMicrodollars !==
+          operation.reserved_microdollars
       )
         throw new AppError("search_entry_denied", 409);
       const row = await credential(tx, options.userId);

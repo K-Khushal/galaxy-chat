@@ -15,6 +15,7 @@ import {
 import { SearchStore } from "@/lib/search/store";
 import { resolveToolModel, toolEstimate } from "./config";
 import { TOOL_LIMITS, toolRunRequest } from "./contract";
+import { wrappedToolResultBytes } from "./result-envelope";
 import { runToolAgent } from "./runtime";
 import { ToolStore, validateRevisions } from "./store";
 
@@ -218,8 +219,8 @@ export async function startToolRun(options: {
                     runId: request.id,
                     callId,
                     userId: options.userId,
-                    credentialRevision: searchSelection.credentialRevision,
-                    priceRevision: searchSelection.priceRevision,
+                    selection: searchSelection,
+                    snapshot: current.snapshot,
                     env: options.env,
                   });
                   searchEntered = true;
@@ -231,7 +232,7 @@ export async function startToolRun(options: {
                     }),
                   );
                   if (
-                    Buffer.byteLength(JSON.stringify(evidence)) >
+                    wrappedToolResultBytes(evidence) >
                     SEARCH_LIMITS.contextBytes
                   )
                     throw new AppError("search_result_limit", 502);

@@ -11,6 +11,7 @@ const { resolveCitations, validateCitationPart } = await import(
   "../lib/search/citations"
 );
 const { resolveSearchConfig } = await import("../lib/search/config");
+const { boundedToolResult } = await import("../lib/tools/result-envelope");
 
 const enabled = {
   BYOK_RESOURCE_SECRET: "f13b-test-resource-secret-at-least-thirty-two",
@@ -46,9 +47,9 @@ test("F13-B Tavily adapter makes one fixed bounded snippet request and normalize
         query: "safe query",
         results: [
           {
-            title: "<script>Source title</script>",
+            title: "<script>\u0085Source\u202e title</script>",
             url: "https://example.com/path#fragment",
-            content: "<img src=x onerror=alert(1)> search snippet",
+            content: "<img src=x onerror=alert(1)> search \u0085\u2066 snippet",
             score: 0.9,
           },
           {
@@ -83,7 +84,7 @@ test("F13-B Tavily adapter makes one fixed bounded snippet request and normalize
   });
   expect(seen).toHaveLength(1);
   expect(seen[0].input).toBe(TAVILY_ENDPOINT);
-  expect(seen[0].init?.redirect).toBe("error");
+  expect(seen[0].init?.redirect).toBe("manual");
   expect(new Headers(seen[0].init?.headers).get("authorization")).toStartWith(
     "Bearer ",
   );
@@ -118,6 +119,53 @@ test("F13-B Tavily adapter makes one fixed bounded snippet request and normalize
     usageCredits: 1,
   });
   expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(4096);
+  expect(JSON.stringify(result)).not.toMatch(/[\p{Cc}\p{Cf}]/u);
+});
+
+test("F13-B Workers-compatible manual redirects never follow or forward the key", async () => {
+  for (const status of [302, 307]) {
+    const seen: Array<{
+      input: string;
+      redirect?: RequestRedirect;
+      auth: string | null;
+    }> = [];
+    let cancelled = 0;
+    const fetcher: typeof fetch = Object.assign(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.redirect === "error")
+          throw new TypeError("Workers does not support redirect error mode");
+        seen.push({
+          input: String(input),
+          redirect: init?.redirect,
+          auth: new Headers(init?.headers).get("authorization"),
+        });
+        return new Response(
+          new ReadableStream({ cancel: () => void cancelled++ }),
+          {
+            status,
+            headers: { location: "https://redirect.invalid/steal" },
+          },
+        );
+      },
+      { preconnect: fetch.preconnect },
+    );
+    expect(
+      await rejectionOf(
+        runTavilySearch({
+          key: "fixture-tavily-key-that-is-long-enough-1234",
+          query: "never follow",
+          fetcher,
+        }),
+      ),
+    ).toBeDefined();
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({
+      input: TAVILY_ENDPOINT,
+      redirect: "manual",
+    });
+    expect(seen[0].auth).toStartWith("Bearer ");
+    expect(cancelled).toBe(1);
+  }
 });
 
 test("F13-B adapter distinguishes honest no-results and holds ambiguous provider outcomes", async () => {
@@ -199,6 +247,7 @@ test("F13-B source citations resolve only server evidence and reject forged IDs 
 test("F13-B adapter enforces one 10-second, 64 KiB transport and a 4 KiB evidence envelope", async () => {
   expect(SEARCH_LIMITS.timeoutMs).toBe(10_000);
   let attempts = 0;
+  let declaredCancelled = 0;
   expect(
     await rejectionOf(
       runTavilySearch({
@@ -207,9 +256,16 @@ test("F13-B adapter enforces one 10-second, 64 KiB transport and a 4 KiB evidenc
         fetcher: Object.assign(
           async () => {
             attempts++;
-            return new Response("x", {
-              headers: { "content-length": "65537" },
-            });
+            return new Response(
+              new ReadableStream({
+                cancel() {
+                  declaredCancelled++;
+                },
+              }),
+              {
+                headers: { "content-length": "65537" },
+              },
+            );
           },
           { preconnect: fetch.preconnect },
         ),
@@ -217,6 +273,36 @@ test("F13-B adapter enforces one 10-second, 64 KiB transport and a 4 KiB evidenc
     ),
   ).toBeDefined();
   expect(attempts).toBe(1);
+  expect(declaredCancelled).toBe(1);
+
+  let streamCancelled = 0;
+  let streamAttempts = 0;
+  expect(
+    await rejectionOf(
+      runTavilySearch({
+        key: "fixture-tavily-key-that-is-long-enough-1234",
+        query: "bounded stream",
+        fetcher: Object.assign(
+          async () => {
+            streamAttempts++;
+            return new Response(
+              new ReadableStream({
+                pull(controller) {
+                  controller.enqueue(new Uint8Array(40_000));
+                },
+                cancel() {
+                  streamCancelled++;
+                },
+              }),
+            );
+          },
+          { preconnect: fetch.preconnect },
+        ),
+      }),
+    ),
+  ).toBeDefined();
+  expect(streamAttempts).toBe(1);
+  expect(streamCancelled).toBe(1);
 
   const large = await runTavilySearch({
     key: "fixture-tavily-key-that-is-long-enough-1234",
@@ -238,6 +324,13 @@ test("F13-B adapter enforces one 10-second, 64 KiB transport and a 4 KiB evidenc
   expect(Buffer.byteLength(JSON.stringify(large))).toBeLessThanOrEqual(
     SEARCH_LIMITS.contextBytes,
   );
+  const envelopeText = boundedToolResult(large, SEARCH_LIMITS.contextBytes);
+  const envelope = JSON.parse(envelopeText);
+  expect(Buffer.byteLength(envelopeText)).toBeLessThanOrEqual(
+    SEARCH_LIMITS.contextBytes,
+  );
+  expect(envelope.truncated).toBe(false);
+  expect(JSON.parse(envelope.content)).toEqual(large);
   expect(large.sources.length).toBeLessThanOrEqual(5);
 });
 

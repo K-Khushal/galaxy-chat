@@ -6,6 +6,7 @@ import { rejectionOf } from "./helpers/rejection";
 
 mock.module("server-only", () => ({}));
 const { startToolRun } = await import("../lib/tools/service");
+const { runTavilySearch } = await import("../lib/search/adapter");
 const { deleteOwnedAccount, exportOwnedAccount } = await import(
   "../lib/actions/account/account"
 );
@@ -226,6 +227,80 @@ test("F13-B one authorized search uses its separate key, settles one receipt and
   ).toHaveLength(1);
 });
 
+test("F13-B final SDK tool envelope preserves complete bounded evidence and citation IDs", async () => {
+  const requestBody = await body("escaped envelope evidence");
+  let generation = 0;
+  const model = new MockLanguageModelV4({
+    doGenerate: async () =>
+      ++generation === 1
+        ? receipt([
+            {
+              type: "tool-call",
+              toolCallId: "search-envelope",
+              toolName: "webSearch",
+              input: JSON.stringify({ query: requestBody.search.query }),
+            },
+          ])
+        : receipt([{ type: "text", text: "Bounded answer [[S1]]" }], "stop"),
+  });
+  const view = await startToolRun({
+    userId: "alice",
+    request: requestBody,
+    env: searchEnv,
+    model,
+    searchAdapter: ({ key, query, signal }) =>
+      runTavilySearch({
+        key,
+        query,
+        signal,
+        fetcher: Object.assign(
+          async () =>
+            Response.json({
+              query,
+              results: Array.from({ length: 5 }, (_, index) => ({
+                title: `Source ${index} ${'\\"🔥'.repeat(80)}`,
+                url: `https://example.com/${index}`,
+                content: `Snippet ${index} ${'\\"🔥'.repeat(350)}`,
+              })),
+              usage: { credits: 1 },
+            }),
+          { preconnect: fetch.preconnect },
+        ),
+      }),
+  });
+  expect(model.doGenerateCalls).toHaveLength(2);
+  const resultPart = model.doGenerateCalls[1].prompt
+    .filter((message) => message.role === "tool")
+    .flatMap((message) => message.content)
+    .find((part) => part.type === "tool-result");
+  if (
+    !resultPart ||
+    resultPart.type !== "tool-result" ||
+    !("value" in resultPart.output) ||
+    typeof resultPart.output.value !== "string"
+  )
+    throw new Error("bounded search tool result missing");
+  expect(Buffer.byteLength(resultPart.output.value)).toBeLessThanOrEqual(4096);
+  const envelope = JSON.parse(resultPart.output.value);
+  expect(envelope).toMatchObject({ untrusted: true, truncated: false });
+  const delivered = JSON.parse(envelope.content);
+  const persisted = JSON.parse(
+    view.events.find((event) => event.id === "search-envelope")?.output ?? "",
+  );
+  expect(delivered).toEqual(persisted);
+  expect(delivered.sources).toEqual(view.search?.sources);
+  expect(delivered.sources.map((source: { id: string }) => source.id)).toEqual(
+    view.search?.sources.map((source) => source.id),
+  );
+  expect(view.answer).toContain("[[S1]]");
+  const steps = await f.db.$client.unsafe(
+    "SELECT input_bytes FROM tool_step WHERE operation_id=$1",
+    [requestBody.id],
+  );
+  expect(steps).toHaveLength(2);
+  for (const step of steps) expect(step.input_bytes).toBeLessThanOrEqual(12000);
+});
+
 test("F13-B search reservation atomically binds the owned running tool call", async () => {
   const requestBody = await body();
   const searches = new SearchStore(f.db);
@@ -368,8 +443,8 @@ test("F13-B revocation after reservation prevents entry and releases the unenter
         runId: requestBody.id,
         callId: "revoke-before-entry",
         userId: "alice",
-        credentialRevision: requestBody.search.credentialRevision,
-        priceRevision: requestBody.search.priceRevision,
+        selection: requestBody.search,
+        snapshot: config.snapshot,
         env: searchEnv,
       }),
     ),
@@ -381,6 +456,143 @@ test("F13-B revocation after reservation prevents entry and releases the unenter
   );
   expect(rows).toHaveLength(1);
   expect(rows[0]).toMatchObject({ state: "released" });
+});
+
+test("F13-B final locked entry rejects price expiry after reservation", async () => {
+  const requestBody = await body("expires after reserve");
+  const searches = new SearchStore(f.db);
+  await runningSearchCall(requestBody, "expires-after-reserve");
+  const config = resolveSearchConfig(searchEnv);
+  if (!config) throw new Error("fixture config missing");
+  const operationId = crypto.randomUUID();
+  await searches.reserve({
+    id: operationId,
+    runId: requestBody.id,
+    callId: "expires-after-reserve",
+    userId: "alice",
+    selection: requestBody.search,
+    config,
+    digest: resourceDigest("expires-after-reserve", searchEnv),
+    env: searchEnv,
+  });
+  const expiredEnv = {
+    ...searchEnv,
+    SEARCH_PRICE_JSON: JSON.stringify({
+      ...JSON.parse(searchEnv.SEARCH_PRICE_JSON),
+      expiresAt: "2026-10-18T00:00:00Z",
+    }),
+  };
+  expect(
+    await rejectionOf(
+      searches.enter({
+        id: operationId,
+        runId: requestBody.id,
+        callId: "expires-after-reserve",
+        userId: "alice",
+        selection: requestBody.search,
+        snapshot: config.snapshot,
+        env: expiredEnv,
+      }),
+    ),
+  ).toMatchObject({ id: "search_entry_denied" });
+  const [beforeRelease] = await f.db.$client.unsafe(
+    "SELECT state FROM byok_operation WHERE id=$1",
+    [operationId],
+  );
+  expect(beforeRelease).toMatchObject({ state: "reserved" });
+  await searches.finish(operationId, "alice", "before_entry", searchEnv);
+  const [afterRelease] = await f.db.$client.unsafe(
+    "SELECT state FROM byok_operation WHERE id=$1",
+    [operationId],
+  );
+  expect(afterRelease).toMatchObject({ state: "released" });
+});
+
+test("F13-B awaited shared lock rechecks expiry, cost and complete snapshot identity", async () => {
+  for (const change of ["expiry", "cost", "identity"] as const) {
+    const requestBody = await body(`locked price ${change}`);
+    const searches = new SearchStore(f.db);
+    const callId = `locked-${change}`;
+    await runningSearchCall(requestBody, callId);
+    const config = resolveSearchConfig(searchEnv);
+    if (!config) throw new Error("fixture config missing");
+    const operationId = crypto.randomUUID();
+    await searches.reserve({
+      id: operationId,
+      runId: requestBody.id,
+      callId,
+      userId: "alice",
+      selection: requestBody.search,
+      config,
+      digest: resourceDigest(callId, searchEnv),
+      env: searchEnv,
+    });
+    let unlock = () => {};
+    let reached = () => {};
+    const waiting = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    const barrier = new Promise<void>((resolve) => {
+      unlock = resolve;
+    });
+    // Pause completion of the real first execute: the shared advisory lock.
+    const gatedDb = new Proxy(f.db, {
+      get(target, property, receiver) {
+        if (property !== "transaction")
+          return Reflect.get(target, property, receiver);
+        return (callback: Parameters<typeof f.db.transaction>[0]) =>
+          target.transaction((tx) => {
+            let first = true;
+            return callback(
+              new Proxy(tx, {
+                get(targetTx, field, txReceiver) {
+                  if (field !== "execute")
+                    return Reflect.get(targetTx, field, txReceiver);
+                  return async (...args: Parameters<typeof tx.execute>) => {
+                    const result = await targetTx.execute(...args);
+                    if (first) {
+                      first = false;
+                      reached();
+                      await barrier;
+                    }
+                    return result;
+                  };
+                },
+              }),
+            );
+          });
+      },
+    });
+    const entryEnv = { ...searchEnv };
+    const entry = rejectionOf(
+      new SearchStore(gatedDb).enter({
+        id: operationId,
+        runId: requestBody.id,
+        callId,
+        userId: "alice",
+        selection: requestBody.search,
+        snapshot: config.snapshot,
+        env: entryEnv,
+      }),
+    );
+    await waiting;
+    entryEnv.SEARCH_PRICE_JSON = JSON.stringify({
+      ...config.snapshot,
+      ...(change === "expiry"
+        ? { expiresAt: "2026-10-18T00:00:00Z" }
+        : change === "cost"
+          ? { worstCaseMicrodollars: 9000 }
+          : { verifiedAt: "2026-10-18T00:00:01Z" }),
+    });
+    unlock();
+    expect(await entry).toMatchObject({ id: "search_entry_denied" });
+    const [operation] = await f.db.$client.unsafe(
+      "SELECT state FROM byok_operation WHERE id=$1",
+      [operationId],
+    );
+    expect(operation.state).toBe("reserved");
+    await searches.finish(operationId, "alice", "before_entry", searchEnv);
+  }
 });
 
 test("F13-B a model cannot change or repeat the authorized paid query", async () => {
@@ -506,11 +718,71 @@ test("F13-B post-entry provider ambiguity is held and shown as provider error", 
   expect(JSON.stringify(view)).not.toContain("private provider body");
 });
 
+test("F13-B oversized provider stream cancels promptly and retains its entered hold", async () => {
+  const requestBody = await body("oversized provider response");
+  let generation = 0;
+  let cancelled = 0;
+  let attempts = 0;
+  const model = new MockLanguageModelV4({
+    doGenerate: async () =>
+      ++generation === 1
+        ? receipt([
+            {
+              type: "tool-call",
+              toolCallId: "search-overflow",
+              toolName: "webSearch",
+              input: JSON.stringify({ query: requestBody.search.query }),
+            },
+          ])
+        : receipt([{ type: "text", text: "Search unavailable" }], "stop"),
+  });
+  const view = await startToolRun({
+    userId: "alice",
+    request: requestBody,
+    env: searchEnv,
+    model,
+    searchAdapter: ({ key, query, signal }) =>
+      runTavilySearch({
+        key,
+        query,
+        signal,
+        fetcher: Object.assign(
+          async () => {
+            attempts++;
+            return new Response(
+              new ReadableStream({
+                pull(controller) {
+                  controller.enqueue(new Uint8Array(40_000));
+                },
+                cancel() {
+                  cancelled++;
+                },
+              }),
+            );
+          },
+          { preconnect: fetch.preconnect },
+        ),
+      }),
+  });
+  expect(attempts).toBe(1);
+  expect(cancelled).toBe(1);
+  expect(view.search?.status).toBe("provider_error");
+  const [operation] = await f.db.$client.unsafe(
+    "SELECT state,actual_microdollars,receipt_credits FROM byok_operation WHERE kind='search'",
+  );
+  expect(operation).toMatchObject({
+    state: "held",
+    actual_microdollars: null,
+    receipt_credits: null,
+  });
+});
+
 test("F13-B search credentials are owner-scoped, revision-bound and never exposed", async () => {
   const alice = await searchRoute.GET(
     await f.request("/api/search-credentials"),
   );
   expect(alice.status).toBe(200);
+  expect(alice.headers.get("cache-control")).toBe("private, no-store");
   const value = await alice.json();
   expect(value.credentials[0].maskedKey).toBe(`••••${searchKey.slice(-4)}`);
   expect(JSON.stringify(value)).not.toContain(searchKey);

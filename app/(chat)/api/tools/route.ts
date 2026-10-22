@@ -12,6 +12,12 @@ import { toolRunRequest } from "@/lib/tools/contract";
 import { startToolRun } from "@/lib/tools/service";
 import { ToolStore } from "@/lib/tools/store";
 export const maxDuration = 30;
+const privateHeaders = { "cache-control": "private, no-store" };
+function privateError(error: unknown) {
+  const response = errorResponse(error, "tools_request_failed");
+  response.headers.set("cache-control", "private, no-store");
+  return response;
+}
 export async function GET(request: Request) {
   try {
     const access = await requireChatAccess(request.headers);
@@ -43,10 +49,10 @@ export async function GET(request: Request) {
             ),
             revisions: await new ToolStore().catalogRevisions(access.userId),
           },
-      { headers: { "cache-control": "no-store" } },
+      { headers: privateHeaders },
     );
   } catch (error) {
-    return errorResponse(error, "tools_request_failed");
+    return privateError(error);
   }
 }
 const mutation = z.discriminatedUnion("action", [
@@ -75,16 +81,13 @@ export async function POST(request: Request) {
           env: process.env,
           signal: request.signal,
         }),
-        { headers: { "cache-control": "no-store" } },
+        { headers: privateHeaders },
       );
     const store = new ToolStore();
     if (body.action === "delete") await store.remove(access.userId, body.id);
     else await store.decideApproval(access.userId, body.id, body.decision);
-    return Response.json(
-      { ok: true },
-      { headers: { "cache-control": "no-store" } },
-    );
+    return Response.json({ ok: true }, { headers: privateHeaders });
   } catch (error) {
-    return errorResponse(error, "tools_request_failed");
+    return privateError(error);
   }
 }

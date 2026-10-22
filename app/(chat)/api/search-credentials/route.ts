@@ -17,6 +17,12 @@ const save = z
 const remove = z
   .object({ provider: z.literal("tavily"), revision: z.uuid() })
   .strict();
+const privateHeaders = { "cache-control": "private, no-store" };
+function privateError(error: unknown) {
+  const response = errorResponse(error, "search_credentials_failed");
+  response.headers.set("cache-control", "private, no-store");
+  return response;
+}
 async function view(userId: string) {
   return {
     configured: Boolean(resolveSearchConfig(process.env)),
@@ -27,10 +33,10 @@ export async function GET(request: Request) {
   try {
     const access = await requireChatAccess(request.headers);
     return Response.json(await view(access.userId), {
-      headers: { "cache-control": "no-store" },
+      headers: privateHeaders,
     });
   } catch (error) {
-    return errorResponse(error, "search_credentials_failed");
+    return privateError(error);
   }
 }
 export async function PUT(request: Request) {
@@ -46,10 +52,10 @@ export async function PUT(request: Request) {
       process.env,
     );
     return Response.json(await view(access.userId), {
-      headers: { "cache-control": "no-store" },
+      headers: privateHeaders,
     });
   } catch (error) {
-    return errorResponse(error, "search_credentials_failed");
+    return privateError(error);
   }
 }
 export async function DELETE(request: Request) {
@@ -60,9 +66,9 @@ export async function DELETE(request: Request) {
     if (!parsed.success) throw new AppError("invalid_request", 400);
     await new SearchStore().delete(access.userId, parsed.data.revision);
     return Response.json(await view(access.userId), {
-      headers: { "cache-control": "no-store" },
+      headers: privateHeaders,
     });
   } catch (error) {
-    return errorResponse(error, "search_credentials_failed");
+    return privateError(error);
   }
 }
