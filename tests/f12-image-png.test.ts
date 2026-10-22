@@ -7,7 +7,7 @@ mock.module("server-only", () => ({}));
 const { canonicalPng, inspectPng, IMAGE_BYTES } = await import(
   "../lib/images/png"
 );
-const { imageSnapshot, validateImageReview } = await import(
+const { imageSnapshot, snapshotDigest, validateImageReview } = await import(
   "../lib/images/config"
 );
 const { boundedImageFetch, OpenRouterImageAdapter, requireImageCapability } =
@@ -130,6 +130,7 @@ test("F12-C one reviewed default-off route, safe prices/expiry/strict shape and 
     ).toThrow();
   const request = {
     modelId: snapshot.id,
+    reviewDigest: snapshotDigest(snapshot),
     estimateMicrodollars: 120000,
     ceilingMicrodollars: 120000,
     providerBudgetAcknowledged: true,
@@ -139,6 +140,7 @@ test("F12-C one reviewed default-off route, safe prices/expiry/strict shape and 
     { estimateMicrodollars: 119999 },
     { ceilingMicrodollars: 119999 },
     { providerBudgetAcknowledged: false },
+    { reviewDigest: "0".repeat(64) },
     { reference: { id: crypto.randomUUID(), sha256: "a".repeat(64) } },
   ])
     expect(() =>

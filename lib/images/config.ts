@@ -72,6 +72,7 @@ export function validateImageReview(
     request.estimateMicrodollars !== snapshot.worstCaseEstimateMicrodollars ||
     request.ceilingMicrodollars < snapshot.worstCaseEstimateMicrodollars ||
     request.providerBudgetAcknowledged !== true ||
+    request.reviewDigest !== snapshotDigest(snapshot) ||
     (pinned && snapshotDigest(snapshot) !== snapshotDigest(pinned))
   )
     throw new AppError("image_review_changed", 409);

@@ -37,6 +37,7 @@ export const imageRequest = z
       .optional(),
     funding: z.literal("byok:openrouter"),
     modelId: z.string().min(1).max(80),
+    reviewDigest: z.string().regex(/^[a-f0-9]{64}$/),
     credentialRevision: z.uuid(),
     estimateMicrodollars: money,
     ceilingMicrodollars: money,
@@ -77,6 +78,7 @@ export type ImageCatalog = {
   available: boolean;
   recent?: ImageStatus[];
   model?: ImageSnapshot;
+  reviewDigest?: string;
   credentialRevision?: string;
   reason?: string;
 };

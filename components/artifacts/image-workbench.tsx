@@ -117,13 +117,20 @@ export function ImageComposer({
   const valid =
     !!model &&
     !!catalog.credentialRevision &&
+    !!catalog.reviewDigest &&
     prompt.trim().length > 0 &&
     title.trim().length > 0 &&
     ack &&
     Number.isSafeInteger(amount) &&
     amount >= model.worstCaseEstimateMicrodollars;
   async function generate() {
-    if (!model || !catalog.credentialRevision || !valid || pending.current)
+    if (
+      !model ||
+      !catalog.credentialRevision ||
+      !catalog.reviewDigest ||
+      !valid ||
+      pending.current
+    )
       return;
     pending.current = true;
     setBusy(true);
@@ -146,6 +153,7 @@ export function ImageComposer({
         operation: "generate",
         funding: "byok:openrouter",
         modelId: model.id,
+        reviewDigest: catalog.reviewDigest,
         credentialRevision: catalog.credentialRevision,
         estimateMicrodollars: model.worstCaseEstimateMicrodollars,
         ceilingMicrodollars: amount,

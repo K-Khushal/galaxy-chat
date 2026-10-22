@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { encode } from "fast-png";
 import { pngCrc } from "../../lib/images/png";
 import { env } from "./beta-fixture";
@@ -42,4 +43,7 @@ export function chunk(name: string, data: Uint8Array) {
   out.set(data, 8);
   view.setUint32(out.length - 4, pngCrc(out.subarray(4, out.length - 4)));
   return out;
+}
+export function snapshotReviewDigest(s = snapshot) {
+  return createHash("sha256").update(JSON.stringify(s)).digest("hex");
 }

@@ -22,6 +22,7 @@ mock.module("server-only", () => ({}));
 const { ByokStore } = await import("../lib/byok/store");
 const { ImageStore } = await import("../lib/images/store");
 const { ImageService } = await import("../lib/images/service");
+const { snapshotDigest } = await import("../lib/images/config");
 const { imageHandlers } = await import("../lib/images/http");
 const { canonicalPng } = await import("../lib/images/png");
 const { AttachmentStore } = await import("../lib/attachments/store");
@@ -89,6 +90,7 @@ async function fixture() {
     operation: "generate",
     funding: "byok:openrouter",
     modelId: snapshot.id,
+    reviewDigest: snapshotDigest(snapshot),
     credentialRevision: revision,
     estimateMicrodollars: 120000,
     ceilingMicrodollars: 120000,
@@ -231,6 +233,11 @@ describe("F12-C image lifecycle", () => {
     for (const override of [
       { estimateMicrodollars: 1 },
       { ceilingMicrodollars: 1 },
+      { reviewDigest: "" },
+      { reviewDigest: "a".repeat(63) },
+      { reviewDigest: "a".repeat(65) },
+      { reviewDigest: "A".repeat(64) },
+      { reviewDigest: "g".repeat(64) },
       { reference: { id: crypto.randomUUID(), sha256: "a".repeat(64) } },
       { mask: { id: crypto.randomUUID(), sha256: "a".repeat(64) } },
       { messageId: "image-user" },
@@ -242,6 +249,11 @@ describe("F12-C image lifecycle", () => {
           f.service.generate("alice", f.body(override), signal()),
         ),
       ).toBeInstanceOf(Error);
+    const malformed = await f.request("/api/images", {
+      ...f.body(),
+      reviewDigest: "invalid-digest",
+    });
+    expect((await f.api.POST(malformed)).status).toBe(400);
     const req = await f.request("/api/images", f.body());
     req.headers.set("origin", "https://evil.invalid");
     expect((await f.api.POST(req)).status).toBe(403);
@@ -560,6 +572,79 @@ describe("F12-C image lifecycle", () => {
       "reserved",
     );
     expect(f.calls()).toBe(0);
+  });
+  test("F12-C catalog review digest pins exact snapshot; mutations under same ID and estimate reject 409 before reservation", async () => {
+    const f = current;
+    const catalogA = await f.service.catalog("alice");
+    expect(catalogA.available).toBe(true);
+    expect(catalogA.reviewDigest).toBe(snapshotDigest(snapshot));
+    if (!catalogA.reviewDigest)
+      throw new Error("fixture_missing_catalog_digest");
+    const digestA = catalogA.reviewDigest;
+
+    const mutations: Array<{ name: string; mutated: typeof snapshot }> = [
+      {
+        name: "model",
+        mutated: { ...snapshot, model: "fixture/mutated-model" },
+      },
+      {
+        name: "provider",
+        mutated: { ...snapshot, provider: "fixture/mutated-provider" },
+      },
+      {
+        name: "review timestamp",
+        mutated: { ...snapshot, reviewedAt: "2026-01-02T00:00:00Z" },
+      },
+      {
+        name: "expiry",
+        mutated: { ...snapshot, expiresAt: "2029-01-01T00:00:00Z" },
+      },
+      {
+        name: "provider maximum",
+        mutated: {
+          ...snapshot,
+          providerMaxMicrodollarsPerImage: 110_000,
+        },
+      },
+    ];
+
+    for (const { mutated } of mutations) {
+      expect(mutated.id).toBe(snapshot.id);
+      expect(mutated.worstCaseEstimateMicrodollars).toBe(
+        snapshot.worstCaseEstimateMicrodollars,
+      );
+      process.env.IMAGE_MODELS_JSON = JSON.stringify([mutated]);
+
+      const staleRequest = f.body({ reviewDigest: digestA });
+      const response = await f.api.POST(
+        await f.request("/api/images", staleRequest),
+      );
+      expect(response.status).toBe(409);
+      const data = await response.json();
+      expect(data.error?.id).toBe("image_review_changed");
+
+      expect(f.calls()).toBe(0);
+      expect((await f.query("SELECT * FROM image_generation")).length).toBe(0);
+      expect((await f.query("SELECT * FROM image_object")).length).toBe(0);
+      expect((await f.query("SELECT * FROM byok_operation")).length).toBe(0);
+    }
+
+    process.env.IMAGE_MODELS_JSON = JSON.stringify([snapshot]);
+
+    const freshCatalog = await f.service.catalog("alice");
+    expect(freshCatalog.reviewDigest).toBe(digestA);
+    if (!freshCatalog.reviewDigest)
+      throw new Error("fixture_missing_catalog_digest");
+    const validRequest = f.body({ reviewDigest: freshCatalog.reviewDigest });
+    const successResponse = await f.api.POST(
+      await f.request("/api/images", validRequest),
+    );
+    expect(successResponse.status).toBe(200);
+    const created = await successResponse.json();
+    expect(created.id).toBeDefined();
+    expect(f.calls()).toBe(1);
+    expect((await f.query("SELECT * FROM image_generation")).length).toBe(1);
+    expect((await f.query("SELECT * FROM image_object")).length).toBe(1);
   });
   test("F12-C downloads reject corruption and reserve transfer before reading bytes", async () => {
     const f = current,

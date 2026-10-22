@@ -12,7 +12,7 @@ import type { EnvSource } from "@/lib/auth/env";
 import { ByokStore } from "@/lib/byok/store";
 import { AppError } from "@/lib/errors";
 import { type ImageAdapter, OpenRouterImageAdapter } from "./adapter";
-import { imageSnapshot, validateImageReview } from "./config";
+import { imageSnapshot, snapshotDigest, validateImageReview } from "./config";
 import { type ImageCatalog, imageLimits, imageRequest } from "./contract";
 import { inspectPng } from "./png";
 import { ImageStore } from "./store";
@@ -28,6 +28,7 @@ export class ImageService {
   async catalog(userId: string): Promise<ImageCatalog> {
     try {
       const model = imageSnapshot(this.env);
+      const reviewDigest = snapshotDigest(model);
       this.config();
       const key = (await this.byok.credentials(userId)).find(
         (k) => k.provider === "openrouter" && k.testState !== "invalid",
@@ -35,6 +36,7 @@ export class ImageService {
       return {
         available: true,
         model,
+        reviewDigest,
         credentialRevision: key?.revision,
         recent: await this.store.recent(userId),
       };
