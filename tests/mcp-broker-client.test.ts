@@ -298,7 +298,8 @@ describe("Child 34 MCP wire client", () => {
     expect(canonicalEnvelope(brokerParsed)).toBe(brokerCanonical(brokerParsed));
 
     // 6. Signature tamper check: broker authenticate throws
-    const tamperedSignature = `a${signature.slice(1)}`;
+    const flippedChar = signature[0] === "a" ? "b" : "a";
+    const tamperedSignature = `${flippedChar}${signature.slice(1)}`;
     expect(() =>
       authenticate(brokerParsed, tamperedSignature, hmacKeyBytes),
     ).toThrow();
@@ -1114,5 +1115,486 @@ describe("Child 34 MCP wire client", () => {
         expect(content).not.toContain(pattern);
       }
     }
+  });
+
+  it("enforces safe integer positive deadline and rejects NaN, fractional, or negative values without dispatch", async () => {
+    let fetchCount = 0;
+    const config = resolveMcpClientConfig({
+      env: baseEnv,
+      binding: {
+        fetch: async () => {
+          fetchCount++;
+          return new Response();
+        },
+      },
+    });
+    if (!config) throw new Error("Config expected");
+    const client = createMcpBrokerClient(config);
+
+    const invalidDeadlines = [NaN, 1234.56, -100, 0, Infinity, -Infinity];
+    for (const badDeadline of invalidDeadlines) {
+      await expect(
+        client.dispatch({
+          operationId: randomUUID(),
+          profileId: "profile-list",
+          revision: "rev-1",
+          purpose: "mcp.list",
+          body: new Uint8Array([1]),
+          deadline: badDeadline,
+        }),
+      ).rejects.toThrow(McpPreEntryError);
+      expect(fetchCount).toBe(0);
+    }
+  });
+
+  it("fails pre-entry synchronously with zero binding calls if deadline or profile expires during sign preparation", async () => {
+    let fetchCount = 0;
+    const simulatedTime = 1_000_000;
+    const profileExpiry = new Date(simulatedTime + 500).toISOString();
+
+    const expProfile: McpReviewedProfile = {
+      profileId: "profile-dyn",
+      revision: "rev-1",
+      purpose: "mcp.list",
+      resource: "https://api.example.com/mcp",
+      issuer: "https://auth.example.com/",
+      credential: "none",
+      maxRequestBytes: 1024,
+      maxResponseBytes: 2048,
+      timeoutMs: 1000,
+      expiresAt: profileExpiry,
+    };
+
+    const config = resolveMcpClientConfig({
+      env: {
+        ...baseEnv,
+        MCP_CLIENT_PROFILES_JSON: JSON.stringify([expProfile]),
+      },
+      binding: {
+        fetch: async () => {
+          fetchCount++;
+          return new Response();
+        },
+      },
+      now: () => simulatedTime,
+    });
+    if (!config) throw new Error("Config expected");
+
+    // Case A: Profile expires during sign prep
+    const originalDateNow = Date.now;
+    try {
+      let callNum = 0;
+      Date.now = () => {
+        callNum++;
+        if (callNum > 1) {
+          return simulatedTime + 600;
+        }
+        return simulatedTime;
+      };
+
+      const client = createMcpBrokerClient(config);
+      await expect(
+        client.dispatch({
+          operationId: randomUUID(),
+          profileId: "profile-dyn",
+          revision: "rev-1",
+          purpose: "mcp.list",
+          body: new Uint8Array([1]),
+          deadline: simulatedTime + 800,
+        }),
+      ).rejects.toThrow(McpPreEntryError);
+      expect(fetchCount).toBe(0);
+    } finally {
+      Date.now = originalDateNow;
+    }
+
+    // Case B: Effective deadline crossed during sign prep
+    try {
+      let callNum = 0;
+      Date.now = () => {
+        callNum++;
+        if (callNum > 1) {
+          return simulatedTime + 350;
+        }
+        return simulatedTime;
+      };
+
+      const client = createMcpBrokerClient(config);
+      await expect(
+        client.dispatch({
+          operationId: randomUUID(),
+          profileId: "profile-dyn",
+          revision: "rev-1",
+          purpose: "mcp.list",
+          body: new Uint8Array([1]),
+          deadline: simulatedTime + 300,
+        }),
+      ).rejects.toThrow(McpPreEntryError);
+      expect(fetchCount).toBe(0);
+    } finally {
+      Date.now = originalDateNow;
+    }
+  });
+
+  it("times out stalled 200 body stream that hangs forever after headers", async () => {
+    let cancelCalled = false;
+    const neverEndingStream = new ReadableStream<Uint8Array>({
+      pull() {
+        return new Promise(() => {});
+      },
+      cancel() {
+        cancelCalled = true;
+      },
+    });
+
+    const client = createMcpBrokerClient(
+      resolveMcpClientConfig({
+        env: baseEnv,
+        binding: {
+          fetch: async () =>
+            new Response(neverEndingStream, {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            }),
+        },
+      }) as McpClientConfig,
+    );
+
+    const deadline = Date.now() + 60;
+    const start = Date.now();
+    await expect(
+      client.dispatch({
+        operationId: randomUUID(),
+        profileId: "profile-list",
+        revision: "rev-1",
+        purpose: "mcp.list",
+        body: new Uint8Array([1]),
+        deadline,
+      }),
+    ).rejects.toThrow(McpOutcomeUnknownError);
+
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeLessThan(400);
+    expect(cancelCalled).toBe(true);
+  });
+
+  it("prompts McpOutcomeUnknownError when caller aborts after 200 headers", async () => {
+    let cancelCalled = false;
+    const controller = new AbortController();
+
+    const pendingStream = new ReadableStream<Uint8Array>({
+      pull() {
+        return new Promise(() => {});
+      },
+      cancel() {
+        cancelCalled = true;
+      },
+    });
+
+    const client = createMcpBrokerClient(
+      resolveMcpClientConfig({
+        env: baseEnv,
+        binding: {
+          fetch: async () => {
+            setTimeout(() => {
+              controller.abort();
+            }, 10);
+            return new Response(pendingStream, { status: 200 });
+          },
+        },
+      }) as McpClientConfig,
+    );
+
+    await expect(
+      client.dispatch({
+        operationId: randomUUID(),
+        profileId: "profile-list",
+        revision: "rev-1",
+        purpose: "mcp.list",
+        body: new Uint8Array([1]),
+        deadline: Date.now() + 5000,
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow(McpOutcomeUnknownError);
+
+    expect(cancelCalled).toBe(true);
+  });
+
+  it("races against total deadline even if fetch ignores abort signal", async () => {
+    const client = createMcpBrokerClient(
+      resolveMcpClientConfig({
+        env: baseEnv,
+        binding: {
+          fetch: async () => new Promise(() => {}),
+        },
+      }) as McpClientConfig,
+    );
+
+    const start = Date.now();
+    await expect(
+      client.dispatch({
+        operationId: randomUUID(),
+        profileId: "profile-list",
+        revision: "rev-1",
+        purpose: "mcp.list",
+        body: new Uint8Array([1]),
+        deadline: Date.now() + 60,
+      }),
+    ).rejects.toThrow(McpOutcomeUnknownError);
+
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeLessThan(400);
+  });
+
+  it("races against total deadline even if stream reader read ignores abort signal", async () => {
+    const rogueResponse = {
+      status: 200,
+      bodyUsed: false,
+      body: {
+        getReader: () => ({
+          read: () => new Promise(() => {}),
+          cancel: () => Promise.resolve(),
+        }),
+      },
+    } as unknown as Response;
+
+    const client = createMcpBrokerClient(
+      resolveMcpClientConfig({
+        env: baseEnv,
+        binding: {
+          fetch: async () => rogueResponse,
+        },
+      }) as McpClientConfig,
+    );
+
+    const start = Date.now();
+    await expect(
+      client.dispatch({
+        operationId: randomUUID(),
+        profileId: "profile-list",
+        revision: "rev-1",
+        purpose: "mcp.list",
+        body: new Uint8Array([1]),
+        deadline: Date.now() + 60,
+      }),
+    ).rejects.toThrow(McpOutcomeUnknownError);
+
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeLessThan(400);
+  });
+
+  it("does not hang when reader cancel never resolves", async () => {
+    const oversizePadding = " ".repeat(96 * 1024 + 10);
+    const mockJson =
+      JSON.stringify({
+        status: 200,
+        body: Buffer.from("ok").toString("base64"),
+        headers: { "content-type": "application/json" },
+        destination: {
+          profileId: "profile-large",
+          revision: "rev-1",
+          purpose: "mcp.call",
+          address: "192.0.2.1",
+        },
+      }) + oversizePadding;
+
+    const payloadBytes = new TextEncoder().encode(mockJson);
+    const half = Math.floor(payloadBytes.byteLength / 2);
+
+    const hangingCancelStream = new ReadableStream<Uint8Array>({
+      pull(c) {
+        c.enqueue(payloadBytes.subarray(0, half));
+        c.enqueue(payloadBytes.subarray(half));
+      },
+      cancel() {
+        return new Promise(() => {});
+      },
+    });
+
+    const client = createMcpBrokerClient(
+      resolveMcpClientConfig({
+        env: baseEnv,
+        binding: {
+          fetch: async () => new Response(hangingCancelStream, { status: 200 }),
+        },
+      }) as McpClientConfig,
+    );
+
+    await expect(
+      client.dispatch({
+        operationId: randomUUID(),
+        profileId: "profile-large",
+        revision: "rev-1",
+        purpose: "mcp.call",
+        body: new Uint8Array([1]),
+        deadline: Date.now() + 5000,
+      }),
+    ).rejects.toThrow(McpOutcomeUnknownError);
+  });
+
+  it("handles reader cancel rejection without unhandled rejection or crashing", async () => {
+    const oversizePadding = " ".repeat(96 * 1024 + 10);
+    const mockJson =
+      JSON.stringify({
+        status: 200,
+        body: Buffer.from("ok").toString("base64"),
+        headers: { "content-type": "application/json" },
+        destination: {
+          profileId: "profile-large",
+          revision: "rev-1",
+          purpose: "mcp.call",
+          address: "192.0.2.1",
+        },
+      }) + oversizePadding;
+
+    const payloadBytes = new TextEncoder().encode(mockJson);
+    const half = Math.floor(payloadBytes.byteLength / 2);
+
+    const rejectingCancelStream = new ReadableStream<Uint8Array>({
+      pull(c) {
+        c.enqueue(payloadBytes.subarray(0, half));
+        c.enqueue(payloadBytes.subarray(half));
+      },
+      cancel() {
+        return Promise.reject(new Error("cancel exploded"));
+      },
+    });
+
+    const client = createMcpBrokerClient(
+      resolveMcpClientConfig({
+        env: baseEnv,
+        binding: {
+          fetch: async () =>
+            new Response(rejectingCancelStream, { status: 200 }),
+        },
+      }) as McpClientConfig,
+    );
+
+    await expect(
+      client.dispatch({
+        operationId: randomUUID(),
+        profileId: "profile-large",
+        revision: "rev-1",
+        purpose: "mcp.call",
+        body: new Uint8Array([1]),
+        deadline: Date.now() + 5000,
+      }),
+    ).rejects.toThrow(McpOutcomeUnknownError);
+  });
+
+  it("cancels response body stream once on 3xx redirect and non-200 responses", async () => {
+    let cancel302Count = 0;
+    const stream302 = new ReadableStream<Uint8Array>({
+      cancel() {
+        cancel302Count++;
+      },
+    });
+
+    const client302 = createMcpBrokerClient(
+      resolveMcpClientConfig({
+        env: baseEnv,
+        binding: {
+          fetch: async () =>
+            new Response(stream302, {
+              status: 302,
+              headers: { Location: "https://evil.example.com" },
+            }),
+        },
+      }) as McpClientConfig,
+    );
+
+    await expect(
+      client302.dispatch({
+        operationId: randomUUID(),
+        profileId: "profile-list",
+        revision: "rev-1",
+        purpose: "mcp.list",
+        body: new Uint8Array([1]),
+        deadline: Date.now() + 5000,
+      }),
+    ).rejects.toThrow(McpOutcomeUnknownError);
+    expect(cancel302Count).toBe(1);
+
+    let cancel500Count = 0;
+    const stream500 = new ReadableStream<Uint8Array>({
+      cancel() {
+        cancel500Count++;
+      },
+    });
+
+    const client500 = createMcpBrokerClient(
+      resolveMcpClientConfig({
+        env: baseEnv,
+        binding: {
+          fetch: async () =>
+            new Response(stream500, {
+              status: 500,
+            }),
+        },
+      }) as McpClientConfig,
+    );
+
+    await expect(
+      client500.dispatch({
+        operationId: randomUUID(),
+        profileId: "profile-list",
+        revision: "rev-1",
+        purpose: "mcp.list",
+        body: new Uint8Array([1]),
+        deadline: Date.now() + 5000,
+      }),
+    ).rejects.toThrow(McpOutcomeUnknownError);
+    expect(cancel500Count).toBe(1);
+  });
+
+  it("ensures mutating exposed brokerUrl cannot redirect binding to arbitrary host, path, or query", async () => {
+    let dispatchedUrl = "";
+    const mockBinding = {
+      fetch: async (input: RequestInfo | URL) => {
+        dispatchedUrl = String(input);
+        return new Response(
+          JSON.stringify({
+            status: 200,
+            body: Buffer.from("ok").toString("base64"),
+            headers: { "content-type": "application/json" },
+            destination: {
+              profileId: "profile-list",
+              revision: "rev-1",
+              purpose: "mcp.list",
+              address: "192.0.2.1",
+            },
+          }),
+        );
+      },
+    };
+
+    const config = resolveMcpClientConfig({
+      env: baseEnv,
+      binding: mockBinding,
+    });
+    if (!config) throw new Error("Config expected");
+
+    // Attempt consumer mutation on exposed brokerUrl
+    const urlInstance = config.brokerUrl;
+    urlInstance.hostname = "evil.example.com";
+    urlInstance.pathname = "/evil/path";
+    urlInstance.search = "?leak=secret";
+    urlInstance.hash = "#evil";
+
+    const client = createMcpBrokerClient(config);
+    await client.dispatch({
+      operationId: randomUUID(),
+      profileId: "profile-list",
+      revision: "rev-1",
+      purpose: "mcp.list",
+      body: new Uint8Array([1]),
+      deadline: Date.now() + 5000,
+    });
+
+    // Proves dispatch used the immutable canonical endpoint and ignored mutation
+    expect(dispatchedUrl).toBe("https://broker.example.com/v1/egress");
+    expect(config.brokerUrl.hostname).toBe("broker.example.com");
+    expect(config.brokerUrl.pathname).toBe("/v1/egress");
+    expect(config.brokerUrl.search).toBe("");
   });
 });

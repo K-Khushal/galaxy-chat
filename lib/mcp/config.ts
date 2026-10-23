@@ -32,6 +32,7 @@ export type McpReviewedProfile = Readonly<{
 
 export type McpClientConfig = Readonly<{
   brokerUrl: URL;
+  endpoint: string;
   profiles: ReadonlyMap<string, McpReviewedProfile>;
   binding: McpMtlsFetcher;
   signEnvelope: (envelope: McpEnvelope) => string;
@@ -310,6 +311,7 @@ export function resolveMcpClientConfig(
   }
 
   const brokerUrl = validateBrokerUrl(env.MCP_CLIENT_BROKER_URL);
+  const canonicalEndpoint = brokerUrl.href;
   const profilesInternal = parseProfilesJson(env.MCP_CLIENT_PROFILES_JSON);
   const hmacKeyBytes = decodeCanonicalSecret(
     env.MCP_CLIENT_HMAC_KEY,
@@ -427,7 +429,10 @@ export function resolveMcpClientConfig(
 
   // Return frozen configuration object without exposing secrets
   return Object.freeze({
-    brokerUrl,
+    get brokerUrl() {
+      return new URL(canonicalEndpoint);
+    },
+    endpoint: canonicalEndpoint,
     profiles: immutableProfiles,
     binding,
     signEnvelope,
@@ -435,7 +440,8 @@ export function resolveMcpClientConfig(
     getProfile,
     toString: () => "[McpClientConfig: active]",
     toJSON: () => ({
-      brokerUrl: brokerUrl.toString(),
+      brokerUrl: canonicalEndpoint,
+      endpoint: canonicalEndpoint,
       profilesCount: profilesInternal.size,
     }),
   });
