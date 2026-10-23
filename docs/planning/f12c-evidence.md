@@ -86,3 +86,15 @@ provider budget/max-price behavior, abort/terminal receipts, and hosted private
 storage/cleanup/egress/authenticated downloads. No paid image call, provider login,
 provisioning, billing change, deployment, GitHub action, PR, or merge was performed.
 The original user checkout was preserved.
+
+## Integrated review and final fixture verification — October 23
+
+Integrated reviewed main `0931f08` (search and MCP broker). Independent spec and standards reviews cleared `0f741ee`: migration 0013 preserves search kinds and populated 0011/0012 operation states, actor keys, reservations, receipts and settled amounts; actual SearchStore regression isolates existing held-liability actor/global money caps. The hourly request assertion also meets a concurrency limit and is not independent proof of the hourly gate.
+
+Root full checks on `0f741ee`: standalone Node22 broker 27 pass; app 253 pass, 1 inherited native-Postgres skip, 0 fail, 3,580 assertions; typecheck, lint, integrity and strict Webpack build pass. An adapter check using skipNextBuild failed because an ordinary Next build lacks the adapter's standalone outputs. A subsequent full OpenNext build under Node22 passed, including its own Next build and worker bundling. No generated manifest was fabricated or check bypassed.
+
+Root browser review found the fixture's direct composer catalog omitted the required review digest. The production component correctly stayed disabled. Correction `874fba3` adds the same digest used by its fake catalog; an actual ImageFixture regression covers consent enabling generation, held outcome without a revision, and a subsequent explicit successful fixture action. Independent UI checks: 5 pass, 45 assertions; final types and lint pass. Prior full-suite/build results precede this two-file fixture-only correction; hosted CI must check the final PR head.
+
+CUA checked desktop and 390×844 light/dark fixture layouts: explicit payer/ceiling/unsupported-editing disclosures, consent gate, held status with no automatic retry, revision editor and provenance. Local screenshot evidence: `/private/tmp/galaxy-image-phone-dark-held.png`, `/private/tmp/galaxy-image-phone-light-revision.png`, `/private/tmp/galaxy-image-desktop-revision.png`. Download remains disabled in the development fixture; no provider output, storage proof, browser download, live receipt or paid request is claimed. Temporary server stopped and viewport override reset.
+
+Live provider/pricing/receipt, Supabase permissions, runtime capacity, budget and deployment acceptance remain pending. Advanced image generation remains off by default. Editing and masks remain denied without a verified adapter.
