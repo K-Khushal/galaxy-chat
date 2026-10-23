@@ -10,12 +10,267 @@ mock.module("server-only", () => ({}));
 const {
   createMcpCatalogStore,
   createFixtureMcpCatalogStore,
+  mcpToolRunRequestDigest,
   verifyMcpActionInTx,
 } = await import("../lib/mcp/catalog-store");
-const { resourceActor } = await import("../lib/byok/config");
 
 describe("owned MCP catalogs and proposals — synthetic offline data, no dispatch or real cost proof", () => {
   const get = setupFixtureBeforeEach(mcpCatalogFixture);
+  test("invalid JSONB string scalars fail with typed policy errors before any catalog/proposal writes", async () => {
+    const f = get(),
+      raw = f.catalogInput();
+    for (const text of ["\ud800", "\udfff", "\u0000"]) {
+      for (const tool of [
+        { ...raw.tools[0], description: text },
+        {
+          ...raw.tools[0],
+          inputSchema: { ...raw.tools[0].inputSchema, description: text },
+        },
+        {
+          ...raw.tools[0],
+          inputSchema: {
+            type: "object",
+            properties: {
+              message: { type: "string", maxLength: 128, enum: [text] },
+            },
+            additionalProperties: false,
+          },
+        },
+        {
+          ...raw.tools[0],
+          inputSchema: {
+            type: "object",
+            properties: { [text]: { type: "null" } },
+            additionalProperties: false,
+          },
+        },
+        {
+          ...raw.tools[0],
+          outputSchema: { ...raw.tools[0].inputSchema, description: text },
+        },
+      ])
+        expect(
+          await rejectionOf(
+            f.store.importUntrusted("alice", { ...raw, tools: [tool] }),
+          ),
+        ).toMatchObject({ id: "mcp_schema_rejected" });
+    }
+    const [empty] = await f.db.execute<{
+      revisions: number;
+      actions: number;
+      heads: number;
+      admissions: number;
+    }>(
+      sql`SELECT (SELECT count(*)::integer FROM mcp_catalog_revision) AS revisions,(SELECT count(*)::integer FROM mcp_catalog_action) AS actions,(SELECT count(*)::integer FROM mcp_catalog_head) AS heads,(SELECT count(*)::integer FROM mcp_catalog_admission) AS admissions`,
+    );
+    expect(empty).toEqual({
+      revisions: 0,
+      actions: 0,
+      heads: 0,
+      admissions: 0,
+    });
+    const text = "हाय😀é",
+      catalog = await f.catalog("alice", {
+        tools: [
+          {
+            ...raw.tools[0],
+            description: text,
+            inputSchema: {
+              ...raw.tools[0].inputSchema,
+              description: text,
+              properties: {
+                message: { type: "string", maxLength: 128, enum: [text] },
+              },
+            },
+          },
+        ],
+      }),
+      run = await f.run(),
+      request = f.proposal(catalog, run, await f.call(run.id));
+    for (const invalid of ["\ud800", "\udfff", "\u0000"]) {
+      for (const args of [{ message: invalid }, { [invalid]: true }])
+        expect(
+          await rejectionOf(
+            f.store.propose("alice", { ...request, arguments: args }),
+          ),
+        ).toMatchObject({ id: "mcp_arguments_rejected" });
+    }
+    const [emptyProposals] = await f.db.execute<{
+      proposals: number;
+      approvals: number;
+      admissions: number;
+    }>(
+      sql`SELECT (SELECT count(*)::integer FROM mcp_action_proposal) AS proposals,(SELECT count(*)::integer FROM tool_approval) AS approvals,(SELECT count(*)::integer FROM mcp_catalog_admission WHERE kind='proposal') AS admissions`,
+    );
+    expect(emptyProposals).toEqual({
+      proposals: 0,
+      approvals: 0,
+      admissions: 0,
+    });
+    const proposed = await f.store.propose("alice", {
+      ...request,
+      arguments: { message: text },
+    });
+    const [persisted] = await f.db.execute<{
+      description: string;
+      message: string;
+    }>(
+      sql`SELECT v.definition->'tools'->0->>'description' AS description,p.binding->'arguments'->>'message' AS message FROM mcp_catalog_revision v JOIN mcp_action_proposal p ON p.catalog_id=v.id WHERE p.id=${proposed.id}`,
+    );
+    expect(persisted).toEqual({ description: text, message: text });
+  });
+  for (const change of ["model", "provider", "price"] as const)
+    for (const phase of [
+      "before-propose",
+      "before-decision",
+      "before-consume",
+      "final-propose",
+      "final-decision",
+      "final-consume",
+    ] as const)
+      test(`original entered BYOK reservation rejects same-ID ${change} drift at ${phase}`, async () => {
+        const f = get(),
+          catalog = await f.catalog(),
+          run = await f.run(),
+          request = f.proposal(catalog, run, await f.call(run.id));
+        const [reservation] = await f.db.execute<{
+          digest: string;
+          state: string;
+        }>(sql`SELECT digest,state FROM byok_operation WHERE id=${run.id}`);
+        const proposing = phase.endsWith("propose"),
+          deciding = phase.endsWith("decision");
+        const proposed = proposing
+          ? undefined
+          : await f.store.propose("alice", request);
+        if (proposed && !deciding)
+          await f.store.decide("alice", proposed.id, "approve");
+        const drift = () => {
+          const selected = JSON.parse(process.env.TOOL_MODELS_JSON ?? "[]");
+          selected[0][
+            change === "price" ? "inputMicrodollarsPerMillion" : change
+          ] = change === "price" ? 2000 : "fixture/changed";
+          process.env.TOOL_MODELS_JSON = JSON.stringify(selected);
+        };
+        let changed = false,
+          written = false;
+        if (phase.startsWith("final"))
+          f.afterQuery((statement) => {
+            if (
+              statement.includes(
+                proposing
+                  ? "INSERT INTO mcp_action_proposal"
+                  : deciding
+                    ? "UPDATE tool_approval SET state="
+                    : "UPDATE tool_approval SET state='consumed'",
+              )
+            )
+              written = true;
+            if (
+              !written ||
+              changed ||
+              !statement.includes("p.digest AS proposal_digest")
+            )
+              return;
+            changed = true;
+            drift();
+          });
+        else {
+          drift();
+          // A caller can recompute the new request identity, but cannot rewrite the entered reservation.
+          if (proposing)
+            request.requestDigest = mcpToolRunRequestDigest(run.request);
+        }
+        expect(
+          await rejectionOf(
+            proposed
+              ? deciding
+                ? f.store.decide("alice", proposed.id, "approve")
+                : f.store.consume("alice", proposed.id, proposed.binding)
+              : f.store.propose("alice", request),
+          ),
+        ).toMatchObject({ id: "mcp_tool_run_unavailable" });
+        f.afterQuery(undefined);
+        if (phase.startsWith("final")) expect(changed).toBe(true);
+        const [state] = await f.db.execute<{
+          proposals: number;
+          approvals: number;
+          admissions: number;
+          state: string | null;
+        }>(
+          sql`SELECT (SELECT count(*)::integer FROM mcp_action_proposal) AS proposals,(SELECT count(*)::integer FROM tool_approval) AS approvals,(SELECT count(*)::integer FROM mcp_catalog_admission WHERE kind='proposal') AS admissions,(SELECT state FROM tool_approval LIMIT 1) AS state`,
+        );
+        expect(state).toEqual(
+          proposed
+            ? {
+                proposals: 1,
+                approvals: 1,
+                admissions: 1,
+                state: deciding ? "pending" : "approved",
+              }
+            : { proposals: 0, approvals: 0, admissions: 0, state: null },
+        );
+        const [unchanged] = await f.db.execute<{
+          digest: string;
+          state: string;
+        }>(sql`SELECT digest,state FROM byok_operation WHERE id=${run.id}`);
+        expect(unchanged).toEqual(reservation);
+        expect(f.seen).toHaveLength(0);
+      });
+  test("a foreign run with four approvals and a missing run both return owned not_found without writes", async () => {
+    const f = get(),
+      catalog = await f.catalog(),
+      run = await f.run("bob"),
+      call = await f.call(run.id, "bob");
+    for (let i = 0; i < 4; i++)
+      await f.tools.issueApproval(
+        "bob",
+        {
+          runId: run.id,
+          toolCallId: `bob-${i}`,
+          tool: "fixture",
+          toolRevision: "v1",
+          connectionRevision: "none",
+          arguments: {},
+          target: "fixture",
+          costMicrodollars: 1,
+        },
+        new Date(Date.now() + 19000),
+      );
+    const request = f.proposal(catalog, run, call);
+    for (const runId of [run.id, crypto.randomUUID()])
+      expect(
+        await rejectionOf(f.store.propose("alice", { ...request, runId })),
+      ).toMatchObject({ id: "not_found", status: 404 });
+    const [counts] = await f.db.execute<{
+      proposals: number;
+      approvals: number;
+      admissions: number;
+    }>(
+      sql`SELECT (SELECT count(*)::integer FROM mcp_action_proposal) AS proposals,(SELECT count(*)::integer FROM tool_approval) AS approvals,(SELECT count(*)::integer FROM mcp_catalog_admission WHERE kind='proposal') AS admissions`,
+    );
+    expect(counts).toEqual({ proposals: 0, approvals: 4, admissions: 0 });
+  });
+  test("admission requires exactly one trusted GitHub account binding, never only a mutable login", async () => {
+    const f = get(),
+      input = f.catalogInput();
+    await f.db.execute(sql`DELETE FROM account WHERE user_id='alice'`);
+    expect(
+      await rejectionOf(f.store.importUntrusted("alice", input)),
+    ).toMatchObject({ id: "mcp_catalog_principal_unavailable" });
+    await f.db.execute(
+      sql`INSERT INTO account(id,user_id,provider_id,account_id) VALUES (${crypto.randomUUID()},'alice','github','10001'),(${crypto.randomUUID()},'alice','github','99999')`,
+    );
+    expect(
+      await rejectionOf(f.store.importUntrusted("alice", input)),
+    ).toMatchObject({ id: "mcp_catalog_principal_unavailable" });
+    const [counts] = await f.db.execute<{
+      revisions: number;
+      admissions: number;
+    }>(
+      sql`SELECT (SELECT count(*)::integer FROM mcp_catalog_revision) AS revisions,(SELECT count(*)::integer FROM mcp_catalog_admission) AS admissions`,
+    );
+    expect(counts).toEqual({ revisions: 0, admissions: 0 });
+  });
   test("production issuer and verifier unavailable; fixture gate checked at construction and mutation", async () => {
     const f = get(),
       raw = f.catalogInput(),
@@ -500,12 +755,14 @@ describe("owned MCP catalogs and proposals — synthetic offline data, no dispat
       });
   test("retained revision counters survive account cascade and prevent delete/recreate capacity reset", async () => {
     const f = get(),
-      actor = resourceActor("alice", process.env);
+      imported = await f.catalog();
+    const [admission] = await f.db.execute<{ actor_key: string }>(
+      sql`SELECT actor_key FROM mcp_catalog_admission WHERE kind='revision'`,
+    );
     for (let i = 0; i < 19; i++)
       await f.db.execute(
-        sql`INSERT INTO mcp_catalog_admission(id,actor_key,kind) VALUES (${crypto.randomUUID()},${actor},'revision')`,
+        sql`INSERT INTO mcp_catalog_admission(id,actor_key,kind) VALUES (${crypto.randomUUID()},${admission.actor_key},'revision')`,
       );
-    const imported = await f.catalog();
     expect(
       await rejectionOf(f.catalog("alice", { revision: "next" })),
     ).toMatchObject({ id: "mcp_catalog_conflict" });
@@ -531,13 +788,24 @@ describe("owned MCP catalogs and proposals — synthetic offline data, no dispat
     );
     expect(row).toEqual({ count: 20, owned: 0 });
     await f.db.execute(
-      sql`INSERT INTO "user"(id,name,email,github_login,email_verified) VALUES ('alice','Recreated fixture owner','recreated-alice@example.test','alice',true)`,
+      sql`INSERT INTO "user"(id,name,email,github_login,email_verified) VALUES ('alice-recreated','Recreated fixture owner','recreated-alice@example.test','alice',true)`,
+    );
+    await f.db.execute(
+      sql`INSERT INTO account(id,user_id,provider_id,account_id) VALUES (${crypto.randomUUID()},'alice-recreated','github','10001')`,
     );
     const original = imported.input;
     await f.db.execute(
-      sql`INSERT INTO mcp_connection(id,user_id,profile_id,profile_revision,purpose,profile_digest,label,state,revision) VALUES (${original.connection.id},'alice',${original.profile.id},${original.profile.revision},'mcp.call',${original.profile.digest},'Recreated fixture','configured',${original.connection.revision})`,
+      sql`INSERT INTO mcp_connection(id,user_id,profile_id,profile_revision,purpose,profile_digest,label,state,revision) VALUES (${original.connection.id},'alice-recreated',${original.profile.id},${original.profile.revision},'mcp.call',${original.profile.digest},'Recreated fixture','configured',${original.connection.revision})`,
     );
-    expect(await rejectionOf(f.catalog())).toMatchObject({
+    expect(
+      await rejectionOf(
+        f.store.importUntrusted("alice-recreated", {
+          ...original,
+          id: crypto.randomUUID(),
+          revision: "recreated",
+        }),
+      ),
+    ).toMatchObject({
       id: "mcp_catalog_limit",
     });
   });
@@ -547,8 +815,7 @@ describe("owned MCP catalogs and proposals — synthetic offline data, no dispat
     { kind: "proposal", global: true, count: 1000 },
   ] as const)
     test(`retained ${scenario.global ? "global" : "owner"} ${scenario.kind} bound denies admission atomically`, async () => {
-      const f = get(),
-        actor = resourceActor(scenario.global ? "bob" : "alice", process.env);
+      const f = get();
       const imported =
         scenario.kind === "proposal" ? await f.catalog() : undefined;
       const run = imported ? await f.run() : undefined;
@@ -557,6 +824,10 @@ describe("owned MCP catalogs and proposals — synthetic offline data, no dispat
           ? f.proposal(imported, run, await f.call(run.id))
           : undefined;
       const prefix = crypto.randomUUID();
+      const [admission] = await f.db.execute<{ actor_key: string }>(
+        sql`SELECT actor_key FROM mcp_catalog_admission WHERE kind='revision'`,
+      );
+      const actor = scenario.global ? "b".repeat(64) : admission.actor_key;
       // Anonymous retained metadata only; this does not invent runs, fees or financial records.
       await f.db.execute(
         sql`INSERT INTO mcp_catalog_admission(id,actor_key,kind) SELECT ${prefix}||i::text,${actor},${scenario.kind} FROM generate_series(1,${scenario.count}::integer)i`,

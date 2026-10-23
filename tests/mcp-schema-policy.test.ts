@@ -54,6 +54,46 @@ test("Unicode length semantics and independent UTF8 byte ceilings both apply", (
     "mcp_arguments_rejected",
   );
 });
+test("persisted strings reject unpaired UTF16 and NUL while preserving Unicode scalar values", () => {
+  for (const text of [
+    "\ud800",
+    "\udfff",
+    "x\ud800y",
+    "\ud800\ud800",
+    "\udfff\ud800",
+    "\u0000",
+  ]) {
+    for (const raw of [
+      { ...schema, description: text },
+      {
+        ...schema,
+        properties: { message: { type: "string", maxLength: 8, enum: [text] } },
+      },
+      { ...schema, properties: { [text]: { type: "null" } }, required: [] },
+    ])
+      expect(() => parseMcpSchema(raw)).toThrow("mcp_schema_rejected");
+    expect(() =>
+      parseMcpArguments(parseMcpSchema(schema), { message: text }),
+    ).toThrow("mcp_arguments_rejected");
+    expect(() => ownMcpArguments({ message: text })).toThrow(
+      "mcp_arguments_rejected",
+    );
+    expect(() => ownMcpArguments({ [text]: true })).toThrow(
+      "mcp_arguments_rejected",
+    );
+  }
+  const text = "हाय😀é";
+  const accepted = parseMcpSchema({
+    ...schema,
+    description: text,
+    properties: { message: { type: "string", maxLength: 8, enum: [text] } },
+  });
+  expect(accepted.description).toBe(text);
+  expect(parseMcpArguments(accepted, { message: text })).toEqual({
+    message: text,
+  });
+  expect(ownMcpArguments({ message: text })).toEqual({ message: text });
+});
 test("references, combinators, regexes, executable metadata and unbounded schema shapes are rejected", () => {
   for (const key of [
     "$ref",

@@ -1,4 +1,5 @@
 import { mock } from "bun:test";
+import { sql } from "drizzle-orm";
 import { privateKey } from "./beta-fixture";
 import { mcpOperationFixture } from "./mcp-operation-fixture";
 
@@ -25,6 +26,14 @@ export const catalogInputSchema = {
 };
 export async function mcpCatalogFixture() {
   const fixture = await mcpOperationFixture();
+  for (const [owner, accountId] of [
+    ["alice", "10001"],
+    ["bob", "10002"],
+    ["outsider", "10003"],
+  ])
+    await fixture.db.execute(
+      sql`INSERT INTO account(id,user_id,provider_id,account_id) VALUES (${crypto.randomUUID()},${owner},'github',${accountId})`,
+    );
   Object.assign(process.env, fixture.env, {
     TOOLS_ENABLED: "1",
     TOOL_APPROVAL_SECRET:

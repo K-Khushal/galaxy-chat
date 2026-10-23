@@ -83,6 +83,10 @@ export async function issueToolApprovalInTx(
     deadline.getTime() > Date.now() + 300000
   )
     throw new AppError("invalid_tool_action", 400);
+  const owned = await tx.execute(
+    sql`SELECT id FROM tool_run WHERE id=${binding.runId} AND user_id=${userId} AND created_at>clock_timestamp()-interval '20 seconds'`,
+  );
+  if (!owned.length) throw new AppError("not_found", 404);
   const [count] = await tx.execute<{ count: number }>(
     sql`SELECT count(*)::integer AS count FROM tool_approval WHERE run_id=${binding.runId}`,
   );

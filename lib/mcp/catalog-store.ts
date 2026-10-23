@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { isInvitedLogin, parseInviteLogins } from "@/lib/auth/env";
-import { resourceActor } from "@/lib/byok/config";
+import { resourceActor, resourceDigest } from "@/lib/byok/config";
 import { lockByokResources } from "@/lib/byok/store";
 import {
   type Database,
@@ -107,16 +107,28 @@ function liveProfile(
     throw new AppError("mcp_profile_changed", 409);
 }
 export function mcpToolRunRequestDigest(raw: unknown): string {
-  return toolRunIdentity(raw, new Date());
+  return toolRunIdentity(raw, new Date()).requestDigest;
 }
-function toolRunIdentity(raw: unknown, now: Date): string {
+function toolRunIdentity(raw: unknown, now: Date) {
   const result = toolRunRequest.safeParse(raw);
   if (!result.success) throw new AppError("mcp_tool_run_unavailable", 409);
   const request = result.data;
-  const model = resolveToolModel(process.env, request.model, request.funding);
-  if (new Date(model.expiresAt) <= now)
+  const selected = resolveToolModel(
+    process.env,
+    request.model,
+    request.funding,
+  );
+  if (new Date(selected.expiresAt) <= now)
     throw new AppError("mcp_tool_run_unavailable", 409);
-  return operationDigest({ request, model });
+  return {
+    requestDigest: operationDigest({ request, model: selected }),
+    // Match ToolService's original reservation contract, including the entire
+    // selected model/provider/price snapshot, rather than only its reusable ID.
+    reservationDigest: resourceDigest(
+      JSON.stringify({ request, selected }),
+      process.env,
+    ),
+  };
 }
 type VerificationPhase =
   | "pending"
@@ -171,6 +183,7 @@ export async function verifyMcpActionInTx(
     call_state: string;
     call_name: string;
     actor_key: string;
+    reservation_digest: string;
     plan_revision: string;
     plan_digest: string;
     capacity_digest: string;
@@ -179,7 +192,7 @@ export async function verifyMcpActionInTx(
      h.state AS head_state,h.catalog_id AS head_catalog,v.digest AS catalog_digest,v.definition AS catalog_definition,
      a.digest AS action_digest,a.schema_digest,a.output_schema_digest,a.definition AS action_definition,
      p.digest AS proposal_digest,p.binding AS proposal_binding,p.approval_digest,t.binding AS approval_binding,t.state AS approval_state,t.expires_at,
-     r.state AS run_state,r.created_at AS run_created_at,r.request AS run_request,k.state AS call_state,k.name AS call_name,o.actor_key,
+     r.state AS run_state,r.created_at AS run_created_at,r.request AS run_request,k.state AS call_state,k.name AS call_name,o.actor_key,o.digest AS reservation_digest,
      b.revision AS plan_revision,b.digest AS plan_digest,b.capacity_digest,f.stopped
    FROM mcp_action_proposal p JOIN "user" u ON u.id=p.user_id
    JOIN mcp_catalog_revision v ON v.id=p.catalog_id AND v.user_id=u.id
@@ -256,6 +269,7 @@ export async function verifyMcpActionInTx(
       expiresAt: new Date(row.expires_at).toISOString(),
     }),
   );
+  const runIdentity = toolRunIdentity(row.run_request, now);
   if (
     row.run_state !== "running" ||
     !["queued", "running"].includes(row.call_state) ||
@@ -266,7 +280,8 @@ export async function verifyMcpActionInTx(
     new Date(row.expires_at) <= now ||
     new Date(row.expires_at).getTime() >
       new Date(row.run_created_at).getTime() + TOOL_LIMITS.timeoutMs ||
-    toolRunIdentity(row.run_request, now) !== mcp.requestDigest
+    runIdentity.requestDigest !== mcp.requestDigest ||
+    runIdentity.reservationDigest !== row.reservation_digest
   )
     throw new AppError("mcp_tool_run_unavailable", 409);
   const states =
@@ -360,7 +375,24 @@ class McpCatalogStore {
     return new Date(row.now);
   }
   private async count(tx: Tx, userId: string, kind: "revision" | "proposal") {
-    const actor = resourceActor(userId, process.env);
+    const accounts = await tx.execute<{ account_id: string }>(
+      sql`SELECT account_id FROM account WHERE user_id=${userId} AND provider_id='github' LIMIT 2`,
+    );
+    // User rows are recreated after account deletion; the verified provider's
+    // stable account ID preserves retained limits without retaining that ID.
+    if (
+      accounts.length !== 1 ||
+      !/^[1-9][0-9]{0,19}$/.test(accounts[0].account_id)
+    )
+      throw new AppError("mcp_catalog_principal_unavailable", 403);
+    const actor = resourceDigest(
+      canonicalJson({
+        domain: "mcp-catalog-admission-v1",
+        providerId: "github",
+        accountId: accounts[0].account_id,
+      }),
+      process.env,
+    );
     const [row] = await tx.execute<{ owner: number; total: number }>(
       sql`SELECT count(*) FILTER(WHERE actor_key=${actor})::integer AS owner,count(*)::integer AS total FROM mcp_catalog_admission WHERE kind=${kind}`,
     );

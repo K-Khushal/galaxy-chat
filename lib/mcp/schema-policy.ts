@@ -64,7 +64,9 @@ export function mcpText(raw: unknown, max: number): string {
     [...raw].some((character) => {
       const code = character.charCodeAt(0);
       return (
-        (code < 32 && code !== 9 && code !== 10 && code !== 13) || code === 127
+        (code < 32 && code !== 9 && code !== 10 && code !== 13) ||
+        code === 127 ||
+        (character.length === 1 && code >= 0xd800 && code <= 0xdfff)
       );
     })
   )
