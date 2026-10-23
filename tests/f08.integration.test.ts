@@ -154,7 +154,9 @@ test("F08 real guest SDK transport consumes one generation and cannot enter priv
 });
 
 test("F08 five funded credits deplete, global cap blocks another owner, and BYOK plus owned history/export/delete remain isolated", async () => {
-  const f = await betaFixture();
+  const f = await betaFixture({
+    environment: { FUNDED_MONTHLY_MICRODOLLARS: "500000" },
+  });
   const ids: string[] = [];
   for (let index = 0; index < 5; index++) {
     const body = chatBody();
@@ -442,9 +444,13 @@ test("F08 local physical backup restores ownership, encrypted credentials, immut
       ),
     ).toMatchObject({ code: "23503" });
     const roles = await restored.query<{ relrowsecurity: boolean }>(
-      "SELECT relrowsecurity FROM pg_class WHERE relname IN ('chat','provider_credential','credit_ledger')",
+      "SELECT relrowsecurity FROM pg_class WHERE relname IN ('chat','provider_credential','credit_ledger','platform_budget_plan')",
     );
     expect(roles.rows.every((row) => row.relrowsecurity)).toBe(true);
+    const restoredPlan = await restored.query<{ month: string }>(
+      "SELECT month FROM platform_budget_plan",
+    );
+    expect(restoredPlan.rows.length).toBeGreaterThan(0);
     console.info(
       `F08 local physical backup+restore: ${(performance.now() - snapshotStarted).toFixed(2)}ms; snapshot bytes: ${snapshot.size}`,
     );

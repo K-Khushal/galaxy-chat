@@ -4,11 +4,13 @@ import {
   type CreditFixture,
   createCreditFixture,
 } from "./helpers/credits-fixture";
-
 import { rejectionOf } from "./helpers/rejection";
 import { setupFixtureBeforeEach } from "./helpers/setup-fixture";
 
 mock.module("server-only", () => ({}));
+const { createReviewedBudgetPlan, registerReviewedBudgetPlan } = await import(
+  "./helpers/platform-budget-fixture"
+);
 const { CreditStore, actorFor } = await import("../lib/credits/store");
 const {
   DAILY_MICRODOLLARS,
@@ -42,6 +44,29 @@ const price = {
   reasoning: "none",
   allInPrice: true,
 };
+const f06Plan = createReviewedBudgetPlan(
+  {
+    month: new Date().toISOString().slice(0, 7),
+    aCredit: 1_000_000,
+    kInfra: 0,
+    kProviderFees: 0,
+    kSafety: 1_000_000,
+    bSelected: 10_000_000,
+  },
+  {
+    FUNDED_INFERENCE: "1",
+    FUNDED_KILL_SWITCH: "0",
+    BYOK_ENABLED: "0",
+    ATTACHMENTS_ENABLED: "0",
+    SEARCH_TOOLS_ENABLED: "0",
+    IMAGES_ENABLED: "0",
+    MCP_CLIENT_ENABLED: "0",
+    PLATFORM_INFRA_MICRODOLLARS: "0",
+    PLATFORM_PROVIDER_FEES_MICRODOLLARS: "0",
+    PLATFORM_SAFETY_RESERVE_MICRODOLLARS: "1000000",
+    FUNDED_MONTHLY_MICRODOLLARS: "1000000",
+  },
+);
 const env = {
   FUNDED_ADAPTER: "openrouter",
   FUNDED_INFERENCE: "1",
@@ -54,6 +79,8 @@ const env = {
   PLATFORM_SAFETY_RESERVE_MICRODOLLARS: "1000000",
   FUNDED_MONTHLY_MICRODOLLARS: "1000000",
   FUNDED_BASIC_PRICE_JSON: JSON.stringify(price),
+  PLATFORM_BUDGET_ENABLED: "1",
+  PLATFORM_BUDGET_PLAN_JSON: JSON.stringify(f06Plan),
 };
 const guestEnv = {
   ...env,
@@ -69,7 +96,12 @@ const actor = (id = crypto.randomUUID(), kind: "user" | "guest" = "user") =>
   actorFor(kind, id, secret);
 const config = () => resolveFundingConfig(env);
 const digest = "a".repeat(64);
-const fixtureOptions = { actor, config, digest };
+const fixtureOptions = {
+  actor,
+  config,
+  digest,
+  env: () => env,
+};
 const useCreditFixture = setupFixtureBeforeEach(() =>
   createCreditFixture(fixtureOptions),
 );
@@ -171,38 +203,60 @@ test("explicit integer funding subtracts all commitments from the ten dollar cei
   expect(knownReceipt(usage("unknown"))).toBeUndefined();
 });
 
-test(
-  "concurrent actors cannot exceed the shared cap; the immutable snapshot records the reservation",
-  withCreditFixture(async ({ reserve, store, database }) => {
-    const capped = {
-      ...config(),
-      monthlyMicrodollars: 300_000,
-      globalConcurrency: 10,
-    };
+test("concurrent actors cannot exceed the shared cap; the immutable snapshot records the reservation", async () => {
+  const cappedPlan = createReviewedBudgetPlan(
+    {
+      month: new Date().toISOString().slice(0, 7),
+      aCredit: 300_000,
+      kInfra: 0,
+      kProviderFees: 0,
+      kSafety: 1_000_000,
+      bSelected: 10_000_000,
+    },
+    {
+      ...env,
+      FUNDED_MONTHLY_MICRODOLLARS: "300000",
+    },
+  );
+  const cappedEnv = {
+    ...env,
+    FUNDED_MONTHLY_MICRODOLLARS: "300000",
+    PLATFORM_BUDGET_PLAN_JSON: JSON.stringify(cappedPlan),
+  };
+  const fixture = await createCreditFixture({
+    ...fixtureOptions,
+    env: () => cappedEnv,
+    skipPlanRegistration: true,
+  });
+  try {
+    await registerReviewedBudgetPlan(fixture.db, cappedPlan, cappedEnv);
+    const capped = resolveFundingConfig(cappedEnv);
     const results = await Promise.allSettled(
       Array.from({ length: 8 }, () =>
-        reserve(actor(), 200_000, { config: capped }),
+        fixture.reserve(actor(), 200_000, { config: capped, env: cappedEnv }),
       ),
     );
     expect(
       results.filter((result) => result.status === "fulfilled"),
     ).toHaveLength(1);
-    const totals = await store.status(actor());
+    const totals = await fixture.store.status(actor());
     expect(totals.monthly).toBe(200_000);
-    const snapshots = await database.query<{ price_snapshot: unknown }>(
+    const snapshots = await fixture.database.query<{ price_snapshot: unknown }>(
       "SELECT price_snapshot FROM credit_reservation",
     );
     expect(snapshots.rows[0].price_snapshot).toEqual(price);
     expect(
       await rejectionOf(
-        database.exec("UPDATE credit_ledger SET event = 'edited'"),
+        fixture.database.exec("UPDATE credit_ledger SET event = 'edited'"),
       ),
     ).toMatchObject({ message: expect.stringContaining("append only") });
     expect(
-      await rejectionOf(database.exec("DELETE FROM credit_ledger")),
+      await rejectionOf(fixture.database.exec("DELETE FROM credit_ledger")),
     ).toMatchObject({ message: expect.stringContaining("append only") });
-  }),
-);
+  } finally {
+    await fixture.close();
+  }
+});
 
 test(
   "actor concurrency and daily cap hold under concurrent requests",
@@ -303,22 +357,79 @@ test(
   }),
 );
 
-test(
-  "UTC rollovers reset known spend, carry unresolved holds, then reconcile without double counting",
-  withCreditFixture(async ({ reserve, store }) => {
+test("UTC rollovers reset known spend, carry unresolved holds, then reconcile without double counting", async () => {
+  let periodEnv = { ...env };
+  const fixture = await createCreditFixture({
+    ...fixtureOptions,
+    env: () => periodEnv,
+    skipPlanRegistration: true,
+  });
+  try {
+    const { reserve, store, db } = fixture;
     const who = actor();
     const old = new Date("2026-10-31T23:59:59Z");
     const next = new Date("2026-11-01T00:00:01Z");
-    const held = await reserve(who, 200_000, { now: old });
-    await store.enter(held.id, who);
+    const planOct = createReviewedBudgetPlan(
+      {
+        month: "2026-10",
+        aCredit: 1_000_000,
+        kInfra: 0,
+        kProviderFees: 0,
+        kSafety: 1_000_000,
+        bSelected: 10_000_000,
+        reviewedAt: new Date("2026-10-01T00:00:00Z").toISOString(),
+        expiresAt: new Date("2026-12-31T00:00:00Z").toISOString(),
+      },
+      env,
+      old,
+    );
+    const envOct = {
+      ...env,
+      PLATFORM_BUDGET_PLAN_JSON: JSON.stringify(planOct),
+    };
+    await registerReviewedBudgetPlan(db, planOct, envOct, old);
+    periodEnv = envOct;
+    const held = await reserve(who, 200_000, {
+      now: old,
+      config: resolveFundingConfig(envOct, old),
+      env: envOct,
+    });
+    await store.enter(held.id, who, undefined, { now: old, env: envOct });
     await store.finish(held.id, who, { kind: "unknown" });
     expect(await store.status(who, next)).toMatchObject({
       daily: 200_000,
       monthly: 200_000,
       actorActive: 1,
     });
+    const planNov = createReviewedBudgetPlan(
+      {
+        month: "2026-11",
+        aCredit: 1_000_000,
+        kInfra: 0,
+        kProviderFees: 0,
+        kSafety: 1_000_000,
+        lCarried: 200_000,
+        bSelected: 10_000_000,
+        reviewedAt: new Date("2026-10-01T00:00:00Z").toISOString(),
+        expiresAt: new Date("2026-12-31T00:00:00Z").toISOString(),
+      },
+      env,
+      next,
+    );
+    const envNov = {
+      ...env,
+      PLATFORM_BUDGET_PLAN_JSON: JSON.stringify(planNov),
+    };
+    await registerReviewedBudgetPlan(db, planNov, envNov, next);
+    periodEnv = envNov;
     expect(
-      await rejectionOf(reserve(who, 100_000, { now: next })),
+      await rejectionOf(
+        reserve(who, 100_000, {
+          now: next,
+          config: resolveFundingConfig(envNov, next),
+          env: envNov,
+        }),
+      ),
     ).toMatchObject({
       id: "funding_busy",
     });
@@ -337,8 +448,12 @@ test(
       daily: 50_000,
       monthly: 50_000,
     });
-    const fresh = await reserve(who, 100_000, { now: next });
-    await store.enter(fresh.id, who);
+    const fresh = await reserve(who, 100_000, {
+      now: next,
+      config: resolveFundingConfig(envNov, next),
+      env: envNov,
+    });
+    await store.enter(fresh.id, who, undefined, { now: next, env: envNov });
     await store.finish(fresh.id, who, {
       kind: "known",
       microdollars: 20_000,
@@ -352,8 +467,10 @@ test(
     expect(
       await store.status(who, new Date("2026-11-02T00:00:00Z")),
     ).toMatchObject({ daily: 0, monthly: 20_000 });
-  }),
-);
+  } finally {
+    await fixture.close();
+  }
+});
 
 test(
   "pre-entry failure releases safely; post-entry failure and retries retain the hold",
@@ -552,14 +669,39 @@ test(
   }),
 );
 
-test(
-  "credit state hides shared/admin balances and never promises availability from daily funds alone",
-  withCreditFixture(async ({ reserve, store }) => {
+test("credit state hides shared/admin balances and never promises availability from daily funds alone", async () => {
+  const limitedPlan = createReviewedBudgetPlan(
+    {
+      month: new Date().toISOString().slice(0, 7),
+      aCredit: 1_000,
+      kInfra: 0,
+      kProviderFees: 0,
+      kSafety: 1_000_000,
+      bSelected: 10_000_000,
+    },
+    {
+      ...env,
+      FUNDED_MONTHLY_MICRODOLLARS: "1000",
+    },
+  );
+  const limitedEnv = {
+    ...env,
+    FUNDED_MONTHLY_MICRODOLLARS: "1000",
+    PLATFORM_BUDGET_PLAN_JSON: JSON.stringify(limitedPlan),
+  };
+  const fixture = await createCreditFixture({
+    ...fixtureOptions,
+    env: () => limitedEnv,
+    skipPlanRegistration: true,
+  });
+  try {
+    const { reserve, store, db } = fixture;
     const who = actor();
+    await registerReviewedBudgetPlan(db, limitedPlan, limitedEnv);
     const row = await reserve(actor(), 1_000, {
-      config: { ...config(), monthlyMicrodollars: 1_000 },
+      config: resolveFundingConfig(limitedEnv),
+      env: limitedEnv,
     });
-    const limitedEnv = { ...env, FUNDED_MONTHLY_MICRODOLLARS: "1000" };
     const view = await creditStatus(limitedEnv, who, store);
     expect(view).toMatchObject({
       state: "shared_exhausted",
@@ -580,8 +722,10 @@ test(
       configured: false,
       remainingMicrodollars: 0,
     });
-  }),
-);
+  } finally {
+    await fixture.close();
+  }
+});
 
 test("context/request bounds reject oversized input and preserve only recent plain text", async () => {
   const turns = Array.from({ length: 30 }, (_, i) => ({
@@ -844,31 +988,72 @@ test(
   }),
 );
 
-test(
-  "restarting the service preserves crash holds and only releases a durable pre-entry reservation",
-  withCreditFixture(async ({ reserve, db, store }) => {
-    const who = actor();
-    const date = new Date("2026-10-31T23:59:59Z");
-    const next = new Date("2026-11-01T00:00:01Z");
-    const reserved = await reserve(who, 100_000, { now: date });
-    const restarted = new CreditStore(db);
+test("restarting the service preserves crash holds and only releases a durable pre-entry reservation", async () => {
+  const who = actor();
+  const date = new Date("2026-10-31T23:59:59Z");
+  const next = new Date("2026-11-01T00:00:01Z");
+  const planOct = createReviewedBudgetPlan(
+    {
+      month: "2026-10",
+      aCredit: 1_000_000,
+      kInfra: 0,
+      kProviderFees: 0,
+      kSafety: 1_000_000,
+      bSelected: 10_000_000,
+      reviewedAt: new Date("2026-10-01T00:00:00Z").toISOString(),
+      expiresAt: new Date("2026-12-31T00:00:00Z").toISOString(),
+    },
+    env,
+    date,
+  );
+  const envOct = {
+    ...env,
+    PLATFORM_BUDGET_PLAN_JSON: JSON.stringify(planOct),
+  };
+  const fixture = await createCreditFixture({
+    ...fixtureOptions,
+    env: () => envOct,
+    skipPlanRegistration: true,
+  });
+  try {
+    const { reserve, db, store } = fixture;
+    await registerReviewedBudgetPlan(db, planOct, envOct, date);
+    const reserved = await reserve(who, 100_000, {
+      now: date,
+      config: resolveFundingConfig(envOct, date),
+      env: envOct,
+    });
+    const restarted = new CreditStore(db, () => envOct);
     expect(await restarted.status(who, next)).toMatchObject({
       daily: 100_000,
       monthly: 100_000,
       actorActive: 1,
     });
     await restarted.finish(reserved.id, who, { kind: "before_entry" });
-    expect(await rejectionOf(store.enter(reserved.id, who))).toMatchObject({
+    expect(
+      await rejectionOf(
+        store.enter(reserved.id, who, undefined, {
+          now: date,
+          env: envOct,
+        }),
+      ),
+    ).toMatchObject({
       id: "request_already_processed",
     });
     expect((await restarted.status(who, next)).daily).toBe(0);
-    const entered = await reserve(who, 100_000, { now: date });
-    await store.enter(entered.id, who);
+    const entered = await reserve(who, 100_000, {
+      now: date,
+      config: resolveFundingConfig(envOct, date),
+      env: envOct,
+    });
+    await store.enter(entered.id, who, undefined, { now: date, env: envOct });
     expect((await restarted.operatorPending()).length).toBe(1);
     await restarted.finish(entered.id, who, { kind: "before_entry" });
     expect((await restarted.status(who, next)).daily).toBe(100_000);
-  }),
-);
+  } finally {
+    await fixture.close();
+  }
+});
 
 test(
   "observed incurred costs cannot be released by cancellation or a smaller later settlement",

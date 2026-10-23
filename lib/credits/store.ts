@@ -1,18 +1,25 @@
 import "server-only";
 import { createHmac } from "node:crypto";
 import { sql } from "drizzle-orm";
+import type { EnvSource } from "@/lib/auth/env";
 import { type EntryValidation, requireDb } from "@/lib/db/client";
 import { AppError } from "@/lib/errors";
+import { deepFreeze } from "@/lib/funding/config";
+import { assertActivePlanInTx } from "@/lib/funding/store";
 import {
+  assertExactFundingConfigMatch,
+  assertExactPriceMatch,
   DAILY_MICRODOLLARS,
   type FundingConfig,
   LIMITS,
   type PriceSnapshot,
+  resolveFundingConfig,
   utcWindows,
 } from "./config";
 
 type Db = ReturnType<typeof requireDb>;
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
+type ClockSource = Date | (() => Date);
 export type Actor = { key: string; kind: "user" | "guest" };
 export type Reservation = {
   id: string;
@@ -23,7 +30,13 @@ export type Reservation = {
   charged_microdollars: number;
   incurred_microdollars: number;
   request_digest: string;
+  day?: string;
+  month?: string;
   price_snapshot: PriceSnapshot;
+  plan_month?: string | null;
+  plan_revision?: string | null;
+  plan_digest?: string | null;
+  plan_capacity_digest?: string | null;
 };
 export type Totals = {
   daily: number;
@@ -87,27 +100,103 @@ export function actorFor(
 }
 
 export class CreditStore {
-  constructor(private readonly db: Db = requireDb()) {}
+  constructor(
+    private readonly db: Db = requireDb(),
+    private readonly envProvider: EnvSource | (() => EnvSource) = () =>
+      process.env,
+  ) {}
+
+  private getEnv(): EnvSource {
+    return typeof this.envProvider === "function"
+      ? this.envProvider()
+      : this.envProvider;
+  }
+
   private transaction<T>(run: (tx: Tx) => Promise<T>) {
     // After waiting for the advisory lock, each statement must see the latest
     // committed budget. Do not inherit a pool role's repeatable-read default.
     return this.db.transaction(run, { isolationLevel: "read committed" });
   }
+
   async status(actor: Actor, now = new Date()) {
     return this.transaction(async (tx) => {
       await lock(tx);
       return totals(tx, actor, now);
     });
   }
+
+  /** The final awaited statement samples control and DB wall time together.
+   * Runtime config is resolved synchronously afterwards from the authoritative
+   * provider, so no earlier config/price/clock snapshot can authorize entry.
+   */
+  private async currentFunding(
+    tx: Tx,
+    expected?: FundingConfig,
+    clockSource?: ClockSource,
+  ) {
+    const [observation] = await tx.execute<{ now: Date; stopped: boolean }>(
+      sql`SELECT clock_timestamp() AS now, stopped FROM public.funding_control WHERE id='platform'`,
+    );
+    if (!observation || observation.stopped)
+      throw new AppError("funded_inference_disabled", 503);
+    const now =
+      typeof clockSource === "function"
+        ? clockSource()
+        : (clockSource ?? new Date(observation.now));
+    const config = resolveFundingConfig(this.getEnv(), now);
+    if (expected) assertExactFundingConfigMatch(expected, config);
+    return { now, config, ...utcWindows(now) };
+  }
+
+  private assertSamePeriod(initial: Date, current: Date) {
+    const before = utcWindows(initial),
+      after = utcWindows(current);
+    if (before.month !== after.month)
+      throw new AppError("budget_month_not_current", 400);
+    if (before.day !== after.day)
+      throw new AppError("funding_period_changed", 409);
+  }
+
+  private assertBinding(row: Reservation, config: FundingConfig) {
+    assertExactPriceMatch(row.price_snapshot, config.price);
+    if (
+      row.plan_month !== config.plan.month ||
+      row.plan_revision !== config.plan.revision ||
+      row.plan_digest !== config.plan.digest ||
+      row.plan_capacity_digest !== config.plan.capacityDigest
+    )
+      throw new AppError("plan_identity_mismatch", 409);
+  }
+
+  private assertPlan(
+    tx: Tx,
+    config: FundingConfig,
+    clockSource?: ClockSource,
+    incoming = 0,
+  ) {
+    return assertActivePlanInTx(
+      tx,
+      config.plan,
+      () => this.getEnv(),
+      clockSource,
+      incoming,
+    );
+  }
+
   async reserve(options: {
     actor: Actor;
     idempotencyKey: string;
     digest: string;
     config: FundingConfig;
     microdollars: number;
-    now?: Date;
+    now?: ClockSource;
+    /** Expected caller configuration only; never an authoritative override. */
+    env?: EnvSource;
   }): Promise<Reservation> {
-    const { actor, idempotencyKey, digest, config, microdollars } = options;
+    const actor = { ...options.actor };
+    const { idempotencyKey, digest, microdollars, now: clockSource } = options;
+    const expected = deepFreeze(structuredClone(options.config));
+    const callerEnv = options.env ? { ...options.env } : undefined;
     if (
       !/^[a-zA-Z0-9:_-]{1,160}$/.test(idempotencyKey) ||
       !/^[a-f0-9]{64}$/.test(digest) ||
@@ -116,18 +205,19 @@ export class CreditStore {
       microdollars > DAILY_MICRODOLLARS
     )
       throw new AppError("invalid_request", 400);
+
     return this.transaction(async (tx) => {
       await lock(tx);
-      // Use the database clock in production; test injection makes rollover deterministic.
-      const [clock] = await tx.execute<{ now: Date }>(
-        sql`SELECT clock_timestamp() AS now`,
-      );
-      const now = options.now ?? new Date(clock.now);
-      const { day, month } = utcWindows(now);
-      if (new Date(config.price.expiresAt).getTime() <= now.getTime())
-        throw new AppError("unknown_model_price", 503);
+      const initial = await this.currentFunding(tx, expected, clockSource);
+      if (callerEnv)
+        assertExactFundingConfigMatch(
+          resolveFundingConfig(callerEnv, initial.now),
+          initial.config,
+        );
+      if (initial.config.plan.month !== initial.month)
+        throw new AppError("budget_month_not_current", 400);
       const [existing] = await tx.execute<Reservation>(
-        sql`SELECT * FROM public.credit_reservation WHERE actor_key = ${actor.key} AND idempotency_key = ${idempotencyKey}`,
+        sql`SELECT * FROM public.credit_reservation WHERE actor_key=${actor.key} AND idempotency_key=${idempotencyKey}`,
       );
       if (existing)
         throw new AppError(
@@ -138,57 +228,117 @@ export class CreditStore {
         );
       if (actor.kind === "guest") {
         const used = await tx.execute(
-          sql`SELECT actor_key FROM public.guest_usage WHERE actor_key = ${actor.key}`,
+          sql`SELECT actor_key FROM public.guest_usage WHERE actor_key=${actor.key}`,
         );
         if (used.length) throw new AppError("guest_limit_reached", 429);
       }
-      const balance = await totals(tx, actor, now);
+      const balance = await totals(tx, actor, initial.now);
       if (balance.stopped) throw new AppError("funded_inference_disabled", 503);
       if (balance.daily + microdollars > DAILY_MICRODOLLARS)
         throw new AppError("daily_exhausted", 429);
-      if (balance.monthly + microdollars > config.monthlyMicrodollars)
+      if (balance.monthly + microdollars > initial.config.monthlyMicrodollars)
         throw new AppError("shared_exhausted", 429);
       if (
-        balance.actorActive >= config.actorConcurrency ||
-        balance.globalActive >= config.globalConcurrency
+        balance.actorActive >= initial.config.actorConcurrency ||
+        balance.globalActive >= initial.config.globalConcurrency
       )
         throw new AppError("funding_busy", 429);
+
+      const plan = await this.assertPlan(
+        tx,
+        initial.config,
+        clockSource,
+        microdollars,
+      );
+      const ready = await this.currentFunding(tx, expected, clockSource);
+      this.assertSamePeriod(initial.now, ready.now);
       const id = crypto.randomUUID();
-      const [reservation] =
-        await tx.execute<Reservation>(sql`INSERT INTO public.credit_reservation
-        (id, actor_key, actor_kind, idempotency_key, request_digest, day, month, reserved_microdollars, charged_microdollars, state, price_snapshot)
-        VALUES (${id}, ${actor.key}, ${actor.kind}, ${idempotencyKey}, ${digest}, ${day}, ${month}, ${microdollars}, ${microdollars}, 'reserved', ${JSON.stringify(config.price)}::jsonb) RETURNING *`);
+      const [reservation] = await tx.execute<Reservation>(sql`
+        INSERT INTO public.credit_reservation(id,actor_key,actor_kind,idempotency_key,request_digest,day,month,
+          reserved_microdollars,charged_microdollars,state,price_snapshot,plan_month,plan_revision,plan_digest,plan_capacity_digest)
+        VALUES(${id},${actor.key},${actor.kind},${idempotencyKey},${digest},${ready.day},${ready.month},
+          ${microdollars},${microdollars},'reserved',${JSON.stringify(ready.config.price)}::jsonb,
+          ${plan.month},${plan.revision},${plan.digest},${plan.capacity_digest}) RETURNING *`);
       if (actor.kind === "guest")
         await tx.execute(
-          sql`INSERT INTO public.guest_usage(actor_key, reservation_id) VALUES (${actor.key}, ${id})`,
+          sql`INSERT INTO public.guest_usage(actor_key,reservation_id) VALUES(${actor.key},${id})`,
         );
       await audit(tx, id, "reserved", microdollars, {
-        priceSnapshot: config.price,
+        priceSnapshot: ready.config.price,
         bounds: LIMITS,
         purpose: "basic_text",
-        day,
-        month,
+        day: ready.day,
+        month: ready.month,
+        plan: {
+          month: plan.month,
+          revision: plan.revision,
+          digest: plan.digest,
+          capacityDigest: plan.capacity_digest,
+        },
       });
+      await this.assertPlan(tx, initial.config, clockSource);
+      const final = await this.currentFunding(tx, expected, clockSource);
+      this.assertSamePeriod(initial.now, final.now);
       return reservation;
     });
   }
-  async enter(id: string, actor: Actor, validateEntry?: EntryValidation) {
+
+  async enter(
+    id: string,
+    inputActor: Actor,
+    validateEntry?: EntryValidation,
+    options?: { now?: ClockSource; env?: EnvSource; config?: FundingConfig },
+  ) {
+    const actor = { ...inputActor };
+    const clockSource = options?.now;
+    const expected = options?.config
+      ? deepFreeze(structuredClone(options.config))
+      : undefined;
+    const callerEnv = options?.env ? { ...options.env } : undefined;
     await this.transaction(async (tx) => {
       await lock(tx);
-      const [control] = await tx.execute<{ stopped: boolean }>(
-        sql`SELECT stopped FROM public.funding_control WHERE id = 'platform'`,
+      const [row] = await tx.execute<Reservation>(
+        sql`SELECT * FROM public.credit_reservation WHERE id=${id} AND actor_key=${actor.key}`,
       );
-      if (!control || control.stopped)
-        throw new AppError("funded_inference_disabled", 503);
-      // Fresh validation follows the awaited global lock in this transaction.
-      // Failure rolls back before any entered state or provider_entered audit.
+      if (
+        !row ||
+        row.state !== "reserved" ||
+        !row.plan_month ||
+        !row.plan_revision ||
+        !row.plan_digest ||
+        !row.plan_capacity_digest
+      )
+        throw new AppError("request_already_processed", 409);
+      const initial = await this.currentFunding(tx, expected, clockSource);
+      if (callerEnv)
+        assertExactFundingConfigMatch(
+          resolveFundingConfig(callerEnv, initial.now),
+          initial.config,
+        );
+      if (row.month !== initial.month || row.plan_month !== initial.month)
+        throw new AppError("budget_month_not_current", 400);
+      this.assertBinding(row, initial.config);
       await validateEntry?.(tx);
-      const rows = await tx.execute(
-        sql`UPDATE public.credit_reservation SET state = 'entered', updated_at = now() WHERE id = ${id} AND actor_key = ${actor.key} AND state = 'reserved' RETURNING id`,
-      );
+      await this.assertPlan(tx, initial.config, clockSource);
+      const ready = await this.currentFunding(tx, initial.config, clockSource);
+      this.assertSamePeriod(initial.now, ready.now);
+      this.assertBinding(row, ready.config);
+      const rows =
+        await tx.execute(sql`UPDATE public.credit_reservation SET state='entered',updated_at=now()
+        WHERE id=${id} AND actor_key=${actor.key} AND state='reserved' RETURNING id`);
       if (!rows.length) throw new AppError("request_already_processed", 409);
-      // Persist this BEFORE invoking any SDK/provider. A crash afterward retains the hold.
-      await audit(tx, id, "provider_entered", 0);
+      await audit(tx, id, "provider_entered", 0, {
+        plan: {
+          month: row.plan_month,
+          revision: row.plan_revision,
+          digest: row.plan_digest,
+          capacityDigest: row.plan_capacity_digest,
+        },
+      });
+      await this.assertPlan(tx, initial.config, clockSource);
+      const final = await this.currentFunding(tx, initial.config, clockSource);
+      this.assertSamePeriod(initial.now, final.now);
+      this.assertBinding(row, final.config);
     });
   }
   async finish(

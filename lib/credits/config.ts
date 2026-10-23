@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { EnvSource } from "@/lib/auth/env";
 import { AppError } from "@/lib/errors";
+import { deepFreeze, resolvePlatformBudgetConfig } from "@/lib/funding/config";
 
 export const CREDIT_MICRODOLLARS = 100_000;
 export const DAILY_MICRODOLLARS = 500_000;
@@ -21,14 +22,64 @@ const priceSchema = z
   })
   .strict();
 export type PriceSnapshot = z.infer<typeof priceSchema>;
-export type FundingConfig = {
-  adapter: "openrouter";
-  monthlyMicrodollars: number;
-  commitmentsMicrodollars: number;
-  price: PriceSnapshot;
-  actorConcurrency: number;
-  globalConcurrency: number;
+export type PlanBinding = {
+  readonly month: string;
+  readonly revision: string;
+  readonly digest: string;
+  readonly capacityDigest: string;
 };
+export type FundingConfig = {
+  readonly adapter: "openrouter";
+  readonly monthlyMicrodollars: number;
+  readonly commitmentsMicrodollars: number;
+  readonly price: PriceSnapshot;
+  readonly actorConcurrency: number;
+  readonly globalConcurrency: number;
+  readonly plan: PlanBinding;
+};
+
+export function assertExactPriceMatch(
+  a: PriceSnapshot,
+  b: PriceSnapshot,
+): void {
+  if (
+    a.id !== b.id ||
+    a.model !== b.model ||
+    a.provider !== b.provider ||
+    a.expiresAt !== b.expiresAt ||
+    a.inputMicrodollarsPerMillion !== b.inputMicrodollarsPerMillion ||
+    a.outputMicrodollarsPerMillion !== b.outputMicrodollarsPerMillion ||
+    a.basicTextOnly !== b.basicTextOnly ||
+    a.reasoning !== b.reasoning ||
+    a.allInPrice !== b.allInPrice
+  ) {
+    throw new AppError("unknown_model_price", 503);
+  }
+}
+
+export function assertExactFundingConfigMatch(
+  a: FundingConfig,
+  b: FundingConfig,
+): void {
+  if (
+    a.adapter !== b.adapter ||
+    a.monthlyMicrodollars !== b.monthlyMicrodollars ||
+    a.commitmentsMicrodollars !== b.commitmentsMicrodollars ||
+    a.actorConcurrency !== b.actorConcurrency ||
+    a.globalConcurrency !== b.globalConcurrency
+  ) {
+    throw new AppError("funding_unconfigured", 503);
+  }
+  assertExactPriceMatch(a.price, b.price);
+  if (
+    a.plan.month !== b.plan.month ||
+    a.plan.revision !== b.plan.revision ||
+    a.plan.digest !== b.plan.digest ||
+    a.plan.capacityDigest !== b.plan.capacityDigest
+  ) {
+    throw new AppError("plan_candidate_mismatch", 400);
+  }
+}
 
 function envInteger(env: EnvSource, key: string): number {
   const value = env[key];
@@ -66,25 +117,50 @@ export function resolveFundingConfig(
   }
   if (new Date(price.expiresAt).getTime() <= now.getTime())
     throw new AppError("unknown_model_price", 503);
-  const commitmentsMicrodollars =
-    envInteger(env, "PLATFORM_INFRA_MICRODOLLARS") +
-    envInteger(env, "PLATFORM_PROVIDER_FEES_MICRODOLLARS") +
-    envInteger(env, "PLATFORM_SAFETY_RESERVE_MICRODOLLARS");
+
+  const budgetConfig = resolvePlatformBudgetConfig(env, now);
+  if (!budgetConfig || !budgetConfig.enabled) {
+    throw new AppError("platform_budget_disabled", 503);
+  }
+
+  const infra = envInteger(env, "PLATFORM_INFRA_MICRODOLLARS");
+  const fees = envInteger(env, "PLATFORM_PROVIDER_FEES_MICRODOLLARS");
+  const safety = envInteger(env, "PLATFORM_SAFETY_RESERVE_MICRODOLLARS");
   const monthlyMicrodollars = envInteger(env, "FUNDED_MONTHLY_MICRODOLLARS");
+
+  if (
+    monthlyMicrodollars !== budgetConfig.plan.aCredit ||
+    infra !== budgetConfig.plan.kInfra ||
+    fees !== budgetConfig.plan.kProviderFees ||
+    safety !== budgetConfig.plan.kSafety
+  ) {
+    throw new AppError("plan_candidate_mismatch", 400);
+  }
+
+  const commitmentsMicrodollars = infra + fees + safety;
   if (
     monthlyMicrodollars < 1 ||
     commitmentsMicrodollars + monthlyMicrodollars >
       PLATFORM_CEILING_MICRODOLLARS
   )
     throw new AppError("funding_unconfigured", 503);
-  return {
+
+  const planBinding: PlanBinding = deepFreeze({
+    month: budgetConfig.plan.month,
+    revision: budgetConfig.plan.revision,
+    digest: budgetConfig.digest,
+    capacityDigest: budgetConfig.capacityDigest,
+  });
+
+  return deepFreeze({
     adapter: "openrouter",
     monthlyMicrodollars,
     commitmentsMicrodollars,
     price,
     actorConcurrency: 1,
     globalConcurrency: 2,
-  };
+    plan: planBinding,
+  });
 }
 
 export const LIMITS = {
