@@ -155,6 +155,7 @@ beforeAll(async () => {
     "0013_image_artifacts",
     "0014_mcp_connections",
     "0015_platform_budget",
+    "0016_credit_reservation_plan_binding",
   ]);
 
   await db

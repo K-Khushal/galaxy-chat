@@ -7,6 +7,9 @@ import type { PostRequestBody } from "../lib/schema/chat/chat";
 import { rejectionOf } from "./helpers/rejection";
 
 mock.module("server-only", () => ({}));
+const { createReviewedBudgetPlan, registerReviewedBudgetPlan } = await import(
+  "./helpers/platform-budget-fixture"
+);
 const { getDb, closeDb } = await import("../lib/db/client");
 const { getAuth, resetAuthCache } = await import("../lib/auth/server");
 const { POST } = await import("../app/(chat)/api/chat/route");
@@ -36,6 +39,29 @@ const price = {
   reasoning: "none",
   allInPrice: true,
 };
+const f05Plan = createReviewedBudgetPlan(
+  {
+    month: new Date().toISOString().slice(0, 7),
+    aCredit: 1_000_000,
+    kInfra: 0,
+    kProviderFees: 0,
+    kSafety: 1_000_000,
+    bSelected: 10_000_000,
+  },
+  {
+    FUNDED_INFERENCE: "1",
+    FUNDED_KILL_SWITCH: "0",
+    BYOK_ENABLED: "0",
+    ATTACHMENTS_ENABLED: "0",
+    SEARCH_TOOLS_ENABLED: "0",
+    IMAGES_ENABLED: "0",
+    MCP_CLIENT_ENABLED: "0",
+    PLATFORM_INFRA_MICRODOLLARS: "0",
+    PLATFORM_PROVIDER_FEES_MICRODOLLARS: "0",
+    PLATFORM_SAFETY_RESERVE_MICRODOLLARS: "1000000",
+    FUNDED_MONTHLY_MICRODOLLARS: "1000000",
+  },
+);
 const funded = {
   FUNDED_ADAPTER: "openrouter",
   FUNDED_INFERENCE: "1",
@@ -48,6 +74,8 @@ const funded = {
   PLATFORM_SAFETY_RESERVE_MICRODOLLARS: "1000000",
   FUNDED_MONTHLY_MICRODOLLARS: "1000000",
   FUNDED_BASIC_PRICE_JSON: JSON.stringify(price),
+  PLATFORM_BUDGET_ENABLED: "1",
+  PLATFORM_BUDGET_PLAN_JSON: JSON.stringify(f05Plan),
 };
 let database: PGlite;
 let socket: PGLiteSocketServer;
@@ -81,6 +109,9 @@ beforeAll(async () => {
     GITHUB_CLIENT_SECRET: "local-fixture",
     GITHUB_INVITE_LOGINS: "f05",
   });
+  const db = getDb();
+  if (!db) throw new Error("fixture_db_failed");
+  await registerReviewedBudgetPlan(db, f05Plan, process.env);
   await database.query(
     `INSERT INTO "user"(id,name,email,email_verified,github_login) VALUES ('f05','Fixture','f05@example.invalid',true,'f05'),('other','Other','other@example.invalid',true,'other')`,
   );

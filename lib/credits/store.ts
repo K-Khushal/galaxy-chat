@@ -1,13 +1,16 @@
 import "server-only";
 import { createHmac } from "node:crypto";
 import { sql } from "drizzle-orm";
+import type { EnvSource } from "@/lib/auth/env";
 import { type EntryValidation, requireDb } from "@/lib/db/client";
 import { AppError } from "@/lib/errors";
+import { assertActivePlanInTx } from "@/lib/funding/store";
 import {
   DAILY_MICRODOLLARS,
   type FundingConfig,
   LIMITS,
   type PriceSnapshot,
+  resolveFundingConfig,
   utcWindows,
 } from "./config";
 
@@ -23,7 +26,13 @@ export type Reservation = {
   charged_microdollars: number;
   incurred_microdollars: number;
   request_digest: string;
+  day?: string;
+  month?: string;
   price_snapshot: PriceSnapshot;
+  plan_month?: string | null;
+  plan_revision?: string | null;
+  plan_digest?: string | null;
+  plan_capacity_digest?: string | null;
 };
 export type Totals = {
   daily: number;
@@ -87,18 +96,31 @@ export function actorFor(
 }
 
 export class CreditStore {
-  constructor(private readonly db: Db = requireDb()) {}
+  constructor(
+    private readonly db: Db = requireDb(),
+    private readonly envProvider: EnvSource | (() => EnvSource) = () =>
+      process.env,
+  ) {}
+
+  private getEnv(): EnvSource {
+    return typeof this.envProvider === "function"
+      ? this.envProvider()
+      : this.envProvider;
+  }
+
   private transaction<T>(run: (tx: Tx) => Promise<T>) {
     // After waiting for the advisory lock, each statement must see the latest
     // committed budget. Do not inherit a pool role's repeatable-read default.
     return this.db.transaction(run, { isolationLevel: "read committed" });
   }
+
   async status(actor: Actor, now = new Date()) {
     return this.transaction(async (tx) => {
       await lock(tx);
       return totals(tx, actor, now);
     });
   }
+
   async reserve(options: {
     actor: Actor;
     idempotencyKey: string;
@@ -106,6 +128,7 @@ export class CreditStore {
     config: FundingConfig;
     microdollars: number;
     now?: Date;
+    env?: EnvSource;
   }): Promise<Reservation> {
     const { actor, idempotencyKey, digest, config, microdollars } = options;
     if (
@@ -116,6 +139,7 @@ export class CreditStore {
       microdollars > DAILY_MICRODOLLARS
     )
       throw new AppError("invalid_request", 400);
+
     return this.transaction(async (tx) => {
       await lock(tx);
       // Use the database clock in production; test injection makes rollover deterministic.
@@ -124,8 +148,35 @@ export class CreditStore {
       );
       const now = options.now ?? new Date(clock.now);
       const { day, month } = utcWindows(now);
-      if (new Date(config.price.expiresAt).getTime() <= now.getTime())
+
+      const freshEnv = options.env ?? this.getEnv();
+      const freshConfig = resolveFundingConfig(freshEnv, now);
+
+      if (
+        freshConfig.price.id !== config.price.id ||
+        freshConfig.price.model !== config.price.model ||
+        freshConfig.price.inputMicrodollarsPerMillion !==
+          config.price.inputMicrodollarsPerMillion ||
+        freshConfig.price.outputMicrodollarsPerMillion !==
+          config.price.outputMicrodollarsPerMillion
+      ) {
         throw new AppError("unknown_model_price", 503);
+      }
+      if (new Date(freshConfig.price.expiresAt).getTime() <= now.getTime()) {
+        throw new AppError("unknown_model_price", 503);
+      }
+      if (
+        freshConfig.plan.month !== config.plan.month ||
+        freshConfig.plan.revision !== config.plan.revision ||
+        freshConfig.plan.digest !== config.plan.digest ||
+        freshConfig.plan.capacityDigest !== config.plan.capacityDigest
+      ) {
+        throw new AppError("plan_candidate_mismatch", 400);
+      }
+      if (freshConfig.plan.month !== month) {
+        throw new AppError("budget_month_not_current", 400);
+      }
+
       const [existing] = await tx.execute<Reservation>(
         sql`SELECT * FROM public.credit_reservation WHERE actor_key = ${actor.key} AND idempotency_key = ${idempotencyKey}`,
       );
@@ -136,59 +187,191 @@ export class CreditStore {
             : "idempotency_conflict",
           409,
         );
+
       if (actor.kind === "guest") {
         const used = await tx.execute(
           sql`SELECT actor_key FROM public.guest_usage WHERE actor_key = ${actor.key}`,
         );
         if (used.length) throw new AppError("guest_limit_reached", 429);
       }
+
       const balance = await totals(tx, actor, now);
       if (balance.stopped) throw new AppError("funded_inference_disabled", 503);
       if (balance.daily + microdollars > DAILY_MICRODOLLARS)
         throw new AppError("daily_exhausted", 429);
-      if (balance.monthly + microdollars > config.monthlyMicrodollars)
+      if (balance.monthly + microdollars > freshConfig.monthlyMicrodollars)
         throw new AppError("shared_exhausted", 429);
       if (
-        balance.actorActive >= config.actorConcurrency ||
-        balance.globalActive >= config.globalConcurrency
+        balance.actorActive >= freshConfig.actorConcurrency ||
+        balance.globalActive >= freshConfig.globalConcurrency
       )
         throw new AppError("funding_busy", 429);
+
+      // Validate plan incoming before INSERT; final fresh price/plan/config/control/current month
+      // after ALL awaited checks (guest/concurrency/context if any) immediately before write
+      const activePlan = await assertActivePlanInTx(
+        tx,
+        freshConfig.plan,
+        freshEnv,
+        now,
+        microdollars,
+      );
+
+      if (new Date(freshConfig.price.expiresAt).getTime() <= now.getTime()) {
+        throw new AppError("unknown_model_price", 503);
+      }
+
       const id = crypto.randomUUID();
-      const [reservation] =
-        await tx.execute<Reservation>(sql`INSERT INTO public.credit_reservation
-        (id, actor_key, actor_kind, idempotency_key, request_digest, day, month, reserved_microdollars, charged_microdollars, state, price_snapshot)
-        VALUES (${id}, ${actor.key}, ${actor.kind}, ${idempotencyKey}, ${digest}, ${day}, ${month}, ${microdollars}, ${microdollars}, 'reserved', ${JSON.stringify(config.price)}::jsonb) RETURNING *`);
-      if (actor.kind === "guest")
+      const [reservation] = await tx.execute<Reservation>(sql`
+        INSERT INTO public.credit_reservation (
+          id, actor_key, actor_kind, idempotency_key, request_digest, day, month,
+          reserved_microdollars, charged_microdollars, state, price_snapshot,
+          plan_month, plan_revision, plan_digest, plan_capacity_digest
+        ) VALUES (
+          ${id}, ${actor.key}, ${actor.kind}, ${idempotencyKey}, ${digest}, ${day}, ${month},
+          ${microdollars}, ${microdollars}, 'reserved', ${JSON.stringify(freshConfig.price)}::jsonb,
+          ${activePlan.month}, ${activePlan.revision}, ${activePlan.digest}, ${activePlan.capacity_digest}
+        ) RETURNING *
+      `);
+
+      if (actor.kind === "guest") {
         await tx.execute(
           sql`INSERT INTO public.guest_usage(actor_key, reservation_id) VALUES (${actor.key}, ${id})`,
         );
+      }
+
       await audit(tx, id, "reserved", microdollars, {
-        priceSnapshot: config.price,
+        priceSnapshot: freshConfig.price,
         bounds: LIMITS,
         purpose: "basic_text",
         day,
         month,
+        plan: {
+          month: activePlan.month,
+          revision: activePlan.revision,
+          digest: activePlan.digest,
+          capacityDigest: activePlan.capacity_digest,
+        },
       });
+
+      // and before transaction return if audits await
+      await assertActivePlanInTx(tx, freshConfig.plan, freshEnv, now, 0);
+
       return reservation;
     });
   }
-  async enter(id: string, actor: Actor, validateEntry?: EntryValidation) {
+
+  async enter(
+    id: string,
+    actor: Actor,
+    validateEntry?: EntryValidation,
+    options?: { now?: Date; env?: EnvSource; config?: FundingConfig },
+  ) {
     await this.transaction(async (tx) => {
       await lock(tx);
+      const [clock] = await tx.execute<{ now: Date }>(
+        sql`SELECT clock_timestamp() AS now`,
+      );
+      const now = options?.now ?? new Date(clock.now);
+      const { month: currentMonth } = utcWindows(now);
+
       const [control] = await tx.execute<{ stopped: boolean }>(
         sql`SELECT stopped FROM public.funding_control WHERE id = 'platform'`,
       );
       if (!control || control.stopped)
         throw new AppError("funded_inference_disabled", 503);
-      // Fresh validation follows the awaited global lock in this transaction.
-      // Failure rolls back before any entered state or provider_entered audit.
+
+      const [row] = await tx.execute<Reservation>(
+        sql`SELECT * FROM public.credit_reservation WHERE id = ${id} AND actor_key = ${actor.key}`,
+      );
+      if (!row || row.state !== "reserved") {
+        throw new AppError("request_already_processed", 409);
+      }
+
+      // Legacy unbound reserved rows deny 409
+      if (
+        !row.plan_month ||
+        !row.plan_revision ||
+        !row.plan_digest ||
+        !row.plan_capacity_digest
+      ) {
+        throw new AppError("request_already_processed", 409);
+      }
+
+      if (row.month !== currentMonth || row.plan_month !== currentMonth) {
+        throw new AppError("budget_month_not_current", 400);
+      }
+
+      // Await validateEntry(tx) FIRST
       await validateEntry?.(tx);
+
+      // THEN FINAL plan/price/config/control checks AFTER this callback because it awaits context+attachments
+      const freshEnv = options?.env ?? this.getEnv();
+      const freshConfig = resolveFundingConfig(freshEnv, now);
+
+      if (options?.config) {
+        if (
+          options.config.price.id !== freshConfig.price.id ||
+          options.config.price.model !== freshConfig.price.model ||
+          options.config.price.inputMicrodollarsPerMillion !==
+            freshConfig.price.inputMicrodollarsPerMillion ||
+          options.config.price.outputMicrodollarsPerMillion !==
+            freshConfig.price.outputMicrodollarsPerMillion
+        ) {
+          throw new AppError("unknown_model_price", 503);
+        }
+        if (
+          options.config.plan.month !== freshConfig.plan.month ||
+          options.config.plan.revision !== freshConfig.plan.revision ||
+          options.config.plan.digest !== freshConfig.plan.digest ||
+          options.config.plan.capacityDigest !== freshConfig.plan.capacityDigest
+        ) {
+          throw new AppError("plan_candidate_mismatch", 400);
+        }
+      }
+
+      if (
+        freshConfig.price.id !== row.price_snapshot.id ||
+        freshConfig.price.model !== row.price_snapshot.model ||
+        freshConfig.price.inputMicrodollarsPerMillion !==
+          row.price_snapshot.inputMicrodollarsPerMillion ||
+        freshConfig.price.outputMicrodollarsPerMillion !==
+          row.price_snapshot.outputMicrodollarsPerMillion
+      ) {
+        throw new AppError("unknown_model_price", 503);
+      }
+      if (new Date(freshConfig.price.expiresAt).getTime() <= now.getTime()) {
+        throw new AppError("unknown_model_price", 503);
+      }
+
+      if (
+        row.plan_month !== freshConfig.plan.month ||
+        row.plan_revision !== freshConfig.plan.revision ||
+        row.plan_digest !== freshConfig.plan.digest ||
+        row.plan_capacity_digest !== freshConfig.plan.capacityDigest
+      ) {
+        throw new AppError("plan_identity_mismatch", 409);
+      }
+
+      await assertActivePlanInTx(tx, freshConfig.plan, freshEnv, now, 0);
+
+      // Persist entered before provider invocation
       const rows = await tx.execute(
         sql`UPDATE public.credit_reservation SET state = 'entered', updated_at = now() WHERE id = ${id} AND actor_key = ${actor.key} AND state = 'reserved' RETURNING id`,
       );
       if (!rows.length) throw new AppError("request_already_processed", 409);
-      // Persist this BEFORE invoking any SDK/provider. A crash afterward retains the hold.
-      await audit(tx, id, "provider_entered", 0);
+
+      await audit(tx, id, "provider_entered", 0, {
+        plan: {
+          month: row.plan_month,
+          revision: row.plan_revision,
+          digest: row.plan_digest,
+          capacityDigest: row.plan_capacity_digest,
+        },
+      });
+
+      // and final checks after last DB await where appropriate
+      await assertActivePlanInTx(tx, freshConfig.plan, freshEnv, now, 0);
     });
   }
   async finish(

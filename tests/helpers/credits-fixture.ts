@@ -5,6 +5,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { PGLiteSocketServer } from "@electric-sql/pglite-socket";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
+import type { EnvSource } from "../../lib/auth/env";
 import type { FundingConfig } from "../../lib/credits/config";
 import type { Actor, CreditStore } from "../../lib/credits/store";
 import * as schema from "../../lib/db/schema";
@@ -13,6 +14,8 @@ type FixtureOptions = {
   actor: () => Actor;
   config: () => FundingConfig;
   digest: string;
+  env?: () => EnvSource;
+  skipPlanRegistration?: boolean;
 };
 export type CreditFixture = Awaited<ReturnType<typeof createCreditFixture>>;
 export async function createCreditFixture(options: FixtureOptions) {
@@ -54,8 +57,15 @@ export async function createCreditFixture(options: FixtureOptions) {
       { max: 1, prepare: false, connect_timeout: 2 },
     );
     const db = drizzle(client, { schema });
+    const envSource = options.env ? options.env() : process.env;
+    if (!options.skipPlanRegistration && envSource.PLATFORM_BUDGET_PLAN_JSON) {
+      const planCandidate = JSON.parse(envSource.PLATFORM_BUDGET_PLAN_JSON);
+      const { PlatformBudgetStore } = await import("../../lib/funding/store");
+      const budgetStore = new PlatformBudgetStore(db);
+      await budgetStore.registerReviewedPlan(planCandidate, envSource);
+    }
     const { CreditStore } = await import("../../lib/credits/store");
-    const store = new CreditStore(db);
+    const store = new CreditStore(db, options.env ?? (() => process.env));
     const reserve = (
       who = options.actor(),
       microdollars = 100_000,

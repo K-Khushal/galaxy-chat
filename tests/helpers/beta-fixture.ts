@@ -5,6 +5,10 @@ import { PGlite } from "@electric-sql/pglite";
 import { PGLiteSocketServer } from "@electric-sql/pglite-socket";
 import { makeSignature } from "better-auth/crypto";
 import type { PostRequestBody } from "../../lib/schema/chat/chat";
+import {
+  createReviewedBudgetPlan,
+  registerReviewedBudgetPlan,
+} from "./platform-budget-fixture";
 export const secret = "f08-local-nonfunctional-secret-at-least-32-characters";
 export const privateKey = "f08-nonfunctional-user-provider-key-never-sent-1111";
 export const price = {
@@ -18,6 +22,29 @@ export const price = {
   reasoning: "none",
   allInPrice: true,
 };
+export const betaPlan = createReviewedBudgetPlan(
+  {
+    month: new Date().toISOString().slice(0, 7),
+    aCredit: 1_000_000,
+    kInfra: 0,
+    kProviderFees: 0,
+    kSafety: 1_000_000,
+    bSelected: 10_000_000,
+  },
+  {
+    FUNDED_INFERENCE: "1",
+    FUNDED_KILL_SWITCH: "0",
+    BYOK_ENABLED: "1",
+    ATTACHMENTS_ENABLED: "0",
+    SEARCH_TOOLS_ENABLED: "0",
+    IMAGES_ENABLED: "0",
+    MCP_CLIENT_ENABLED: "0",
+    PLATFORM_INFRA_MICRODOLLARS: "0",
+    PLATFORM_PROVIDER_FEES_MICRODOLLARS: "0",
+    PLATFORM_SAFETY_RESERVE_MICRODOLLARS: "1000000",
+    FUNDED_MONTHLY_MICRODOLLARS: "1000000",
+  },
+);
 export const env = {
   BETTER_AUTH_SECRET: secret,
   BETTER_AUTH_URL: "https://galaxy.example",
@@ -35,6 +62,8 @@ export const env = {
   PLATFORM_SAFETY_RESERVE_MICRODOLLARS: "1000000",
   FUNDED_MONTHLY_MICRODOLLARS: "1000000",
   FUNDED_BASIC_PRICE_JSON: JSON.stringify(price),
+  PLATFORM_BUDGET_ENABLED: "1",
+  PLATFORM_BUDGET_PLAN_JSON: JSON.stringify(betaPlan),
   GUEST_COOKIE_SECRET: secret,
   GUEST_TURNSTILE_SECRET: "f08-bot-secret-never-sent",
   GUEST_TURNSTILE_SITE_KEY: "local-fixture-site-key",
@@ -87,7 +116,7 @@ export function chatBody(
     ...overrides,
   };
 }
-export async function betaFixture() {
+export async function betaFixture(options?: { registerPlan?: boolean }) {
   const { closeDb, requireDb } = await import("../../lib/db/client");
   const { getAuth, resetAuthCache } = await import("../../lib/auth/server");
   const previous = { ...process.env };
@@ -131,6 +160,9 @@ export async function betaFixture() {
       DATABASE_URL: `postgres://postgres:postgres@${socket.getServerConn()}/postgres`,
     });
     const db = requireDb();
+    if (options?.registerPlan) {
+      await registerReviewedBudgetPlan(db, betaPlan, process.env);
+    }
     // Every query after socket start shares the application's postgres.js max:1 queue.
     await db.$client
       .unsafe(

@@ -76,7 +76,23 @@ When bootstrapping a new UTC month plan $M$:
 
 - **Single-Client PGlite Scope**: Integration tests run against local in-memory PGlite with a max-1 client connection pool. They demonstrate serialized transaction queue ordering, barrier-controlled post-await re-validation, and rollback invariants. They do not prove native multi-session PostgreSQL concurrency or multi-node distributed lock contention.
 - **Future Integration Gates**:
-  1. Wiring `CreditStore` to assert against `platform_budget_plan` under lock `41021406`.
-  2. Wiring MCP operations ledger and OAuth token storage.
-  3. Trusted cryptographic cost receipt evidence and live infrastructure rate verification.
-  4. The current slice provides only the durable allocation and carry foundation; it does NOT establish a real spend guarantee or enable any MCP runtime traffic.
+  1. Wiring MCP operations ledger and OAuth token storage.
+  2. Trusted cryptographic cost receipt evidence and live infrastructure rate verification.
+  3. The current slice integrates CreditStore with the durable allocation and carry foundation; it does NOT establish a real spend guarantee or enable any MCP runtime traffic.
+
+---
+
+## 6. Credit Reservation Plan Binding & Operator Bootstrap Workflow
+
+- **Operator Pre-Registration Required**: There is strictly NO auto-registration of budget plans, new months, or reallocations inside `reserve` or `enter`. Operators must explicitly register reviewed monthly plans in advance using `PlatformBudgetStore.registerReviewedPlan(candidate, env)`.
+- **Runtime Enforced Binding**: Every credit reservation binds to the reviewed plan (`plan_month`, `plan_revision`, `plan_digest`, `plan_capacity_digest`). Database constraints enforce either all four NULL (legacy rows) or all four explicit non-null with strict pattern matching and `plan_month = month`.
+- **Immutability Once Bound**: Database trigger `credit_reservation_plan_binding_immutable_trigger` prohibits any update, alteration, clearing, or backfilling of binding columns once written.
+- **Function Bootstrap Workflow**:
+  ```ts
+  import { PlatformBudgetStore } from "@/lib/funding/store";
+  import { requireDb } from "@/lib/db/client";
+
+  const store = new PlatformBudgetStore(requireDb());
+  await store.registerReviewedPlan(planCandidate, process.env);
+  ```
+- **CLI & External Spent Boundaries**: An optional CLI is intentionally not introduced in this slice. Hosted proofs and external cost measurement receipts remain pending live gates. No deployment, billing, or provider activation is performed.
