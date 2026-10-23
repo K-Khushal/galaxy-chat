@@ -154,6 +154,7 @@ beforeAll(async () => {
     "0012_mcp_egress_replay",
     "0013_image_artifacts",
     "0014_mcp_connections",
+    "0015_platform_budget",
   ]);
 
   await db
