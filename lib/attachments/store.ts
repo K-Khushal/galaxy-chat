@@ -268,13 +268,14 @@ export async function reservePrivateCapacity(
     !t ||
     Number(t.total) + bytes > config.platformBytes ||
     Number(t.owned) + bytes > config.userBytes ||
-    Number(t.count) + (existing ? 0 : 1) > 1000 ||
+    Number(t.count) + (existing ? 0 : 1) > attachmentLimits.globalObjects ||
     Number(t.user_count) + (existing ? 0 : 1) > attachmentLimits.userFiles
   )
     throw new AppError("attachment_storage_limit", 413);
   if (
-    Number(t.active) + (existing ? 0 : 1) > 2 ||
-    Number(t.owned_active) + (existing ? 0 : 1) > 1
+    Number(t.active) + (existing ? 0 : 1) > attachmentLimits.globalProcessing ||
+    Number(t.owned_active) + (existing ? 0 : 1) >
+      attachmentLimits.ownerProcessing
   )
     throw new AppError("attachment_processing_limit", 429);
 }

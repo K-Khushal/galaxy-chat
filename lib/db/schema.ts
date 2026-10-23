@@ -204,6 +204,7 @@ export const byokOperation = pgTable("byok_operation", {
     .notNull()
     .defaultNow(),
 });
+
 export const artifact = pgTable("artifact", {
   id: text("id").primaryKey(),
   userId: text("user_id")
@@ -277,3 +278,5 @@ export const mcpConnection = pgTable("mcp_connection", {
     .notNull()
     .defaultNow(),
 });
+
+export * from "./platform-budget-schema";
