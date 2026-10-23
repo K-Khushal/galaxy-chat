@@ -1597,4 +1597,184 @@ describe("Child 34 MCP wire client", () => {
     expect(config.brokerUrl.pathname).toBe("/v1/egress");
     expect(config.brokerUrl.search).toBe("");
   });
+
+  it("cancels newly acquired response once and executes 0 reader.reads when fetch ignores abort then resolves late after timeout", async () => {
+    let fetchBodyCancelCount = 0;
+    let readerReadCount = 0;
+
+    let resolveFetch: ((res: Response) => void) | undefined;
+    const mockLateResponse = {
+      status: 200,
+      bodyUsed: false,
+      body: {
+        cancel: () => {
+          fetchBodyCancelCount++;
+          return Promise.resolve();
+        },
+        getReader: () => ({
+          read: () => {
+            readerReadCount++;
+            return Promise.resolve({ done: true, value: undefined });
+          },
+          cancel: () => Promise.resolve(),
+        }),
+      },
+    } as unknown as Response;
+
+    const client = createMcpBrokerClient(
+      resolveMcpClientConfig({
+        env: baseEnv,
+        binding: {
+          fetch: () =>
+            new Promise((resolve) => {
+              resolveFetch = resolve;
+            }),
+        },
+      }) as McpClientConfig,
+    );
+
+    const dispatchPromise = client.dispatch({
+      operationId: randomUUID(),
+      profileId: "profile-list",
+      revision: "rev-1",
+      purpose: "mcp.list",
+      body: new Uint8Array([1]),
+      deadline: Date.now() + 40,
+    });
+
+    // Wait for caller dispatch to time out
+    await expect(dispatchPromise).rejects.toThrow(McpOutcomeUnknownError);
+
+    // Fetch resolves late after caller timeout
+    if (resolveFetch) {
+      resolveFetch(mockLateResponse);
+    }
+
+    // Yield to microtasks
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(fetchBodyCancelCount).toBe(1);
+    expect(readerReadCount).toBe(0);
+  });
+
+  it("throws McpOutcomeUnknownError if body read completes after absolute clock deadline even if timer has not run", async () => {
+    let readCallCount = 0;
+    const originalDateNow = Date.now;
+    const fakeStartTime = 2_000_000;
+    const deadline = fakeStartTime + 100;
+
+    const mockResponse = {
+      status: 200,
+      bodyUsed: false,
+      body: {
+        getReader: () => ({
+          read: () => {
+            readCallCount++;
+            // When read resolves, simulated clock has crossed the deadline
+            Date.now = () => fakeStartTime + 200;
+            return Promise.resolve({
+              done: false,
+              value: new TextEncoder().encode(
+                JSON.stringify({
+                  status: 200,
+                  body: Buffer.from("ok").toString("base64"),
+                  headers: { "content-type": "application/json" },
+                  destination: {
+                    profileId: "profile-list",
+                    revision: "rev-1",
+                    purpose: "mcp.list",
+                    address: "192.0.2.1",
+                  },
+                }),
+              ),
+            });
+          },
+          cancel: () => Promise.resolve(),
+        }),
+      },
+    } as unknown as Response;
+
+    try {
+      Date.now = () => fakeStartTime;
+
+      const client = createMcpBrokerClient(
+        resolveMcpClientConfig({
+          env: baseEnv,
+          binding: {
+            fetch: async () => mockResponse,
+          },
+          now: () => fakeStartTime,
+        }) as McpClientConfig,
+      );
+
+      await expect(
+        client.dispatch({
+          operationId: randomUUID(),
+          profileId: "profile-list",
+          revision: "rev-1",
+          purpose: "mcp.list",
+          body: new Uint8Array([1]),
+          deadline,
+        }),
+      ).rejects.toThrow(McpOutcomeUnknownError);
+    } finally {
+      Date.now = originalDateNow;
+    }
+    expect(readCallCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it("guards against late caller abort right as body completes before result return", async () => {
+    const controller = new AbortController();
+
+    const mockResponse = {
+      status: 200,
+      bodyUsed: false,
+      body: {
+        getReader: () => ({
+          read: () => {
+            // Abort caller right when reading finishes
+            controller.abort();
+            return Promise.resolve({
+              done: false,
+              value: new TextEncoder().encode(
+                JSON.stringify({
+                  status: 200,
+                  body: Buffer.from("ok").toString("base64"),
+                  headers: { "content-type": "application/json" },
+                  destination: {
+                    profileId: "profile-list",
+                    revision: "rev-1",
+                    purpose: "mcp.list",
+                    address: "192.0.2.1",
+                  },
+                }),
+              ),
+            });
+          },
+          cancel: () => Promise.resolve(),
+        }),
+      },
+    } as unknown as Response;
+
+    const client = createMcpBrokerClient(
+      resolveMcpClientConfig({
+        env: baseEnv,
+        binding: {
+          fetch: async () => mockResponse,
+        },
+      }) as McpClientConfig,
+    );
+
+    await expect(
+      client.dispatch({
+        operationId: randomUUID(),
+        profileId: "profile-list",
+        revision: "rev-1",
+        purpose: "mcp.list",
+        body: new Uint8Array([1]),
+        deadline: Date.now() + 5000,
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow(McpOutcomeUnknownError);
+  });
 });

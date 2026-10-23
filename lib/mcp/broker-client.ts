@@ -226,6 +226,29 @@ export function createMcpBrokerClient(
 
       let response: Response | undefined;
       let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+      let responseCancelled = false;
+
+      const cancelResponse = (resp = response, rdr = reader): void => {
+        if (responseCancelled) return;
+        if (rdr || (resp?.body && !resp.bodyUsed)) {
+          responseCancelled = true;
+          cancelResponseBody(resp, rdr);
+        }
+      };
+
+      const checkAbortedOrExpired = (resp = response, rdr = reader): void => {
+        if (
+          controller.signal.aborted ||
+          Boolean(request.signal?.aborted) ||
+          Date.now() >= effectiveDeadline
+        ) {
+          cancelResponse(resp, rdr);
+          if (request.signal?.aborted) {
+            throw new McpOutcomeUnknownError("mcp_dispatch_cancelled", 499);
+          }
+          throw new McpOutcomeUnknownError("mcp_dispatch_timeout", 504);
+        }
+      };
 
       const workPromise = (async (): Promise<McpEgressResult> => {
         try {
@@ -247,7 +270,7 @@ export function createMcpBrokerClient(
               fetchError,
             );
           }
-          if (Date.now() >= effectiveDeadline) {
+          if (controller.signal.aborted || Date.now() >= effectiveDeadline) {
             throw new McpOutcomeUnknownError(
               "mcp_dispatch_timeout",
               504,
@@ -261,14 +284,19 @@ export function createMcpBrokerClient(
           );
         }
 
+        // GUARD 1: Immediately after fetch resolves.
+        // If race timed out/aborted while fetch was pending, cancel newly acquired response
+        // and stop immediately without reading body.
+        checkAbortedOrExpired(response);
+
         // 3. TRANSPORT REJECTION CHECKS
         if (response.status >= 300 && response.status < 400) {
-          cancelResponseBody(response);
+          cancelResponse(response);
           throw new McpOutcomeUnknownError("mcp_redirect_denied", 502);
         }
 
         if (response.status !== 200) {
-          cancelResponseBody(response);
+          cancelResponse(response);
           throw new McpOutcomeUnknownError(
             `mcp_broker_http_${response.status}`,
             502,
@@ -284,19 +312,21 @@ export function createMcpBrokerClient(
           try {
             while (true) {
               const { done, value } = await reader.read();
+              // GUARD 2: Check after each awaited reader.read()
+              checkAbortedOrExpired(response, reader);
               if (done) break;
               totalTransportBytes += value.byteLength;
               if (
                 totalTransportBytes >
                 MCP_CLIENT_LIMITS.maxTransportResponseBytes
               ) {
-                cancelResponseBody(response, reader);
+                cancelResponse(response, reader);
                 throw new McpOutcomeUnknownError("mcp_response_oversize", 502);
               }
               chunks.push(value);
             }
           } catch (streamError) {
-            cancelResponseBody(response, reader);
+            cancelResponse(response, reader);
             if (streamError instanceof McpOutcomeUnknownError) {
               throw streamError;
             }
@@ -307,7 +337,7 @@ export function createMcpBrokerClient(
                 streamError,
               );
             }
-            if (Date.now() >= effectiveDeadline) {
+            if (controller.signal.aborted || Date.now() >= effectiveDeadline) {
               throw new McpOutcomeUnknownError(
                 "mcp_dispatch_timeout",
                 504,
@@ -323,12 +353,15 @@ export function createMcpBrokerClient(
         } else {
           try {
             const buf = new Uint8Array(await response.arrayBuffer());
+            // GUARD 3: Check after arrayBuffer()
+            checkAbortedOrExpired(response);
             if (buf.byteLength > MCP_CLIENT_LIMITS.maxTransportResponseBytes) {
               throw new McpOutcomeUnknownError("mcp_response_oversize", 502);
             }
             chunks.push(buf);
             totalTransportBytes = buf.byteLength;
           } catch (bufError) {
+            cancelResponse(response);
             if (bufError instanceof McpOutcomeUnknownError) {
               throw bufError;
             }
@@ -339,7 +372,7 @@ export function createMcpBrokerClient(
                 bufError,
               );
             }
-            if (Date.now() >= effectiveDeadline) {
+            if (controller.signal.aborted || Date.now() >= effectiveDeadline) {
               throw new McpOutcomeUnknownError(
                 "mcp_dispatch_timeout",
                 504,
@@ -484,6 +517,10 @@ export function createMcpBrokerClient(
           throw new McpOutcomeUnknownError("mcp_destination_invalid", 502);
         }
 
+        // GUARD 4: Immediately before returning validated result.
+        // Prevents timer starvation / microtask delay from returning false SUCCESS.
+        checkAbortedOrExpired(response, reader);
+
         return Object.freeze({
           status: rootRecord.status,
           body: new Uint8Array(
@@ -507,8 +544,10 @@ export function createMcpBrokerClient(
       let result: McpEgressResult;
       try {
         result = await Promise.race([workPromise, abortOrTimeoutPromise]);
+        // GUARD 5: Check immediately after race settlement
+        checkAbortedOrExpired(response, reader);
       } catch (raceError) {
-        cancelResponseBody(response, reader);
+        cancelResponse(response, reader);
         if (raceError instanceof McpOutcomeUnknownError) {
           throw raceError;
         }
