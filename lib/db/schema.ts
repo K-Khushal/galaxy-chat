@@ -279,4 +279,5 @@ export const mcpConnection = pgTable("mcp_connection", {
     .defaultNow(),
 });
 
+export * from "./job-schema";
 export * from "./platform-budget-schema";
