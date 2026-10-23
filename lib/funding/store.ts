@@ -18,6 +18,9 @@ import {
 } from "./config";
 
 type Db = ReturnType<typeof requireDb>;
+type RuntimeEnvironment = EnvSource | (() => EnvSource);
+const currentEnvironment = (source: RuntimeEnvironment): EnvSource =>
+  typeof source === "function" ? source() : source;
 
 export type BudgetPlanRow = {
   month: string;
@@ -53,7 +56,171 @@ export type AssertActivePlanOptions = {
   month: string;
   expectedRevision: string;
   expectedDigest: string;
+  expectedCapacityDigest?: string;
 };
+
+export type { BudgetPlanInput } from "./config";
+export type ActivePlanInputSnapshot =
+  | AssertActivePlanOptions
+  | {
+      month: string;
+      revision: string;
+      digest: string;
+      capacityDigest?: string;
+    };
+
+export async function assertActivePlanInTx(
+  tx: DatabaseTransaction,
+  expected: Readonly<ActivePlanInputSnapshot>,
+  env: RuntimeEnvironment = () => process.env,
+  clockProvider?: Date | (() => Date),
+  incoming = 0,
+): Promise<BudgetPlanRow> {
+  if (!expected || typeof expected !== "object") {
+    throw new AppError("invalid_request", 400);
+  }
+  if (
+    typeof incoming !== "number" ||
+    !Number.isSafeInteger(incoming) ||
+    incoming < 0
+  ) {
+    throw new AppError("invalid_request", 400);
+  }
+
+  const snapMonth = String(expected.month ?? "");
+  const snapRevision = String(
+    "expectedRevision" in expected
+      ? (expected.expectedRevision ?? "")
+      : "revision" in expected
+        ? (expected.revision ?? "")
+        : "",
+  );
+  const snapDigest = String(
+    "expectedDigest" in expected
+      ? (expected.expectedDigest ?? "")
+      : "digest" in expected
+        ? (expected.digest ?? "")
+        : "",
+  );
+  const rawCapDigest =
+    "expectedCapacityDigest" in expected
+      ? expected.expectedCapacityDigest
+      : "capacityDigest" in expected
+        ? expected.capacityDigest
+        : undefined;
+  const snapCapacityDigest = rawCapDigest ? String(rawCapDigest) : undefined;
+
+  const [control] = await tx.execute<{ stopped: boolean }>(
+    sql`SELECT stopped FROM public.funding_control WHERE id = 'platform'`,
+  );
+  if (!control || control.stopped) {
+    throw new AppError("funded_inference_disabled", 503);
+  }
+
+  const [clock] = await tx.execute<{ now: Date }>(
+    sql`SELECT clock_timestamp() AS now`,
+  );
+  const now =
+    typeof clockProvider === "function"
+      ? clockProvider()
+      : (clockProvider ?? new Date(clock.now));
+
+  if (!/^[0-9]{4}-(0[1-9]|1[0-2])$/.test(snapMonth)) {
+    throw new AppError("invalid_budget_month", 400);
+  }
+
+  const currentUtcMonth = now.toISOString().slice(0, 7);
+  if (snapMonth !== currentUtcMonth) {
+    throw new AppError("budget_month_not_current", 400);
+  }
+
+  // Fresh config resolution AFTER awaited lock
+  const runtimeConfig = resolvePlatformBudgetConfig(
+    currentEnvironment(env),
+    now,
+  );
+  if (!runtimeConfig || !runtimeConfig.enabled) {
+    throw new AppError("platform_budget_disabled", 503);
+  }
+  if (
+    runtimeConfig.plan.month !== snapMonth ||
+    runtimeConfig.plan.revision !== snapRevision ||
+    runtimeConfig.digest !== snapDigest
+  ) {
+    throw new AppError("plan_candidate_mismatch", 400);
+  }
+  if (
+    snapCapacityDigest &&
+    runtimeConfig.capacityDigest !== snapCapacityDigest
+  ) {
+    throw new AppError("capacity_drift", 503);
+  }
+
+  const [plan] = await tx.execute<BudgetPlanRow>(
+    sql`SELECT * FROM public.platform_budget_plan WHERE month = ${snapMonth}`,
+  );
+  if (!plan) {
+    throw new AppError("budget_plan_missing", 503);
+  }
+
+  if (plan.revision !== snapRevision || plan.digest !== snapDigest) {
+    throw new AppError("plan_identity_mismatch", 409);
+  }
+  if (snapCapacityDigest && plan.capacity_digest !== snapCapacityDigest) {
+    throw new AppError("capacity_drift", 503);
+  }
+
+  await verifyActiveEnvironmentAndClock(
+    tx,
+    {
+      month: plan.month,
+      revision: plan.revision,
+      digest: plan.digest,
+      capacityDigest: plan.capacity_digest,
+      reviewedAt: plan.reviewed_at,
+      expiresAt: plan.expires_at,
+    },
+    env,
+    clockProvider,
+  );
+
+  // Verify no uncarried or increased legacy exposure from prior months against frozen carry rows
+  await checkUncoveredLegacyExposure(tx, snapMonth);
+
+  const [currentCredit] = await tx.execute<{ total: string }>(sql`
+    SELECT coalesce(sum(charged_microdollars), 0)::bigint AS total
+    FROM public.credit_reservation
+    WHERE month = ${snapMonth}
+  `);
+  const creditCharged = Number(currentCredit?.total ?? 0);
+  if (creditCharged + incoming > plan.a_credit) {
+    throw new AppError("credit_allocation_exhausted", 429);
+  }
+
+  const K = plan.k_infra + plan.k_provider_fees + plan.k_safety;
+  const totalExposure =
+    creditCharged + incoming + plan.a_mcp + K + plan.l_carried;
+  if (totalExposure > plan.b_selected) {
+    throw new AppError("platform_ceiling_exhausted", 429);
+  }
+
+  // Final re-evaluation immediately before return
+  await verifyActiveEnvironmentAndClock(
+    tx,
+    {
+      month: plan.month,
+      revision: plan.revision,
+      digest: plan.digest,
+      capacityDigest: plan.capacity_digest,
+      reviewedAt: plan.reviewed_at,
+      expiresAt: plan.expires_at,
+    },
+    env,
+    clockProvider,
+  );
+
+  return plan;
+}
 
 type ActiveValidationExpectations = {
   month: string;
@@ -77,7 +244,7 @@ export async function lockFunding(tx: DatabaseTransaction): Promise<void> {
 async function verifyActiveEnvironmentAndClock(
   tx: DatabaseTransaction,
   expected: ActiveValidationExpectations,
-  env: EnvSource,
+  env: RuntimeEnvironment,
   nowProvider?: Date | (() => Date),
 ): Promise<{ now: Date; runtimeConfig: PlatformBudgetConfig }> {
   const [control] = await tx.execute<{ stopped: boolean }>(
@@ -104,7 +271,8 @@ async function verifyActiveEnvironmentAndClock(
     throw new AppError("budget_month_not_current", 400);
   }
 
-  const runtimeConfig = resolvePlatformBudgetConfig(env, now);
+  const activeEnv = currentEnvironment(env);
+  const runtimeConfig = resolvePlatformBudgetConfig(activeEnv, now);
   if (!runtimeConfig || !runtimeConfig.enabled) {
     throw new AppError("platform_budget_disabled", 503);
   }
@@ -125,7 +293,7 @@ async function verifyActiveEnvironmentAndClock(
     throw new AppError("plan_coverage_expired", 503);
   }
 
-  const currentCaps = resolveCurrentCapacitySnapshot(env);
+  const currentCaps = resolveCurrentCapacitySnapshot(activeEnv);
   const currentCapDigest = computeCapacityDigest(currentCaps);
   if (currentCapDigest !== expected.capacityDigest) {
     throw new AppError("capacity_drift", 503);
@@ -398,107 +566,7 @@ export class PlatformBudgetStore {
     return this.db.transaction(
       async (tx) => {
         await lockFunding(tx);
-
-        const [control] = await tx.execute<{ stopped: boolean }>(
-          sql`SELECT stopped FROM public.funding_control WHERE id = 'platform'`,
-        );
-        if (!control || control.stopped) {
-          throw new AppError("funded_inference_disabled", 503);
-        }
-
-        const [clock] = await tx.execute<{ now: Date }>(
-          sql`SELECT clock_timestamp() AS now`,
-        );
-        const now =
-          typeof testNow === "function"
-            ? testNow()
-            : (testNow ?? new Date(clock.now));
-
-        if (!/^[0-9]{4}-(0[1-9]|1[0-2])$/.test(expected.month)) {
-          throw new AppError("invalid_budget_month", 400);
-        }
-
-        const currentUtcMonth = now.toISOString().slice(0, 7);
-        if (expected.month !== currentUtcMonth) {
-          throw new AppError("budget_month_not_current", 400);
-        }
-
-        // Fresh config resolution AFTER awaited lock
-        const runtimeConfig = resolvePlatformBudgetConfig(env, now);
-        if (!runtimeConfig || !runtimeConfig.enabled) {
-          throw new AppError("platform_budget_disabled", 503);
-        }
-        if (
-          runtimeConfig.plan.month !== expected.month ||
-          runtimeConfig.plan.revision !== expected.expectedRevision ||
-          runtimeConfig.digest !== expected.expectedDigest
-        ) {
-          throw new AppError("plan_candidate_mismatch", 400);
-        }
-
-        const [plan] = await tx.execute<BudgetPlanRow>(
-          sql`SELECT * FROM public.platform_budget_plan WHERE month = ${expected.month}`,
-        );
-        if (!plan) {
-          throw new AppError("budget_plan_missing", 503);
-        }
-
-        if (
-          plan.revision !== expected.expectedRevision ||
-          plan.digest !== expected.expectedDigest
-        ) {
-          throw new AppError("plan_identity_mismatch", 409);
-        }
-
-        await verifyActiveEnvironmentAndClock(
-          tx,
-          {
-            month: plan.month,
-            revision: plan.revision,
-            digest: plan.digest,
-            capacityDigest: plan.capacity_digest,
-            reviewedAt: plan.reviewed_at,
-            expiresAt: plan.expires_at,
-          },
-          env,
-          testNow,
-        );
-
-        // Verify no uncarried or increased legacy exposure from prior months against frozen carry rows
-        await checkUncoveredLegacyExposure(tx, expected.month);
-
-        const [currentCredit] = await tx.execute<{ total: string }>(sql`
-          SELECT coalesce(sum(charged_microdollars), 0)::bigint AS total
-          FROM public.credit_reservation
-          WHERE month = ${expected.month}
-        `);
-        const creditCharged = Number(currentCredit?.total ?? 0);
-        if (creditCharged > plan.a_credit) {
-          throw new AppError("credit_allocation_exhausted", 429);
-        }
-
-        const K = plan.k_infra + plan.k_provider_fees + plan.k_safety;
-        const totalExposure = creditCharged + plan.a_mcp + K + plan.l_carried;
-        if (totalExposure > plan.b_selected) {
-          throw new AppError("platform_ceiling_exhausted", 429);
-        }
-
-        // Final re-evaluation immediately before return
-        await verifyActiveEnvironmentAndClock(
-          tx,
-          {
-            month: plan.month,
-            revision: plan.revision,
-            digest: plan.digest,
-            capacityDigest: plan.capacity_digest,
-            reviewedAt: plan.reviewed_at,
-            expiresAt: plan.expires_at,
-          },
-          env,
-          testNow,
-        );
-
-        return plan;
+        return assertActivePlanInTx(tx, expected, env, testNow, 0);
       },
       { isolationLevel: "read committed" },
     );

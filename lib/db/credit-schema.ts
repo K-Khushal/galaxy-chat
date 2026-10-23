@@ -26,6 +26,10 @@ export const creditReservation = pgTable(
     state: text("state").notNull(),
     priceSnapshot: jsonb("price_snapshot").notNull(),
     usage: jsonb("usage"),
+    planMonth: text("plan_month"),
+    planRevision: text("plan_revision"),
+    planDigest: text("plan_digest"),
+    planCapacityDigest: text("plan_capacity_digest"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

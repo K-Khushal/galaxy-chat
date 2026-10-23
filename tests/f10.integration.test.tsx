@@ -159,7 +159,7 @@ test("F10 actual context preview and funded SDK request carry bounded untrusted 
   }
 }, 60_000);
 test("F10 unselected, foreign, stale, unsupported-image and temporary selections never reach inference", async () => {
-  const f = await attachmentHttpFixture();
+  const f = await attachmentHttpFixture({ skipPlanRegistration: true });
   try {
     const image = await upload(f, "image.png", pngFixture, "image/png");
     const unsupported = await preview(f, [image.id]);
@@ -208,6 +208,17 @@ test("F10 unselected, foreign, stale, unsupported-image and temporary selections
     expect((await f.db.execute(sql`SELECT id FROM chat_run`)).length).toBe(0);
     const plain = chatBody({ id: f.chatId, branchId: f.chatId });
     process.env.ATTACHMENTS_ENABLED = "0";
+    const { createReviewedBudgetPlan, registerReviewedBudgetPlan } =
+      await import("./helpers/platform-budget-fixture");
+    const plainPlan = createReviewedBudgetPlan(
+      {
+        month: new Date().toISOString().slice(0, 7),
+        bSelected: 10_000_000,
+      },
+      process.env,
+    );
+    process.env.PLATFORM_BUDGET_PLAN_JSON = JSON.stringify(plainPlan);
+    await registerReviewedBudgetPlan(f.db, plainPlan, process.env);
     const response = await chat.POST(await f.request("/api/chat", plain));
     expect(response.status).toBe(200);
     await response.text();

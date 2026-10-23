@@ -199,13 +199,14 @@ export async function startFundedStream(options: {
       }),
     )
     .digest("hex");
-  const store = options.store ?? new CreditStore();
+  const store = options.store ?? new CreditStore(undefined, () => options.env);
   const reservation = await store.reserve({
     actor: options.actor,
     idempotencyKey: options.idempotencyKey,
     digest,
     config,
     microdollars: worstCaseMicrodollars(config.price),
+    env: options.env,
   });
   return enterAndStart({ ...options, store, config, turns, reservation });
 }
@@ -235,9 +236,10 @@ async function enterAndStart(options: {
     await options.beforeProvider?.();
     await options.prepareProvider?.();
     options.signal?.throwIfAborted();
-    // Recheck the environment kill switch immediately before the durable claim.
-    resolveFundingConfig(options.env);
-    await store.enter(reservation.id, actor, options.validateEntry);
+    await store.enter(reservation.id, actor, options.validateEntry, {
+      env: options.env,
+      config: options.config,
+    });
     entered = true;
     const result = (options.provider ?? openRouterProvider(options.env))(
       options.config,

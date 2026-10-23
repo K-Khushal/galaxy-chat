@@ -1,18 +1,22 @@
 import { sql } from "drizzle-orm";
 import { attachmentConfigFixture } from "./attachment-fixture";
 import { betaFixture } from "./beta-fixture";
-export async function attachmentHttpFixture() {
-  const f = await betaFixture();
-  f.cost(0);
-  Object.assign(process.env, {
-    SUPABASE_URL: attachmentConfigFixture.storage.url,
-    SUPABASE_SECRET_KEY: attachmentConfigFixture.storage.secretKey,
-    SUPABASE_STORAGE_BUCKET: "private",
-    ATTACHMENTS_ENABLED: "1",
-    ATTACHMENT_PLATFORM_BYTES: "1048576",
-    ATTACHMENT_USER_BYTES: "524288",
-    ATTACHMENT_DAILY_TRANSFER_BYTES: "10485760",
+export async function attachmentHttpFixture(options?: {
+  skipPlanRegistration?: boolean;
+}) {
+  const f = await betaFixture({
+    skipPlanRegistration: options?.skipPlanRegistration,
+    environment: {
+      SUPABASE_URL: attachmentConfigFixture.storage.url,
+      SUPABASE_SECRET_KEY: attachmentConfigFixture.storage.secretKey,
+      SUPABASE_STORAGE_BUCKET: "private",
+      ATTACHMENTS_ENABLED: "1",
+      ATTACHMENT_PLATFORM_BYTES: "1048576",
+      ATTACHMENT_USER_BYTES: "524288",
+      ATTACHMENT_DAILY_TRANSFER_BYTES: "10485760",
+    },
   });
+  f.cost(0);
   const provider = globalThis.fetch;
   const objects = new Map<string, Uint8Array>();
   let reads = 0;

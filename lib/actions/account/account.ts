@@ -22,6 +22,7 @@ import {
 } from "@/lib/db/schema";
 import { AppError } from "@/lib/errors";
 import { ImageStore } from "@/lib/images/store";
+import { JobStore } from "@/lib/jobs/store";
 import { McpRegistryStore } from "@/lib/mcp/registry-store";
 import { SearchStore } from "@/lib/search/store";
 import { ToolStore } from "@/lib/tools/store";
@@ -36,6 +37,7 @@ export type AccountProfile = {
 
 export type AccountExport = {
   profile: AccountProfile;
+  jobs: Awaited<ReturnType<JobStore["export"]>>;
   imageData: Awaited<ReturnType<ImageStore["export"]>>;
   toolData: Awaited<ReturnType<ToolStore["export"]>>;
   attachments: Array<AttachmentView & { extractedText: string }>;
@@ -108,6 +110,7 @@ export async function exportOwnedAccount(
 ): Promise<AccountExport> {
   const db = requireDb();
   const profile = await ownedProfile(userId);
+  const jobs = await new JobStore(db).export(userId);
   const imageData = await new ImageStore(db).export(userId);
   const toolData = await new ToolStore(db).export(userId);
   const chats = await db
@@ -204,6 +207,7 @@ export async function exportOwnedAccount(
   }));
   return {
     profile,
+    jobs,
     toolData,
     imageData,
     attachments,
