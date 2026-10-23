@@ -1,5 +1,7 @@
 import "server-only";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { lockAttachments } from "@/lib/attachments/store";
+import { lockByokResources } from "@/lib/byok/store";
 import { requireDb } from "@/lib/db/client";
 import {
   artifact,
@@ -134,8 +136,10 @@ export async function mutateArtifact(
   const input = parsed.data;
   const db = requireDb();
   return db.transaction(async (tx) => {
-    // A real owner row lock serializes all artifact creates/revisions/deletes and
-    // quotas, and races safely with account deletion. No global or hash lock.
+    // Match image entry/deletion lock order before owner or cascade row locks.
+    await lockByokResources(tx);
+    await lockAttachments(tx);
+    // The owner row serializes artifact revisions and account deletion.
     const owner = await tx
       .select({ id: user.id })
       .from(user)
@@ -174,7 +178,10 @@ export async function mutateArtifact(
         .select({ count: sql<number>`count(*)::integer` })
         .from(artifact)
         .where(eq(artifact.userId, userId));
-      if (count[0].count >= artifactLimits.artifacts)
+      const [pending] = await tx.execute<{ count: number }>(
+        sql`SELECT count(*)::integer AS count FROM image_generation WHERE user_id=${userId} AND expected_head=0 AND state IN ('reserved','entered','held') AND NOT cancelled`,
+      );
+      if (count[0].count + pending.count >= artifactLimits.artifacts)
         throw new AppError("artifact_limit", 409);
       id = crypto.randomUUID();
       version = 1;
@@ -226,6 +233,7 @@ export async function mutateArtifact(
         title = revision.title;
         restoredFrom = revision.version;
       } else {
+        if (row.kind === "image") throw new AppError("invalid_artifact", 400);
         content = input.content;
         title = input.title;
       }

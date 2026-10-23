@@ -1,10 +1,12 @@
 import { attachmentCleanupConfig } from "../lib/attachments/config";
 import { AttachmentService } from "../lib/attachments/service";
 import { closeDb } from "../lib/db/client";
+import { ImageStore } from "../lib/images/store";
 
 // Run from an operator-controlled server environment with the same private bucket.
 // Never put a cleanup credential or this operation on a public HTTP endpoint.
 try {
+  await new ImageStore().recover();
   const result = await new AttachmentService(attachmentCleanupConfig()).cleanup(
     20,
   );

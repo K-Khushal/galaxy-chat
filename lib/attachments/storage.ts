@@ -51,7 +51,7 @@ export class SupabaseAttachmentStorage implements AttachmentStorage {
   ) {
     const response = await this.network(`${this.origin}/storage/v1/${path}`, {
       ...init,
-      redirect: "error",
+      redirect: "manual",
       cache: "no-store",
       signal: AbortSignal.any([
         AbortSignal.timeout(20_000),
@@ -63,6 +63,10 @@ export class SupabaseAttachmentStorage implements AttachmentStorage {
         ...init.headers,
       },
     });
+    if (response.status >= 300 && response.status < 400) {
+      await response.body?.cancel();
+      throw new AppError("storage_redirect_denied", 503);
+    }
     return response;
   }
   async assertPrivate(signal?: AbortSignal) {
@@ -137,14 +141,21 @@ export class SupabaseAttachmentStorage implements AttachmentStorage {
     )
       throw new AppError("storage_download_failed", 503);
     const response = await this.network(url, {
-      redirect: "error",
+      redirect: "manual",
       cache: "no-store",
       signal: AbortSignal.any([
         AbortSignal.timeout(20_000),
         ...(signal ? [signal] : []),
       ]),
     });
-    if (!response.ok) throw new AppError("storage_download_failed", 503);
+    if (response.status >= 300 && response.status < 400) {
+      await response.body?.cancel();
+      throw new AppError("storage_redirect_denied", 503);
+    }
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new AppError("storage_download_failed", 503);
+    }
     return readBounded(response.body, maxBytes, signal);
   }
   async remove(key: string, signal?: AbortSignal) {

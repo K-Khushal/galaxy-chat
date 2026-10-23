@@ -4,6 +4,7 @@ import {
   FileCode2,
   FileText,
   FolderOpen,
+  ImageIcon,
   Loader2,
   RotateCcw,
   Save,
@@ -41,6 +42,8 @@ import {
   markdownPreviewDocument,
 } from "@/lib/artifacts/preview";
 import { parseTableSource } from "@/lib/artifacts/table-spec";
+
+import { ImageComposer, ImageEditor, useImageCatalog } from "./image-workbench";
 
 const ChartPreview = dynamic(
   () => import("./chart-preview").then((module) => module.ChartPreview),
@@ -125,7 +128,22 @@ export function ArtifactPreview({
     />
   );
 }
-export function ArtifactEditor({
+type EditorProps = {
+  document: ArtifactDocument;
+  api?: ArtifactClient;
+  onChange: (document: ArtifactDocument) => void;
+  onDeleted: () => void;
+  onDirtyChange?: (dirty: boolean) => void;
+  fixture?: boolean;
+};
+export function ArtifactEditor(props: EditorProps) {
+  return props.document.kind === "image" ? (
+    <ImageEditor {...props} api={props.api ?? client} />
+  ) : (
+    <SourceArtifactEditor {...props} />
+  );
+}
+function SourceArtifactEditor({
   document,
   api = client,
   onChange,
@@ -609,6 +627,7 @@ function ArtifactPanel({
   const [documents, setDocuments] = useState<ArtifactSummary[]>([]);
   const [document, setDocument] = useState<ArtifactDocument | null>(null);
   const [kind, setKind] = useState<ArtifactKind>("markdown");
+  const imageCatalog = useImageCatalog(!fixture);
   const [title, setTitle] = useState("Untitled artifact");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -666,7 +685,7 @@ function ArtifactPanel({
     }
   }
   async function create() {
-    if (!messageId || pending.current || loading) return;
+    if (!messageId || kind === "image" || pending.current || loading) return;
     pending.current = true;
     setCreating(true);
     setBusy(true);
@@ -750,7 +769,9 @@ function ArtifactPanel({
             >
               <h3 className="font-medium">Create from this response</h3>
               <p className="text-sm text-muted-foreground">
-                The saved response becomes revision 1. No model call is needed.
+                {kind === "image"
+                  ? "Generate a private image linked to this saved response."
+                  : "The saved response becomes revision 1. No model call is needed."}
               </p>
               <label
                 htmlFor={`${uid}-new-title`}
@@ -786,6 +807,9 @@ function ArtifactPanel({
                 <option value="html">HTML document</option>
                 <option value="chart">Chart from JSON</option>
                 <option value="table">Typed table from JSON</option>
+                {imageCatalog.available && (
+                  <option value="image">Image with your OpenRouter key</option>
+                )}
               </select>
               {kind === "chart" && (
                 <p className="text-sm text-muted-foreground">
@@ -800,18 +824,29 @@ function ArtifactPanel({
                   model call is made.
                 </p>
               )}
-              <Button
-                type="submit"
-                aria-busy={creating}
-                disabled={loading || busy || !title.trim()}
-              >
-                {creating ? (
-                  <Loader2 aria-hidden="true" className="animate-spin" />
-                ) : (
-                  <FileText aria-hidden="true" />
-                )}
-                Create artifact
-              </Button>
+              {kind === "image" ? (
+                <ImageComposer
+                  catalog={imageCatalog}
+                  chatId={chatId}
+                  messageId={messageId}
+                  title={title}
+                  onBusyChange={setBusy}
+                  onSaved={open}
+                />
+              ) : (
+                <Button
+                  type="submit"
+                  aria-busy={creating}
+                  disabled={loading || busy || !title.trim()}
+                >
+                  {creating ? (
+                    <Loader2 aria-hidden="true" className="animate-spin" />
+                  ) : (
+                    <FileText aria-hidden="true" />
+                  )}
+                  Create artifact
+                </Button>
+              )}
             </form>
           )}
           <div className="space-y-2" aria-busy={loading}>
@@ -845,6 +880,8 @@ function ArtifactPanel({
                       aria-hidden="true"
                       className="shrink-0 animate-spin"
                     />
+                  ) : item.kind === "image" ? (
+                    <ImageIcon className="shrink-0" />
                   ) : item.kind === "chart" ? (
                     <ChartNoAxesCombined className="shrink-0" />
                   ) : item.kind === "table" ? (
