@@ -153,6 +153,7 @@ beforeAll(async () => {
     "0011_search_tools",
     "0012_mcp_egress_replay",
     "0013_image_artifacts",
+    "0014_mcp_connections",
   ]);
 
   await db
