@@ -170,9 +170,6 @@ export class McpRegistryStore {
         if (row.state === "revoked") {
           throw new AppError("mcp_connection_revoked_terminal", 400);
         }
-        if (row.state === "configured") {
-          return mcpConnectionView(row);
-        }
 
         const config = this.configProvider();
         if (!config) {
@@ -188,6 +185,10 @@ export class McpRegistryStore {
         const currentDigest = computeProfileDigest(profile);
         if (currentDigest !== row.profile_digest) {
           throw new AppError("mcp_profile_digest_mismatch", 409);
+        }
+
+        if (row.state === "configured") {
+          return mcpConnectionView(row);
         }
 
         const nextRevision = randomUUID();

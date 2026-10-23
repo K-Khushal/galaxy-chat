@@ -92,7 +92,11 @@ export function validateLabel(raw: unknown): string {
   }
   const trimmed = raw.trim();
   const bytes = Buffer.byteLength(trimmed, "utf8");
-  if (bytes === 0 || bytes > MCP_REGISTRY_LIMITS.maxLabelBytes) {
+  if (
+    bytes === 0 ||
+    bytes > MCP_REGISTRY_LIMITS.maxLabelBytes ||
+    /[\r\n\t]/.test(raw)
+  ) {
     throw new AppError("invalid_label", 400);
   }
   return trimmed;

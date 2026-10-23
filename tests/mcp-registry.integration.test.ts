@@ -370,6 +370,49 @@ describe("MCP Connection Registry Integration Suite", () => {
       ),
     ).toMatchObject({ id: "invalid_label", status: 400 });
 
+    // Control characters in labels: CR, LF, tab rejected on create
+    for (const badLabel of [
+      "Office\nTools",
+      "Office\rTools",
+      "Office\tTools",
+    ]) {
+      expect(
+        await rejectionOf(
+          store.create("alice", {
+            profileId: profile.profileId,
+            profileRevision: profile.revision,
+            purpose: "mcp.list",
+            label: badLabel,
+          }),
+        ),
+      ).toMatchObject({ id: "invalid_label", status: 400 });
+    }
+    const checkNoBadRows = await fixture.db.execute<{ id: string }>(
+      sql`SELECT id FROM mcp_connection WHERE label LIKE 'Office%Tools'`,
+    );
+    expect(checkNoBadRows).toHaveLength(0);
+
+    // Control characters in updateLabel: CR, LF, tab rejected with zero row/revision changes
+    for (const badLabel of [
+      "Office\nTools",
+      "Office\rTools",
+      "Office\tTools",
+    ]) {
+      expect(
+        await rejectionOf(
+          store.updateLabel(
+            "alice",
+            trimmedConn.id,
+            trimmedConn.revision,
+            badLabel,
+          ),
+        ),
+      ).toMatchObject({ id: "invalid_label", status: 400 });
+    }
+    const unchangedTrimmed = await store.get("alice", trimmedConn.id);
+    expect(unchangedTrimmed.label).toBe("Trimmed Label");
+    expect(unchangedTrimmed.revision).toBe(trimmedConn.revision);
+
     // Clean up created connections
     await store.delete("alice", trimmedConn.id, trimmedConn.revision);
     await store.delete("alice", conn64.id, conn64.revision);
@@ -641,9 +684,115 @@ describe("MCP Connection Registry Integration Suite", () => {
     // Restore original config to delete cleanly
     activeConfig = makeRealConfig([originalProfile]);
     await store.delete("alice", conn.id, disabled.revision);
+
+    // --- Configured-state enable validation tests ---
+    // Start with an active configured connection
+    const activeConn = await store.create("alice", {
+      profileId: originalProfile.profileId,
+      profileRevision: originalProfile.revision,
+      purpose: "mcp.list",
+      label: "Active Configured Guard",
+    });
+
+    // 1. Positive idempotence: configured connection with valid matching unexpired config
+    // returns identical view with same UUID, state, revision, and timestamps unchanged
+    const idempotentResult = await store.enable(
+      "alice",
+      activeConn.id,
+      activeConn.revision,
+    );
+    expect(idempotentResult.id).toBe(activeConn.id);
+    expect(idempotentResult.state).toBe("configured");
+    expect(idempotentResult.revision).toBe(activeConn.revision);
+    expect(idempotentResult.updatedAt).toBe(activeConn.updatedAt);
+
+    // 2. Configured + Config OFF: typed deny (503) and zero DB changes
+    const storeConfigOff = new McpRegistryStore(fixture.db, () => undefined);
+    expect(
+      await rejectionOf(
+        storeConfigOff.enable("alice", activeConn.id, activeConn.revision),
+      ),
+    ).toMatchObject({
+      id: "mcp_client_disabled",
+      status: 503,
+    });
+    const afterOff = await store.get("alice", activeConn.id);
+    expect(afterOff.state).toBe("configured");
+    expect(afterOff.revision).toBe(activeConn.revision);
+
+    // 3. Configured + Profile EXPIRED: typed deny (400) and zero DB changes
+    const expiredProf = makeTestProfile({
+      expiresAt: new Date(Date.now() - 60_000).toISOString(),
+    });
+    const storeExpired = new McpRegistryStore(fixture.db, () =>
+      makeRealConfig([expiredProf]),
+    );
+    expect(
+      await rejectionOf(
+        storeExpired.enable("alice", activeConn.id, activeConn.revision),
+      ),
+    ).toMatchObject({
+      id: "profile_expired",
+      status: 400,
+    });
+    const afterExp = await store.get("alice", activeConn.id);
+    expect(afterExp.state).toBe("configured");
+    expect(afterExp.revision).toBe(activeConn.revision);
+
+    // 4. Configured + Operator altered profile under stable id/rev: typed deny (409) and zero DB changes
+    const storeAltered = new McpRegistryStore(fixture.db, () =>
+      makeRealConfig([alteredProfile]),
+    );
+    expect(
+      await rejectionOf(
+        storeAltered.enable("alice", activeConn.id, activeConn.revision),
+      ),
+    ).toMatchObject({
+      id: "mcp_profile_digest_mismatch",
+      status: 409,
+    });
+    const afterAlt = await store.get("alice", activeConn.id);
+    expect(afterAlt.state).toBe("configured");
+    expect(afterAlt.revision).toBe(activeConn.revision);
+
+    // 5. Cleanup operations (disable/revoke/delete/list/export) still work when config is off
+    const listWhenOff = await storeConfigOff.list("alice");
+    expect(listWhenOff.some((c) => c.id === activeConn.id)).toBe(true);
+
+    const exportWhenOff = await storeConfigOff.export("alice");
+    expect(exportWhenOff.some((c) => c.id === activeConn.id)).toBe(true);
+
+    const disabledWhenOff = await storeConfigOff.disable(
+      "alice",
+      activeConn.id,
+      activeConn.revision,
+    );
+    expect(disabledWhenOff.state).toBe("disabled");
+
+    const revokedWhenOff = await storeConfigOff.revoke(
+      "alice",
+      activeConn.id,
+      disabledWhenOff.revision,
+    );
+    expect(revokedWhenOff.state).toBe("revoked");
+
+    await storeConfigOff.delete(
+      "alice",
+      activeConn.id,
+      revokedWhenOff.revision,
+    );
+    expect(
+      await rejectionOf(storeConfigOff.get("alice", activeConn.id)),
+    ).toMatchObject({
+      id: "not_found",
+      status: 404,
+    });
   });
 
   test("9. expiry/config changes while waiting lock deny", async () => {
+    // Note: PGlite + max-1 postgres.js client connection pool proves queued transaction
+    // ordering and post-await state changes, not independent native PostgreSQL multi-session
+    // concurrency or network lock contention.
     const fixture = await betaFixture();
     let simNow = Date.now();
     const testProfile = makeTestProfile({
@@ -839,7 +988,9 @@ describe("MCP Connection Registry Integration Suite", () => {
     });
   });
 
-  test("11. account delete cascade and all pre-existing financial holds remain protected", async () => {
+  test("11. account delete cascade and pre-existing owned search holds remain protected", async () => {
+    // Note: Account deletion regression proves that owned search liability (byok_operation
+    // of kind search) survives account deletion; it does not extrapolate to proving all hold categories.
     const fixture = await betaFixture();
     const profile = makeTestProfile();
     const config = makeRealConfig([profile]);

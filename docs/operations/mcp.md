@@ -63,3 +63,10 @@ The following operational requirements are mandatory before enabling `MCP_CLIENT
 ### Operator-Reviewed Profiles & Database Migration
 - Database migration `0014_mcp_connections.sql` applied.
 - `MCP_CLIENT_PROFILES_JSON` must define reviewed, expiring endpoints. An unreviewed or expired profile will fail closed on every registry create/re-enable attempt.
+
+---
+
+## 3. Local Test Invariants & Non-Extrapolation Boundaries
+
+- **Local Database Test Scope**: Integration tests run against local in-memory PGlite with a max-1 postgres.js client connection pool. Barrier test fixtures prove queued transaction serialization and post-await state changes within this single-client queue; they do not prove independent native PostgreSQL multi-session concurrency, multi-host network lock contention, or crash recovery.
+- **Account Deletion Liability Proof**: The account deletion regression proves that owned search liability (`byok_operation` of kind `search`) survives user deletion. It does not extrapolate to proving all future hold categories or external provider billing reconciliation.
