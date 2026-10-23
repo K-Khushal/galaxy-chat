@@ -146,6 +146,22 @@ function claimView(row: Claim) {
   });
 }
 
+function storageError(error: unknown): AppError {
+  // Driver details may contain rejected encrypted row material or SQL text.
+  const cause =
+    error && typeof error === "object" && "cause" in error
+      ? error.cause
+      : error;
+  if (
+    cause &&
+    typeof cause === "object" &&
+    "code" in cause &&
+    (cause.code === "23505" || cause.code === "23514" || cause.code === "P0001")
+  )
+    return new AppError("mcp_oauth_storage_conflict", 409);
+  return new AppError("mcp_oauth_storage_unavailable", 503);
+}
+
 class OAuthStore {
   constructor(
     private readonly options: Options,
@@ -170,21 +186,7 @@ class OAuthStore {
       )
       .catch((error: unknown) => {
         if (error instanceof AppError) throw error;
-        // Database details can contain rejected encrypted row material; never expose them.
-        const cause =
-          error && typeof error === "object" && "cause" in error
-            ? error.cause
-            : error;
-        if (
-          cause &&
-          typeof cause === "object" &&
-          "code" in cause &&
-          (cause.code === "23505" ||
-            cause.code === "23514" ||
-            cause.code === "P0001")
-        )
-          throw new AppError("mcp_oauth_storage_conflict", 409);
-        throw new AppError("mcp_oauth_storage_unavailable", 503);
+        throw storageError(error);
       });
   }
   private async now(tx: Tx) {
@@ -319,6 +321,23 @@ class OAuthStore {
     runtime: Readonly<OAuthRuntime>,
     recordId: string = randomUUID(),
   ) {
+    // Better Auth persists the provider's verified numeric account id. Local user ids
+    // and GitHub login labels can change after deletion or rename, so neither is a principal.
+    // Lock both owned rows: account updates/deletion and a new FK-linked binding must
+    // wait until this admission commits. More than one GitHub binding is ambiguous.
+    const [owned] = await tx.execute<{ id: string }>(
+      sql`SELECT id FROM "user" WHERE id=${owner} FOR UPDATE`,
+    );
+    if (!owned) throw new AppError("mcp_oauth_principal_unavailable", 503);
+    // This separate READ COMMITTED read is fresh after the owner-lock wait.
+    const accounts = await tx.execute<{ account_id: string }>(
+      sql`SELECT account_id FROM account WHERE user_id=${owner} AND provider_id='github' ORDER BY id LIMIT 2 FOR UPDATE`,
+    );
+    if (
+      accounts.length !== 1 ||
+      !/^[1-9][0-9]{0,19}$/.test(accounts[0].account_id)
+    )
+      throw new AppError("mcp_oauth_principal_unavailable", 503);
     const fingerprint = createHmac("sha256", runtime.counterSecret)
       .update("galaxy-mcp-oauth-counter-v1")
       .digest("hex");
@@ -331,7 +350,13 @@ class OAuthStore {
       sql`INSERT INTO mcp_oauth_counter_key(id,fingerprint) VALUES ('counter',${fingerprint}) ON CONFLICT DO NOTHING`,
     );
     const actor = createHmac("sha256", runtime.counterSecret)
-        .update(`galaxy-mcp-oauth-owner-v1:${owner}`)
+        .update(
+          JSON.stringify([
+            "galaxy-mcp-oauth-github-principal-v1",
+            "github",
+            accounts[0].account_id,
+          ]),
+        )
         .digest("hex"),
       now = await this.now(tx),
       day = now.toISOString().slice(0, 10);
@@ -890,26 +915,30 @@ class OAuthStore {
     });
   }
   async metadata(owner: string): Promise<OAuthGrantView[]> {
-    const rows = await this.options.db.execute<{
-      id: string;
-      binding_id: string;
-      revision: number;
-      state: OAuthGrantView["state"];
-      expires_at: Date;
-      has_refresh_token: boolean;
-    }>(
-      sql`SELECT id,binding_id,revision,state,expires_at,refresh_secret IS NOT NULL AS has_refresh_token FROM mcp_oauth_grant WHERE user_id=${owner} ORDER BY created_at,id LIMIT 100`,
-    );
-    return rows.map((row) =>
-      Object.freeze({
-        id: row.id,
-        bindingId: row.binding_id,
-        revision: row.revision,
-        state: row.state,
-        expiresAt: new Date(row.expires_at).toISOString(),
-        hasRefreshToken: row.has_refresh_token,
-      }),
-    );
+    try {
+      const rows = await this.options.db.execute<{
+        id: string;
+        binding_id: string;
+        revision: number;
+        state: OAuthGrantView["state"];
+        expires_at: Date;
+        has_refresh_token: boolean;
+      }>(
+        sql`SELECT id,binding_id,revision,state,expires_at,refresh_secret IS NOT NULL AS has_refresh_token FROM mcp_oauth_grant WHERE user_id=${owner} ORDER BY created_at,id LIMIT 100`,
+      );
+      return rows.map((row) =>
+        Object.freeze({
+          id: row.id,
+          bindingId: row.binding_id,
+          revision: row.revision,
+          state: row.state,
+          expiresAt: new Date(row.expires_at).toISOString(),
+          hasRefreshToken: row.has_refresh_token,
+        }),
+      );
+    } catch (error: unknown) {
+      throw storageError(error);
+    }
   }
   async refreshStatus(owner: string, id: string) {
     return this.transaction(async (tx) => {

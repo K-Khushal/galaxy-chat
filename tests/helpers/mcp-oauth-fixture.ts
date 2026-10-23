@@ -72,6 +72,13 @@ export async function mcpOAuthFixture() {
     counterSecret: "offline-oauth-counter-secret-at-least-32-characters",
     manifests,
   };
+  // Better Auth's trusted GitHub account identity is independent of mutable login/user id.
+  const githubAccounts = { alice: "10001", bob: "10002" };
+  for (const [owner, accountId] of Object.entries(githubAccounts))
+    await fixture.db.$client.unsafe(
+      "INSERT INTO account(id,account_id,provider_id,user_id) VALUES ($1,$2,'github',$3)",
+      [`oauth-github-${owner}`, accountId, owner],
+    );
   const connections = new Map<string, { id: string; revision: string }>();
   for (const user of ["alice", "bob"]) {
     const connection = {
@@ -194,6 +201,7 @@ export async function mcpOAuthFixture() {
     profiles,
     manifests,
     connections,
+    githubAccounts,
     bind,
     state,
     grant,

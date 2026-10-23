@@ -410,6 +410,168 @@ describe("MCP OAuth local synthetic persistence — no issuer or transport proof
       );
       expect(counters.count).toBe(1);
     });
+  for (const cap of ["daily", "lifetime"] as const)
+    test(`same GitHub principal retains ${cap} cap after account deletion and new user id`, async () => {
+      const f = get();
+      const admissions = cap === "daily" ? 10 : 1;
+      for (let i = 0; i < admissions; i++) {
+        const binding = await f.bind();
+        await f.store.deleteBinding("alice", binding.id, 1);
+      }
+      if (cap === "lifetime") {
+        const [record] = await f.db.execute<{ actor_key: string }>(
+          sql`SELECT actor_key FROM mcp_oauth_record LIMIT 1`,
+        );
+        await f.db.execute(
+          sql`INSERT INTO mcp_oauth_record(id,actor_key,kind,day) SELECT 'prior-lifetime-'||s,${record.actor_key},'binding','2020-01-01'::date FROM generate_series(1,99) s`,
+        );
+      }
+      const before = await f.db.execute(
+        sql`SELECT id,actor_key,kind,day,created_at FROM mcp_oauth_record ORDER BY id`,
+      );
+      const { deleteOwnedAccount } = await import(
+        "@/lib/actions/account/account"
+      );
+      await deleteOwnedAccount("alice");
+      await f.db.execute(
+        sql`INSERT INTO "user"(id,name,email,email_verified,github_login) VALUES ('alice-rejoined','New local id','rejoined@example.invalid',true,'alice')`,
+      );
+      await f.db.execute(
+        sql`INSERT INTO account(id,account_id,provider_id,user_id) VALUES ('oauth-github-rejoined',${f.githubAccounts.alice},'github','alice-rejoined')`,
+      );
+      expect(
+        await f.db.execute(
+          sql`SELECT id,actor_key,kind,day,created_at FROM mcp_oauth_record ORDER BY id`,
+        ),
+      ).toEqual(before);
+      const connection = {
+        id: crypto.randomUUID(),
+        revision: crypto.randomUUID(),
+      };
+      f.connections.set("alice-rejoined", connection);
+      await f.db.execute(
+        sql`INSERT INTO mcp_connection(id,user_id,profile_id,profile_revision,purpose,profile_digest,label,state,revision) VALUES (${connection.id},'alice-rejoined','anchor','v1','mcp.call',${"a".repeat(64)},'Synthetic rejoined owner','configured',${connection.revision})`,
+      );
+      expect(
+        await rejectionOf(f.bind("oauth.token", "alice-rejoined")),
+      ).toMatchObject({ id: "mcp_oauth_record_limit" });
+      const after = await f.db.execute(
+        sql`SELECT id,actor_key,kind,day,created_at FROM mcp_oauth_record ORDER BY id`,
+      );
+      expect(after).toEqual(before);
+      expect(await f.store.metadata("alice-rejoined")).toEqual([]);
+    });
+  for (const identity of [
+    "missing",
+    "ambiguous",
+    "leading-zero",
+    "non-numeric",
+    "foreign-provider",
+  ] as const)
+    test(`OAuth admission denies ${identity} GitHub principal without partial counters`, async () => {
+      const f = get();
+      if (identity === "missing")
+        await f.db.execute(sql`DELETE FROM account WHERE user_id='alice'`);
+      if (identity === "ambiguous")
+        await f.db.execute(
+          sql`INSERT INTO account(id,account_id,provider_id,user_id) VALUES ('oauth-extra-github','10003','github','alice')`,
+        );
+      if (identity === "leading-zero")
+        await f.db.execute(
+          sql`UPDATE account SET account_id='010001' WHERE user_id='alice'`,
+        );
+      if (identity === "non-numeric")
+        await f.db.execute(
+          sql`UPDATE account SET account_id='mutable-login-name' WHERE user_id='alice'`,
+        );
+      if (identity === "foreign-provider")
+        await f.db.execute(
+          sql`UPDATE account SET provider_id='other' WHERE user_id='alice'`,
+        );
+      expect(await rejectionOf(f.bind())).toMatchObject({
+        id: "mcp_oauth_principal_unavailable",
+      });
+      const [rows] = await f.db.execute<{ records: number; bindings: number }>(
+        sql`SELECT (SELECT count(*)::integer FROM mcp_oauth_record) AS records,(SELECT count(*)::integer FROM mcp_oauth_binding) AS bindings`,
+      );
+      expect(rows).toEqual({ records: 0, bindings: 0 });
+    });
+  test("admission rechecks exact GitHub principal after the owner-lock await", async () => {
+    const f = get();
+    let changed = false;
+    f.afterQuery(async (statement, _result, tx) => {
+      if (
+        changed ||
+        !statement.includes('FROM "user" WHERE id=') ||
+        !statement.includes("FOR UPDATE")
+      )
+        return;
+      changed = true;
+      await tx.execute(
+        sql`INSERT INTO account(id,account_id,provider_id,user_id) VALUES ('oauth-after-lock','10004','github','alice')`,
+      );
+    });
+    expect(await rejectionOf(f.bind())).toMatchObject({
+      id: "mcp_oauth_principal_unavailable",
+    });
+    f.afterQuery(undefined);
+    expect(changed).toBe(true);
+    const [row] = await f.db.execute<{ records: number; accounts: number }>(
+      sql`SELECT (SELECT count(*)::integer FROM mcp_oauth_record) AS records,(SELECT count(*)::integer FROM account WHERE user_id='alice') AS accounts`,
+    );
+    expect(row).toEqual({ records: 0, accounts: 1 });
+  });
+  test("mutable GitHub login label is not an admission counter identity", async () => {
+    const f = get();
+    for (let i = 0; i < 10; i++) {
+      const binding = await f.bind();
+      await f.store.deleteBinding("alice", binding.id, 1);
+    }
+    f.setEnv({ ...f.env, GITHUB_INVITE_LOGINS: "renamed,bob" });
+    await f.db.execute(
+      sql`UPDATE "user" SET github_login='renamed' WHERE id='alice'`,
+    );
+    expect(await rejectionOf(f.bind())).toMatchObject({
+      id: "mcp_oauth_record_limit",
+    });
+  });
+  test("metadata driver failures return fixed AppError without raw SQL/cause and need no admission keys", async () => {
+    const f = get(),
+      raw = Object.assign(
+        new Error("synthetic driver SQL and not-real-secret marker"),
+        {
+          code: "XX000",
+          query: "SELECT synthetic-private-data",
+          cause: new Error("synthetic nested detail"),
+        },
+      );
+    const driver = new Proxy(f.db, {
+      get(target, key, receiver) {
+        if (key === "execute")
+          return async () => {
+            throw raw;
+          };
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    const store = createMcpOAuthStore({ db: driver }),
+      error = await rejectionOf(store.metadata("alice"));
+    const { AppError } = await import("@/lib/errors");
+    expect(error instanceof AppError).toBe(true);
+    expect(error !== raw).toBe(true);
+    expect(
+      error &&
+        typeof error === "object" &&
+        "message" in error &&
+        error.message === "mcp_oauth_storage_unavailable",
+    ).toBe(true);
+    expect(
+      error &&
+        typeof error === "object" &&
+        !Reflect.has(error, "cause") &&
+        !Reflect.has(error, "query"),
+    ).toBe(true);
+  });
   test("retained admission counters cannot be reset by deletion or counter-secret rotation", async () => {
     const f = get();
     for (let i = 0; i < 10; i++) {
