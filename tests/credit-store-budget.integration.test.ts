@@ -1,10 +1,14 @@
 import { describe, expect, mock, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
+import { setImmediate } from "node:timers/promises";
 import { PGlite } from "@electric-sql/pglite";
 import { PGLiteSocketServer } from "@electric-sql/pglite-socket";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as schema from "@/lib/db/schema";
+import type { PriceSnapshot } from "../lib/credits/config";
+import type { DatabaseTransaction } from "../lib/db/client";
 
 mock.module("server-only", () => ({}));
 
@@ -16,7 +20,7 @@ const { createReviewedBudgetPlan, registerReviewedBudgetPlan } = await import(
 const { rejectionOf } = await import("./helpers/rejection");
 
 const secret = "test-budget-credit-secret-at-least-32-chars";
-const price = {
+const price: PriceSnapshot = {
   id: "price-budget-test",
   model: "fixture/basic",
   provider: "fixture",
@@ -74,48 +78,102 @@ function baseEnv(overrides: Record<string, string> = {}) {
 }
 
 async function createTestHarness(envSource = baseEnv()) {
-  const database = await PGlite.create();
+  const engine = await PGlite.create();
   for (const file of readdirSync("drizzle")
     .filter((name) => name.endsWith(".sql"))
-    .sort()) {
-    await database.exec(readFileSync(`drizzle/${file}`, "utf8"));
-  }
-
+    .sort())
+    await engine.exec(readFileSync(`drizzle/${file}`, "utf8"));
   const socket = new PGLiteSocketServer({
-    db: database,
+    db: engine,
     host: "127.0.0.1",
     port: 0,
     maxConnections: 1,
   });
   await socket.start();
-
   const client = postgres(
     `postgres://postgres:postgres@${socket.getServerConn()}/postgres`,
     { max: 1, prepare: false, connect_timeout: 2 },
   );
   const db = drizzle(client, { schema });
-
-  const planCandidate = JSON.parse(envSource.PLATFORM_BUDGET_PLAN_JSON);
-  await registerReviewedBudgetPlan(db, planCandidate, envSource);
-
+  await registerReviewedBudgetPlan(
+    db,
+    JSON.parse(envSource.PLATFORM_BUDGET_PLAN_JSON),
+    envSource,
+  );
   let currentEnv: Record<string, string | undefined> = { ...envSource };
-  const store = new CreditStore(db, () => currentEnv);
-
+  let afterQuery:
+    | ((statement: string, result: unknown) => void | Promise<void>)
+    | undefined;
+  const dialect = new PgDialect();
+  const observedDb = new Proxy(db, {
+    get(target, key, receiver) {
+      if (key === "transaction")
+        return <T>(
+          run: (tx: DatabaseTransaction) => Promise<T>,
+          options?: Parameters<typeof db.transaction>[1],
+        ) =>
+          target.transaction(
+            (tx) =>
+              run(
+                new Proxy(tx, {
+                  get(transaction, property, transactionReceiver) {
+                    if (property === "execute")
+                      return async <R extends Record<string, unknown>>(
+                        query: Parameters<DatabaseTransaction["execute"]>[0],
+                      ) => {
+                        const result = await transaction.execute<R>(query);
+                        await afterQuery?.(
+                          typeof query === "string"
+                            ? query
+                            : dialect.sqlToQuery(query.getSQL()).sql,
+                          result,
+                        );
+                        return result;
+                      };
+                    return Reflect.get(
+                      transaction,
+                      property,
+                      transactionReceiver,
+                    );
+                  },
+                }),
+              ),
+            options,
+          );
+      return Reflect.get(target, key, receiver);
+    },
+  });
+  const store = new CreditStore(observedDb, () => currentEnv);
   const close = async () => {
     await client.end({ timeout: 1 });
+    await setImmediate();
     await socket.stop();
-    await database.close();
+    await setImmediate();
+    await engine.runExclusive(async () => {});
+    await engine.close();
   };
-
+  // After socket start every SQL read/write shares the captured max:1 driver queue.
+  const database = {
+    exec: async (text: string) => {
+      await client.unsafe(text).simple();
+    },
+    query: async <Row extends Record<string, unknown>>(
+      text: string,
+      parameters?: Parameters<typeof client.unsafe>[1],
+    ) => ({ rows: [...(await client.unsafe<Row[]>(text, parameters))] }),
+  };
   return {
     database,
     db,
     store,
-    getEnv: () => currentEnv,
-    setEnv: (newEnv: Record<string, string | undefined>) => {
-      currentEnv = { ...newEnv };
-    },
     close,
+    getEnv: () => currentEnv,
+    setEnv: (value: Record<string, string | undefined>) => {
+      currentEnv = { ...value };
+    },
+    onQuery: (hook: typeof afterQuery) => {
+      afterQuery = hook;
+    },
   };
 }
 
@@ -173,40 +231,61 @@ describe("Credit Store & Platform Budget Integration", () => {
       expect(legacyRow.rows[0].charged_microdollars).toBe(50000);
       expect(legacyRow.rows[0].state).toBe("reserved");
 
-      // Verify SQL partial NULL is rejected by CHECK constraint
-      // 1 non-null, 3 null
-      expect(
-        await rejectionOf(
-          standaloneDb.exec(`
-            INSERT INTO public.credit_reservation (
-              id, actor_key, actor_kind, idempotency_key, request_digest,
-              day, month, reserved_microdollars, charged_microdollars, state, price_snapshot,
-              plan_month
-            ) VALUES (
-              '${crypto.randomUUID()}', '${legacyActor}', 'user', 'idem-p1', '${"d".repeat(64)}',
-              '2026-10-01', '2026-10', 50000, 50000, 'reserved', '{"id":"p"}'::jsonb,
-              '2026-10'
-            )
-          `),
-        ),
-      ).toBeInstanceOf(Error);
+      // Seed valid parent plans for 2026-10 and 2026-11 so foreign key checks pass
+      // and do not mask CHECK constraint regression.
+      await standaloneDb.exec(`
+        INSERT INTO public.platform_budget_plan (
+          month, revision, digest, b_selected, a_credit, a_mcp,
+          k_infra, k_provider_fees, k_safety, l_carried,
+          reviewed_at, expires_at, coverage_proof_reference, coverage_proof_digest,
+          coverage_assertions, capacity_snapshot, capacity_digest
+        ) VALUES
+          ('2026-10', '${crypto.randomUUID()}', '${"a".repeat(64)}', 10000000, 1000000, 0, 0, 0, 1000000, 0, now(), now() + interval '1 day', 'ref', '${"b".repeat(64)}', '{}'::jsonb, '{}'::jsonb, '${"c".repeat(64)}'),
+          ('2026-11', '${crypto.randomUUID()}', '${"a".repeat(64)}', 10000000, 1000000, 0, 0, 0, 1000000, 0, now(), now() + interval '1 day', 'ref', '${"b".repeat(64)}', '{}'::jsonb, '{}'::jsonb, '${"c".repeat(64)}');
+      `);
 
-      // Month mismatch (plan_month != month)
-      expect(
-        await rejectionOf(
-          standaloneDb.exec(`
-            INSERT INTO public.credit_reservation (
-              id, actor_key, actor_kind, idempotency_key, request_digest,
-              day, month, reserved_microdollars, charged_microdollars, state, price_snapshot,
-              plan_month, plan_revision, plan_digest, plan_capacity_digest
-            ) VALUES (
-              '${crypto.randomUUID()}', '${legacyActor}', 'user', 'idem-mismatch', '${"d".repeat(64)}',
-              '2026-10-01', '2026-10', 50000, 50000, 'reserved', '{"id":"p"}'::jsonb,
-              '2026-11', '${crypto.randomUUID()}', '${"e".repeat(64)}', '${"f".repeat(64)}'
-            )
-          `),
+      // Verify SQL partial NULL is rejected by CHECK constraint (not FK)
+      // 1 non-null, 3 null
+      const partialErr = await rejectionOf(
+        standaloneDb.exec(`
+          INSERT INTO public.credit_reservation (
+            id, actor_key, actor_kind, idempotency_key, request_digest,
+            day, month, reserved_microdollars, charged_microdollars, state, price_snapshot,
+            plan_month
+          ) VALUES (
+            '${crypto.randomUUID()}', '${legacyActor}', 'user', 'idem-p1', '${"d".repeat(64)}',
+            '2026-10-01', '2026-10', 50000, 50000, 'reserved', '{"id":"p"}'::jsonb,
+            '2026-10'
+          )
+        `),
+      );
+      expect(partialErr).toMatchObject({
+        code: "23514",
+        message: expect.stringContaining(
+          "credit_reservation_plan_binding_check",
         ),
-      ).toBeInstanceOf(Error);
+      });
+
+      // Month mismatch (plan_month != month) rejected by CHECK constraint
+      const mismatchErr = await rejectionOf(
+        standaloneDb.exec(`
+          INSERT INTO public.credit_reservation (
+            id, actor_key, actor_kind, idempotency_key, request_digest,
+            day, month, reserved_microdollars, charged_microdollars, state, price_snapshot,
+            plan_month, plan_revision, plan_digest, plan_capacity_digest
+          ) VALUES (
+            '${crypto.randomUUID()}', '${legacyActor}', 'user', 'idem-mismatch', '${"d".repeat(64)}',
+            '2026-10-01', '2026-10', 50000, 50000, 'reserved', '{"id":"p"}'::jsonb,
+            '2026-11', '${crypto.randomUUID()}', '${"e".repeat(64)}', '${"f".repeat(64)}'
+          )
+        `),
+      );
+      expect(mismatchErr).toMatchObject({
+        code: "23514",
+        message: expect.stringContaining(
+          "credit_reservation_plan_binding_check",
+        ),
+      });
 
       // Trigger test: cannot backfill legacy NULL row
       expect(
@@ -498,39 +577,175 @@ describe("Credit Store & Platform Budget Integration", () => {
     const harness = await createTestHarness(env);
     try {
       const { store, setEnv, database } = harness;
-      const user = actorFor("user", "u-callback-drift", secret);
       const cfg = resolveFundingConfig(env);
 
-      const res = await store.reserve({
-        actor: user,
-        idempotencyKey: "drift-test",
+      // Case 5a: validateEntry callback mutates kill switch
+      const user1 = actorFor("user", "u-callback-drift-1", secret);
+      const res1 = await store.reserve({
+        actor: user1,
+        idempotencyKey: "drift-kill-switch",
         digest: "a".repeat(64),
         config: cfg,
         microdollars: 50_000,
       });
 
-      // validateEntry callback mutates funding_control to stopped
-      const failingValidateEntry = async () => {
-        // Stop funding control during await
+      const failingValidateKillSwitch = async () => {
         setEnv({ ...env, FUNDED_KILL_SWITCH: "1" });
       };
 
       expect(
-        await rejectionOf(store.enter(res.id, user, failingValidateEntry)),
+        await rejectionOf(
+          store.enter(res1.id, user1, failingValidateKillSwitch),
+        ),
       ).toMatchObject({ id: "funded_inference_disabled" });
 
       // Verify ZERO provider_entered audit records
-      const audits = await database.query<{ count: number }>(
+      let audits = await database.query<{ count: number }>(
         "SELECT count(*)::integer AS count FROM public.credit_ledger WHERE event = 'provider_entered'",
       );
       expect(Number(audits.rows[0].count)).toBe(0);
 
       // Verify reservation state is still reserved (rolled back)
-      const row = await database.query<{ state: string }>(
+      let row = await database.query<{ state: string }>(
         "SELECT state FROM public.credit_reservation WHERE id = $1",
-        [res.id],
+        [res1.id],
       );
       expect(row.rows[0].state).toBe("reserved");
+      await store.finish(res1.id, user1, { kind: "before_entry" });
+
+      // Case 5b: validateEntry callback mutates provider limits verification
+      setEnv(env); // reset
+      const user2 = actorFor("user", "u-callback-drift-2", secret);
+      const res2 = await store.reserve({
+        actor: user2,
+        idempotencyKey: "drift-provider-unverified",
+        digest: "b".repeat(64),
+        config: cfg,
+        microdollars: 50_000,
+      });
+
+      const failingValidateUnverified = async () => {
+        setEnv({ ...env, FUNDED_PROVIDER_LIMITS_VERIFIED: "0" });
+      };
+
+      expect(
+        await rejectionOf(
+          store.enter(res2.id, user2, failingValidateUnverified),
+        ),
+      ).toMatchObject({ id: "funding_unconfigured" });
+
+      audits = await database.query<{ count: number }>(
+        "SELECT count(*)::integer AS count FROM public.credit_ledger WHERE event = 'provider_entered'",
+      );
+      expect(Number(audits.rows[0].count)).toBe(0);
+      row = await database.query<{ state: string }>(
+        "SELECT state FROM public.credit_reservation WHERE id = $1",
+        [res2.id],
+      );
+      expect(row.rows[0].state).toBe("reserved");
+      await store.finish(res2.id, user2, { kind: "before_entry" });
+
+      // Case 5c: validateEntry callback mutates price to expired
+      setEnv(env); // reset
+      const user3 = actorFor("user", "u-callback-drift-3", secret);
+      const res3 = await store.reserve({
+        actor: user3,
+        idempotencyKey: "drift-price-expired",
+        digest: "c".repeat(64),
+        config: cfg,
+        microdollars: 50_000,
+      });
+
+      const failingValidatePriceExpired = async () => {
+        const expiredPrice = {
+          ...price,
+          expiresAt: "2020-01-01T00:00:00Z",
+        };
+        setEnv({
+          ...env,
+          FUNDED_BASIC_PRICE_JSON: JSON.stringify(expiredPrice),
+        });
+      };
+
+      expect(
+        await rejectionOf(
+          store.enter(res3.id, user3, failingValidatePriceExpired),
+        ),
+      ).toMatchObject({ id: "unknown_model_price" });
+
+      audits = await database.query<{ count: number }>(
+        "SELECT count(*)::integer AS count FROM public.credit_ledger WHERE event = 'provider_entered'",
+      );
+      expect(Number(audits.rows[0].count)).toBe(0);
+      row = await database.query<{ state: string }>(
+        "SELECT state FROM public.credit_reservation WHERE id = $1",
+        [res3.id],
+      );
+      expect(row.rows[0].state).toBe("reserved");
+      await store.finish(res3.id, user3, { kind: "before_entry" });
+
+      // Case 5d: callback causes UTC month rollover
+      setEnv(env); // reset
+      const user4 = actorFor("user", "u-callback-drift-4", secret);
+      const res4 = await store.reserve({
+        actor: user4,
+        idempotencyKey: "drift-month-rollover",
+        digest: "d".repeat(64),
+        config: cfg,
+        microdollars: 50_000,
+      });
+
+      let entryClock = new Date();
+      const failingValidateMonthRollover = async () => {
+        entryClock = new Date(
+          Date.UTC(
+            entryClock.getUTCFullYear(),
+            entryClock.getUTCMonth() + 1,
+            1,
+          ),
+        );
+      };
+
+      expect(
+        await rejectionOf(
+          store.enter(res4.id, user4, failingValidateMonthRollover, {
+            now: () => entryClock,
+          }),
+        ),
+      ).toMatchObject({ id: "budget_month_not_current" });
+
+      audits = await database.query<{ count: number }>(
+        "SELECT count(*)::integer AS count FROM public.credit_ledger WHERE event = 'provider_entered'",
+      );
+      expect(Number(audits.rows[0].count)).toBe(0);
+      row = await database.query<{ state: string }>(
+        "SELECT state FROM public.credit_reservation WHERE id = $1",
+        [res4.id],
+      );
+      expect(row.rows[0].state).toBe("reserved");
+      await store.finish(res4.id, user4, { kind: "before_entry" });
+
+      // Case 5e: constructor provider turned off while caller passes old enabled env
+      setEnv({ ...env, FUNDED_KILL_SWITCH: "1" });
+      const user5 = actorFor("user", "u-callback-drift-5", secret);
+      expect(
+        await rejectionOf(
+          store.reserve({
+            actor: user5,
+            idempotencyKey: "constructor-off-bypass",
+            digest: "e".repeat(64),
+            config: cfg,
+            microdollars: 50_000,
+            env, // passing old enabled env
+          }),
+        ),
+      ).toMatchObject({ id: "funded_inference_disabled" });
+
+      // Verify ZERO provider_entered audit records across all attempts
+      audits = await database.query<{ count: number }>(
+        "SELECT count(*)::integer AS count FROM public.credit_ledger WHERE event = 'provider_entered'",
+      );
+      expect(Number(audits.rows[0].count)).toBe(0);
     } finally {
       await harness.close();
     }
@@ -545,16 +760,11 @@ describe("Credit Store & Platform Budget Integration", () => {
     expect(Object.isFrozen(config.plan)).toBe(true);
     expect(Object.isFrozen(config.price)).toBe(true);
 
-    // Mutation throws or fails in strict mode
-    expect(() => {
-      // @ts-expect-error - testing mutation
-      config.monthlyMicrodollars = 999_999_999;
-    }).toThrow();
+    expect(Reflect.set(config, "monthlyMicrodollars", 999_999_999)).toBe(false);
+    expect(Reflect.set(config.plan, "month", "2099-12")).toBe(false);
 
-    expect(() => {
-      // @ts-expect-error - testing mutation
-      config.plan.month = "2099-12";
-    }).toThrow();
+    expect(config.monthlyMicrodollars).toBe(1_000_000);
+    expect(config.plan.month).toBe(new Date().toISOString().slice(0, 7));
   });
 
   test("7. previous month / legacy NULL enter deny while holds retained", async () => {
@@ -696,4 +906,304 @@ describe("Credit Store & Platform Budget Integration", () => {
       await harness.close();
     }
   });
+});
+
+for (const changedPrice of [
+  { label: "provider", value: { ...price, provider: "different-provider" } },
+  { label: "expiry", value: { ...price, expiresAt: "2031-01-01T00:00:00Z" } },
+]) {
+  test(`complete price identity rejects same-id ${changedPrice.label} changes in reserve and entry`, async () => {
+    const env = baseEnv(),
+      h = await createTestHarness(env);
+    try {
+      const actor = actorFor("user", "price-identity", secret),
+        config = resolveFundingConfig(env);
+      expect(
+        await rejectionOf(
+          h.store.reserve({
+            actor,
+            config: { ...config, price: changedPrice.value },
+            idempotencyKey: "fake-price",
+            digest: "a".repeat(64),
+            microdollars: 50000,
+          }),
+        ),
+      ).toMatchObject({ id: "unknown_model_price" });
+      const reservation = await h.store.reserve({
+        actor,
+        config,
+        idempotencyKey: "real-price",
+        digest: "a".repeat(64),
+        microdollars: 50000,
+      });
+      h.setEnv({
+        ...env,
+        FUNDED_BASIC_PRICE_JSON: JSON.stringify(changedPrice.value),
+      });
+      expect(
+        await rejectionOf(h.store.enter(reservation.id, actor)),
+      ).toMatchObject({ id: "unknown_model_price" });
+      const rows = await h.database.query<{
+        state: string;
+        charged_microdollars: number;
+      }>("SELECT state,charged_microdollars FROM credit_reservation");
+      expect(rows.rows).toEqual([
+        { state: "reserved", charged_microdollars: 50000 },
+      ]);
+      expect(
+        (
+          await h.database.query<{ count: number }>(
+            "SELECT count(*)::integer AS count FROM credit_ledger WHERE event='provider_entered'",
+          )
+        ).rows[0].count,
+      ).toBe(0);
+    } finally {
+      await h.close();
+    }
+  });
+}
+
+test("stale per-call environment cannot enter after authoritative provider disables funding", async () => {
+  const env = baseEnv(),
+    h = await createTestHarness(env);
+  try {
+    const actor = actorFor("user", "stale-entry-env", secret),
+      config = resolveFundingConfig(env);
+    const reservation = await h.store.reserve({
+      actor,
+      config,
+      env,
+      idempotencyKey: "stale-env",
+      digest: "a".repeat(64),
+      microdollars: 50000,
+    });
+    h.setEnv({ ...env, FUNDED_KILL_SWITCH: "1" });
+    expect(
+      await rejectionOf(
+        h.store.enter(reservation.id, actor, undefined, { env, config }),
+      ),
+    ).toMatchObject({ id: "funded_inference_disabled" });
+    expect(
+      (
+        await h.database.query<{ state: string }>(
+          "SELECT state FROM credit_reservation",
+        )
+      ).rows,
+    ).toEqual([{ state: "reserved" }]);
+    expect(
+      (
+        await h.database.query<{ count: number }>(
+          "SELECT count(*)::integer AS count FROM credit_ledger WHERE event='provider_entered'",
+        )
+      ).rows[0].count,
+    ).toBe(0);
+  } finally {
+    await h.close();
+  }
+});
+
+test("caller config mutation while waiting cannot follow a new provider identity into a reservation", async () => {
+  const env = baseEnv(),
+    h = await createTestHarness(env);
+  try {
+    const actor = actorFor("user", "mutable-config", secret);
+    const config = structuredClone(resolveFundingConfig(env));
+    let changed = false;
+    h.onQuery((statement) => {
+      if (!changed && statement.includes("pg_advisory_xact_lock")) {
+        changed = true;
+        config.price.provider = "different-provider";
+        h.setEnv({
+          ...env,
+          FUNDED_BASIC_PRICE_JSON: JSON.stringify(config.price),
+        });
+      }
+    });
+    expect(
+      await rejectionOf(
+        h.store.reserve({
+          actor,
+          config,
+          idempotencyKey: "mutated",
+          digest: "a".repeat(64),
+          microdollars: 50000,
+        }),
+      ),
+    ).toMatchObject({ id: "unknown_model_price" });
+    expect(changed).toBe(true);
+    expect(
+      (
+        await h.database.query<{ count: number }>(
+          "SELECT count(*)::integer AS count FROM credit_reservation",
+        )
+      ).rows[0].count,
+    ).toBe(0);
+    expect(
+      (
+        await h.database.query<{ count: number }>(
+          "SELECT count(*)::integer AS count FROM credit_ledger",
+        )
+      ).rows[0].count,
+    ).toBe(0);
+  } finally {
+    await h.close();
+  }
+});
+
+for (const phase of ["reserve", "enter"] as const) {
+  for (const change of [
+    "price-expiry",
+    "provider",
+    "kill",
+    "verification",
+    "month",
+  ] as const) {
+    test(`${phase} rolls back when ${change} changes after audit and a later budget-query await`, async () => {
+      const start = new Date(),
+        expiry = new Date(start.getTime() + 60000);
+      const env = baseEnv({
+        FUNDED_BASIC_PRICE_JSON: JSON.stringify({
+          ...price,
+          expiresAt: expiry.toISOString(),
+        }),
+      });
+      const h = await createTestHarness(env);
+      try {
+        const actor = actorFor("user", `late-${phase}-${change}`, secret),
+          config = resolveFundingConfig(env);
+        const reservation =
+          phase === "enter"
+            ? await h.store.reserve({
+                actor,
+                config,
+                idempotencyKey: "late",
+                digest: "a".repeat(64),
+                microdollars: 50000,
+              })
+            : undefined;
+        let auditSeen = false,
+          changed = false,
+          clock: Date | undefined;
+        h.onQuery((statement, result) => {
+          const text = statement.toLowerCase();
+          if (text.includes("insert into public.credit_ledger"))
+            auditSeen = true;
+          if (
+            auditSeen &&
+            !changed &&
+            text.includes("coalesce(sum(charged_microdollars), 0)::bigint")
+          ) {
+            changed = true;
+            if (change === "kill")
+              h.setEnv({ ...env, FUNDED_KILL_SWITCH: "1" });
+            if (change === "verification")
+              h.setEnv({ ...env, FUNDED_PROVIDER_LIMITS_VERIFIED: "0" });
+            if (change === "provider")
+              h.setEnv({
+                ...env,
+                FUNDED_BASIC_PRICE_JSON: JSON.stringify({
+                  ...price,
+                  provider: "different-provider",
+                  expiresAt: expiry.toISOString(),
+                }),
+              });
+            if (change === "price-expiry")
+              clock = new Date(expiry.getTime() + 1);
+            if (change === "month")
+              clock = new Date(
+                Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 1),
+              );
+          }
+          // The SQL query still executes against the real database. Only its
+          // observed DB clock is advanced at this explicit offline seam; callers
+          // pass no time override, exercising production clock sampling.
+          if (
+            clock &&
+            text.includes("clock_timestamp()") &&
+            Array.isArray(result)
+          ) {
+            for (const row of result)
+              if (row && typeof row === "object" && "now" in row)
+                Reflect.set(row, "now", clock);
+          }
+        });
+        const operation = reservation
+          ? h.store.enter(reservation.id, actor)
+          : h.store.reserve({
+              actor,
+              config,
+              idempotencyKey: "late",
+              digest: "a".repeat(64),
+              microdollars: 50000,
+            });
+        const expected =
+          change === "kill"
+            ? "funded_inference_disabled"
+            : change === "verification"
+              ? "funding_unconfigured"
+              : change === "month"
+                ? "budget_month_not_current"
+                : "unknown_model_price";
+        expect(await rejectionOf(operation)).toMatchObject({ id: expected });
+        expect(auditSeen).toBe(true);
+        expect(changed).toBe(true);
+        const rows = await h.database.query<{
+          state: string;
+          charged_microdollars: number;
+        }>("SELECT state,charged_microdollars FROM credit_reservation");
+        expect(rows.rows).toEqual(
+          reservation
+            ? [{ state: "reserved", charged_microdollars: 50000 }]
+            : [],
+        );
+        const audits = await h.database.query<{ event: string }>(
+          "SELECT event FROM credit_ledger ORDER BY event",
+        );
+        expect(audits.rows).toEqual(reservation ? [{ event: "reserved" }] : []);
+        expect(
+          (
+            await h.database.query<{ count: number }>(
+              "SELECT count(*)::integer AS count FROM guest_usage",
+            )
+          ).rows[0].count,
+        ).toBe(0);
+      } finally {
+        await h.close();
+      }
+    });
+  }
+}
+
+test("standalone active plan assertion retains its advancing clock source through its final SQL validation", async () => {
+  const start = new Date(),
+    expiry = new Date(start.getTime() + 60000);
+  const original = baseEnv();
+  const plan = createReviewedBudgetPlan(
+    { expiresAt: expiry.toISOString() },
+    original,
+    start,
+  );
+  const env = { ...original, PLATFORM_BUDGET_PLAN_JSON: JSON.stringify(plan) };
+  const h = await createTestHarness(env);
+  try {
+    const { PlatformBudgetStore } = await import("../lib/funding/store");
+    const config = resolveFundingConfig(env, start);
+    let samples = 0;
+    expect(
+      await rejectionOf(
+        new PlatformBudgetStore(h.db).assertActivePlan(
+          {
+            month: config.plan.month,
+            expectedRevision: config.plan.revision,
+            expectedDigest: config.plan.digest,
+          },
+          env,
+          () => (++samples < 3 ? start : new Date(expiry.getTime() + 1)),
+        ),
+      ),
+    ).toMatchObject({ id: "plan_coverage_expired" });
+    expect(samples).toBe(3);
+  } finally {
+    await h.close();
+  }
 });

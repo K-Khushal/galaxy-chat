@@ -18,6 +18,9 @@ import {
 } from "./config";
 
 type Db = ReturnType<typeof requireDb>;
+type RuntimeEnvironment = EnvSource | (() => EnvSource);
+const currentEnvironment = (source: RuntimeEnvironment): EnvSource =>
+  typeof source === "function" ? source() : source;
 
 export type BudgetPlanRow = {
   month: string;
@@ -69,7 +72,7 @@ export type ActivePlanInputSnapshot =
 export async function assertActivePlanInTx(
   tx: DatabaseTransaction,
   expected: Readonly<ActivePlanInputSnapshot>,
-  env: EnvSource = process.env,
+  env: RuntimeEnvironment = () => process.env,
   clockProvider?: Date | (() => Date),
   incoming = 0,
 ): Promise<BudgetPlanRow> {
@@ -132,7 +135,10 @@ export async function assertActivePlanInTx(
   }
 
   // Fresh config resolution AFTER awaited lock
-  const runtimeConfig = resolvePlatformBudgetConfig(env, now);
+  const runtimeConfig = resolvePlatformBudgetConfig(
+    currentEnvironment(env),
+    now,
+  );
   if (!runtimeConfig || !runtimeConfig.enabled) {
     throw new AppError("platform_budget_disabled", 503);
   }
@@ -175,7 +181,7 @@ export async function assertActivePlanInTx(
       expiresAt: plan.expires_at,
     },
     env,
-    now,
+    clockProvider,
   );
 
   // Verify no uncarried or increased legacy exposure from prior months against frozen carry rows
@@ -210,7 +216,7 @@ export async function assertActivePlanInTx(
       expiresAt: plan.expires_at,
     },
     env,
-    now,
+    clockProvider,
   );
 
   return plan;
@@ -238,7 +244,7 @@ export async function lockFunding(tx: DatabaseTransaction): Promise<void> {
 async function verifyActiveEnvironmentAndClock(
   tx: DatabaseTransaction,
   expected: ActiveValidationExpectations,
-  env: EnvSource,
+  env: RuntimeEnvironment,
   nowProvider?: Date | (() => Date),
 ): Promise<{ now: Date; runtimeConfig: PlatformBudgetConfig }> {
   const [control] = await tx.execute<{ stopped: boolean }>(
@@ -265,7 +271,8 @@ async function verifyActiveEnvironmentAndClock(
     throw new AppError("budget_month_not_current", 400);
   }
 
-  const runtimeConfig = resolvePlatformBudgetConfig(env, now);
+  const activeEnv = currentEnvironment(env);
+  const runtimeConfig = resolvePlatformBudgetConfig(activeEnv, now);
   if (!runtimeConfig || !runtimeConfig.enabled) {
     throw new AppError("platform_budget_disabled", 503);
   }
@@ -286,7 +293,7 @@ async function verifyActiveEnvironmentAndClock(
     throw new AppError("plan_coverage_expired", 503);
   }
 
-  const currentCaps = resolveCurrentCapacitySnapshot(env);
+  const currentCaps = resolveCurrentCapacitySnapshot(activeEnv);
   const currentCapDigest = computeCapacityDigest(currentCaps);
   if (currentCapDigest !== expected.capacityDigest) {
     throw new AppError("capacity_drift", 503);

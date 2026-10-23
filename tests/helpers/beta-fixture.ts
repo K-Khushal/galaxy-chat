@@ -1,14 +1,11 @@
-import { onTestFinished } from "bun:test";
+import { mock, onTestFinished } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { setImmediate } from "node:timers/promises";
 import { PGlite } from "@electric-sql/pglite";
 import { PGLiteSocketServer } from "@electric-sql/pglite-socket";
 import { makeSignature } from "better-auth/crypto";
+import type { EnvSource } from "../../lib/auth/env";
 import type { PostRequestBody } from "../../lib/schema/chat/chat";
-import {
-  createReviewedBudgetPlan,
-  registerReviewedBudgetPlan,
-} from "./platform-budget-fixture";
 export const secret = "f08-local-nonfunctional-secret-at-least-32-characters";
 export const privateKey = "f08-nonfunctional-user-provider-key-never-sent-1111";
 export const price = {
@@ -22,30 +19,31 @@ export const price = {
   reasoning: "none",
   allInPrice: true,
 };
+// Server modules are imported only after the same server-only test mock used
+// by the route integration tests. No production behavior is bypassed.
+mock.module("server-only", () => ({}));
+const { createReviewedBudgetPlan, registerReviewedBudgetPlan } = await import(
+  "./platform-budget-fixture"
+);
+const betaCapacityEnvironment = {
+  FUNDED_INFERENCE: "1",
+  FUNDED_KILL_SWITCH: "0",
+  BYOK_ENABLED: "1",
+  ATTACHMENTS_ENABLED: "0",
+  SEARCH_TOOLS_ENABLED: "0",
+  IMAGES_ENABLED: "0",
+  MCP_CLIENT_ENABLED: "0",
+  PLATFORM_INFRA_MICRODOLLARS: "0",
+  PLATFORM_PROVIDER_FEES_MICRODOLLARS: "0",
+  PLATFORM_SAFETY_RESERVE_MICRODOLLARS: "1000000",
+  FUNDED_MONTHLY_MICRODOLLARS: "1000000",
+};
 export const betaPlan = createReviewedBudgetPlan(
-  {
-    month: new Date().toISOString().slice(0, 7),
-    aCredit: 1_000_000,
-    kInfra: 0,
-    kProviderFees: 0,
-    kSafety: 1_000_000,
-    bSelected: 10_000_000,
-  },
-  {
-    FUNDED_INFERENCE: "1",
-    FUNDED_KILL_SWITCH: "0",
-    BYOK_ENABLED: "1",
-    ATTACHMENTS_ENABLED: "0",
-    SEARCH_TOOLS_ENABLED: "0",
-    IMAGES_ENABLED: "0",
-    MCP_CLIENT_ENABLED: "0",
-    PLATFORM_INFRA_MICRODOLLARS: "0",
-    PLATFORM_PROVIDER_FEES_MICRODOLLARS: "0",
-    PLATFORM_SAFETY_RESERVE_MICRODOLLARS: "1000000",
-    FUNDED_MONTHLY_MICRODOLLARS: "1000000",
-  },
+  { bSelected: 10_000_000 },
+  betaCapacityEnvironment,
 );
 export const env = {
+  ...betaCapacityEnvironment,
   BETTER_AUTH_SECRET: secret,
   BETTER_AUTH_URL: "https://galaxy.example",
   GITHUB_CLIENT_ID: "f08-fixture",
@@ -116,7 +114,10 @@ export function chatBody(
     ...overrides,
   };
 }
-export async function betaFixture(options?: { registerPlan?: boolean }) {
+export async function betaFixture(options?: {
+  skipPlanRegistration?: boolean;
+  environment?: EnvSource;
+}) {
   const { closeDb, requireDb } = await import("../../lib/db/client");
   const { getAuth, resetAuthCache } = await import("../../lib/auth/server");
   const previous = { ...process.env };
@@ -156,13 +157,18 @@ export async function betaFixture(options?: { registerPlan?: boolean }) {
       maxConnections: 1,
     });
     await socket.start();
-    Object.assign(process.env, env, {
+    Object.assign(process.env, env, options?.environment, {
       DATABASE_URL: `postgres://postgres:postgres@${socket.getServerConn()}/postgres`,
     });
     const db = requireDb();
-    if (options?.registerPlan) {
-      await registerReviewedBudgetPlan(db, betaPlan, process.env);
-    }
+    // The reviewed plan is explicit fixture data. Capacity changes are supplied
+    // before registration; callers may deliberately defer that one registration.
+    const planToRegister = options?.environment
+      ? createReviewedBudgetPlan({ bSelected: 10_000_000 }, process.env)
+      : betaPlan;
+    process.env.PLATFORM_BUDGET_PLAN_JSON = JSON.stringify(planToRegister);
+    if (!options?.skipPlanRegistration)
+      await registerReviewedBudgetPlan(db, planToRegister, process.env);
     // Every query after socket start shares the application's postgres.js max:1 queue.
     await db.$client
       .unsafe(
@@ -267,6 +273,7 @@ export async function betaFixture(options?: { registerPlan?: boolean }) {
     return {
       database,
       db,
+      env: { ...process.env },
       headers,
       seen,
       close,

@@ -356,7 +356,7 @@ describe("Platform Budget & Shared Allocation Integration Suite", () => {
   });
 
   test("6. month rollover persistent carry & 3-month multi-month carry union", async () => {
-    const fixture = await betaFixture();
+    const fixture = await betaFixture({ skipPlanRegistration: true });
     const store = new PlatformBudgetStore(fixture.db);
 
     // Month 1: 2026-08 - insert pending hold in credit_reservation

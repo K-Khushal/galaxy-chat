@@ -230,10 +230,7 @@ test("concurrent actors cannot exceed the shared cap; the immutable snapshot rec
   });
   try {
     await registerReviewedBudgetPlan(fixture.db, cappedPlan, cappedEnv);
-    const capped = {
-      ...resolveFundingConfig(cappedEnv),
-      globalConcurrency: 10,
-    };
+    const capped = resolveFundingConfig(cappedEnv);
     const results = await Promise.allSettled(
       Array.from({ length: 8 }, () =>
         fixture.reserve(actor(), 200_000, { config: capped, env: cappedEnv }),
@@ -361,8 +358,10 @@ test(
 );
 
 test("UTC rollovers reset known spend, carry unresolved holds, then reconcile without double counting", async () => {
+  let periodEnv = { ...env };
   const fixture = await createCreditFixture({
     ...fixtureOptions,
+    env: () => periodEnv,
     skipPlanRegistration: true,
   });
   try {
@@ -389,6 +388,7 @@ test("UTC rollovers reset known spend, carry unresolved holds, then reconcile wi
       PLATFORM_BUDGET_PLAN_JSON: JSON.stringify(planOct),
     };
     await registerReviewedBudgetPlan(db, planOct, envOct, old);
+    periodEnv = envOct;
     const held = await reserve(who, 200_000, {
       now: old,
       config: resolveFundingConfig(envOct, old),
@@ -421,6 +421,7 @@ test("UTC rollovers reset known spend, carry unresolved holds, then reconcile wi
       PLATFORM_BUDGET_PLAN_JSON: JSON.stringify(planNov),
     };
     await registerReviewedBudgetPlan(db, planNov, envNov, next);
+    periodEnv = envNov;
     expect(
       await rejectionOf(
         reserve(who, 100_000, {

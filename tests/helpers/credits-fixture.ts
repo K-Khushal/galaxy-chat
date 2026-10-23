@@ -79,7 +79,19 @@ export async function createCreditFixture(options: FixtureOptions) {
         idempotencyKey: crypto.randomUUID(),
         ...overrides,
       });
-    return { database, db, store, reserve, close };
+    const capturedClient = client;
+    const queuedDatabase = {
+      exec: async (text: string) => {
+        await capturedClient.unsafe(text).simple();
+      },
+      query: async <Row extends Record<string, unknown>>(
+        text: string,
+        parameters?: Parameters<typeof capturedClient.unsafe>[1],
+      ) => ({
+        rows: [...(await capturedClient.unsafe<Row[]>(text, parameters))],
+      }),
+    };
+    return { database: queuedDatabase, db, store, reserve, close };
   } catch (error) {
     await close();
     throw error;

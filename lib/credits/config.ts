@@ -38,6 +38,49 @@ export type FundingConfig = {
   readonly plan: PlanBinding;
 };
 
+export function assertExactPriceMatch(
+  a: PriceSnapshot,
+  b: PriceSnapshot,
+): void {
+  if (
+    a.id !== b.id ||
+    a.model !== b.model ||
+    a.provider !== b.provider ||
+    a.expiresAt !== b.expiresAt ||
+    a.inputMicrodollarsPerMillion !== b.inputMicrodollarsPerMillion ||
+    a.outputMicrodollarsPerMillion !== b.outputMicrodollarsPerMillion ||
+    a.basicTextOnly !== b.basicTextOnly ||
+    a.reasoning !== b.reasoning ||
+    a.allInPrice !== b.allInPrice
+  ) {
+    throw new AppError("unknown_model_price", 503);
+  }
+}
+
+export function assertExactFundingConfigMatch(
+  a: FundingConfig,
+  b: FundingConfig,
+): void {
+  if (
+    a.adapter !== b.adapter ||
+    a.monthlyMicrodollars !== b.monthlyMicrodollars ||
+    a.commitmentsMicrodollars !== b.commitmentsMicrodollars ||
+    a.actorConcurrency !== b.actorConcurrency ||
+    a.globalConcurrency !== b.globalConcurrency
+  ) {
+    throw new AppError("funding_unconfigured", 503);
+  }
+  assertExactPriceMatch(a.price, b.price);
+  if (
+    a.plan.month !== b.plan.month ||
+    a.plan.revision !== b.plan.revision ||
+    a.plan.digest !== b.plan.digest ||
+    a.plan.capacityDigest !== b.plan.capacityDigest
+  ) {
+    throw new AppError("plan_candidate_mismatch", 400);
+  }
+}
+
 function envInteger(env: EnvSource, key: string): number {
   const value = env[key];
   if (!value || !/^(0|[1-9]\d*)$/.test(value))
