@@ -157,6 +157,7 @@ beforeAll(async () => {
     "0015_platform_budget",
     "0016_credit_reservation_plan_binding",
     "0017_durable_jobs",
+    "0018_mcp_operations",
   ]);
 
   await db
