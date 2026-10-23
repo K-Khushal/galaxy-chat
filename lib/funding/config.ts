@@ -6,10 +6,29 @@ import type { EnvSource } from "@/lib/auth/env";
 import { BYOK_LIMITS } from "@/lib/byok/config";
 import { AppError } from "@/lib/errors";
 import { imageLimits } from "@/lib/images/contract";
+import { parseProfilesJson } from "@/lib/mcp/config";
 import { MCP_CLIENT_LIMITS } from "@/lib/mcp/contract";
+import { SEARCH_LIMITS } from "@/lib/search/contract";
 
 export const PLATFORM_CEILING_MICRODOLLARS = 10_000_000;
 export const FUNDING_ADVISORY_LOCK_ID = 41021406;
+
+/**
+ * Deep-freeze an object hierarchy so callers cannot mutate candidate structures.
+ */
+export function deepFreeze<T>(obj: T): T {
+  if (obj === null || typeof obj !== "object") {
+    return obj;
+  }
+  Object.freeze(obj);
+  for (const key of Object.keys(obj)) {
+    const val = (obj as Record<string, unknown>)[key];
+    if (val && typeof val === "object" && !Object.isFrozen(val)) {
+      deepFreeze(val);
+    }
+  }
+  return obj;
+}
 
 /**
  * Explicit coverage assertions. All 8 items are mandatory and must be literal true.
@@ -36,12 +55,14 @@ export type CoverageAssertions = z.infer<typeof coverageAssertionsSchema>;
  */
 export const capacitySnapshotSchema = z
   .object({
+    // Feature enablement states
     fundedInferenceEnabled: z.boolean(),
     byokEnabled: z.boolean(),
     searchToolsEnabled: z.boolean(),
     attachmentsEnabled: z.boolean(),
     imagesEnabled: z.boolean(),
     mcpClientEnabled: z.boolean(),
+    // Microdollar bounds
     platformInfraMicrodollars: z
       .number()
       .int()
@@ -62,6 +83,10 @@ export const capacitySnapshotSchema = z
       .int()
       .min(0)
       .max(PLATFORM_CEILING_MICRODOLLARS),
+    // Search bounds
+    searchActorHourlyRequests: z.number().int().min(0).max(2_000_000_000),
+    searchActorDailyRequests: z.number().int().min(0).max(2_000_000_000),
+    searchGlobalDailyRequests: z.number().int().min(0).max(2_000_000_000),
     searchActorDailyMicrodollars: z
       .number()
       .int()
@@ -72,6 +97,20 @@ export const capacitySnapshotSchema = z
       .int()
       .min(0)
       .max(PLATFORM_CEILING_MICRODOLLARS),
+    searchMaxResults: z.number().int().min(1).max(100),
+    searchTimeoutMs: z.number().int().min(1000).max(60_000),
+    searchContextBytes: z.number().int().min(1).max(1_000_000),
+    searchTransportBytes: z.number().int().min(1).max(10_000_000),
+    // BYOK bounds
+    byokHourlyLimit: z.number().int().min(1).max(10_000),
+    byokDailyLimit: z.number().int().min(1).max(100_000),
+    byokGlobalDailyLimit: z.number().int().min(1).max(1_000_000),
+    byokActorConcurrency: z.number().int().min(1).max(100),
+    byokGlobalConcurrency: z.number().int().min(1).max(1000),
+    byokActorRecords: z.number().int().min(1).max(1_000_000),
+    byokGlobalRecords: z.number().int().min(1).max(10_000_000),
+    byokMetadataBytes: z.number().int().min(1).max(1_000_000),
+    // Attachment bounds
     attachmentPlatformBytes: z
       .number()
       .int()
@@ -88,18 +127,29 @@ export const capacitySnapshotSchema = z
       .min(0)
       .max(100 * 1024 * 1024),
     attachmentMaxUserFiles: z.number().int().min(1).max(1000),
-    byokHourlyLimit: z.number().int().min(1).max(10_000),
-    byokDailyLimit: z.number().int().min(1).max(100_000),
-    byokGlobalDailyLimit: z.number().int().min(1).max(1_000_000),
-    byokActorConcurrency: z.number().int().min(1).max(100),
-    byokGlobalConcurrency: z.number().int().min(1).max(1000),
+    attachmentMaxFileBytes: z
+      .number()
+      .int()
+      .min(1)
+      .max(50 * 1024 * 1024),
+    attachmentMaxPerMessage: z.number().int().min(1).max(100),
+    attachmentUploadLeaseMs: z.number().int().min(1000).max(3_600_000),
+    // Image bounds
     imageMaxBytes: z
       .number()
       .int()
       .min(1)
       .max(50 * 1024 * 1024),
+    imageMaxMilliseconds: z.number().int().min(1000).max(300_000),
+    imageMaxPromptCharacters: z.number().int().min(1).max(100_000),
+    // MCP client bounds
     mcpMaxProfiles: z.number().int().min(1).max(256),
     mcpMaxTimeoutMs: z.number().int().min(1000).max(120_000),
+    mcpMaxRequestBytes: z.number().int().min(1000).max(10_000_000),
+    mcpMaxEnvelopeBytes: z.number().int().min(1000).max(10_000_000),
+    mcpMaxTransportResponseBytes: z.number().int().min(1000).max(10_000_000),
+    mcpMaxDecodedBodyBytes: z.number().int().min(1000).max(10_000_000),
+    mcpProfilesDigest: z.string().regex(/^([a-f0-9]{64})?$/),
   })
   .strict();
 
@@ -141,20 +191,6 @@ export type PlatformBudgetConfig = {
   capacityDigest: string;
 };
 
-export function parseBudgetPlanInput(raw: unknown): BudgetPlanInput {
-  try {
-    return budgetPlanInputSchema.parse(raw);
-  } catch (err) {
-    if (err instanceof z.ZodError) {
-      if (err.issues.some((i) => i.path[0] === "coverageAssertions")) {
-        throw new AppError("invalid_budget_coverage", 400);
-      }
-      throw new AppError("invalid_budget_plan", 400);
-    }
-    throw new AppError("invalid_budget_plan", 400);
-  }
-}
-
 export function canonicalJson(obj: unknown): string {
   const walk = (v: unknown): unknown => {
     if (v === null || typeof v === "string" || typeof v === "boolean") return v;
@@ -176,6 +212,29 @@ export function canonicalJson(obj: unknown): string {
     throw new AppError("invalid_plan_serialization", 400);
   };
   return JSON.stringify(walk(obj));
+}
+
+/**
+ * Parse an untrusted candidate input into an owned, deep-frozen, validated BudgetPlanInput.
+ * All public input errors are mapped to typed AppErrors.
+ */
+export function parseBudgetPlanInput(raw: unknown): BudgetPlanInput {
+  try {
+    const parsed = budgetPlanInputSchema.parse(raw);
+    const cloned: BudgetPlanInput = JSON.parse(canonicalJson(parsed));
+    return deepFreeze(cloned);
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      if (err.issues.some((i) => i.path[0] === "coverageAssertions")) {
+        throw new AppError("invalid_budget_coverage", 400);
+      }
+      throw new AppError("invalid_budget_plan", 400);
+    }
+    if (err instanceof AppError) {
+      throw err;
+    }
+    throw new AppError("invalid_budget_plan", 400);
+  }
 }
 
 export function computeCapacityDigest(snapshot: CapacitySnapshot): string {
@@ -274,13 +333,71 @@ export function resolveCurrentCapacitySnapshot(
     return n;
   };
 
+  const searchToolsEnabled = env.SEARCH_TOOLS_ENABLED === "1";
+  let searchActorHourlyRequests = 0;
+  let searchActorDailyRequests = 0;
+  let searchGlobalDailyRequests = 0;
+  let searchActorDailyMicrodollars = 0;
+  let searchGlobalDailyMicrodollars = 0;
+
+  if (searchToolsEnabled) {
+    const parsePos = (key: string) => {
+      const v = env[key];
+      if (!v || !/^[1-9]\d*$/.test(v)) {
+        throw new AppError("funding_unconfigured", 503);
+      }
+      const num = Number(v);
+      if (!Number.isSafeInteger(num) || num > 2_000_000_000) {
+        throw new AppError("funding_unconfigured", 503);
+      }
+      return num;
+    };
+    searchActorHourlyRequests = parsePos("SEARCH_ACTOR_HOURLY_REQUESTS");
+    searchActorDailyRequests = parsePos("SEARCH_ACTOR_DAILY_REQUESTS");
+    searchGlobalDailyRequests = parsePos("SEARCH_GLOBAL_DAILY_REQUESTS");
+    searchActorDailyMicrodollars = parsePos("SEARCH_ACTOR_DAILY_MICRODOLLARS");
+    searchGlobalDailyMicrodollars = parsePos(
+      "SEARCH_GLOBAL_DAILY_MICRODOLLARS",
+    );
+  }
+
+  const mcpClientEnabled = env.MCP_CLIENT_ENABLED === "1";
+  let mcpProfilesDigest = "";
+  if (mcpClientEnabled) {
+    const rawProfiles = env.MCP_CLIENT_PROFILES_JSON;
+    if (!rawProfiles || rawProfiles.trim() === "") {
+      throw new AppError("mcp_profiles_missing", 503);
+    }
+    const profilesMap = parseProfilesJson(rawProfiles);
+    const canonicalEntries = Array.from(profilesMap.values())
+      .map((p) => ({
+        profileId: p.profileId,
+        revision: p.revision,
+        purpose: p.purpose,
+        resource: p.resource,
+        issuer: p.issuer,
+        credential: p.credential,
+        maxRequestBytes: p.maxRequestBytes,
+        maxResponseBytes: p.maxResponseBytes,
+        timeoutMs: p.timeoutMs,
+      }))
+      .sort((a, b) =>
+        `${a.profileId}::${a.revision}::${a.purpose}`.localeCompare(
+          `${b.profileId}::${b.revision}::${b.purpose}`,
+        ),
+      );
+    mcpProfilesDigest = createHash("sha256")
+      .update(canonicalJson(canonicalEntries))
+      .digest("hex");
+  }
+
   return {
     fundedInferenceEnabled: env.FUNDED_INFERENCE === "1",
     byokEnabled: env.BYOK_ENABLED === "1",
-    searchToolsEnabled: env.SEARCH_TOOLS_ENABLED === "1",
+    searchToolsEnabled,
     attachmentsEnabled: env.ATTACHMENTS_ENABLED === "1",
     imagesEnabled: env.IMAGES_ENABLED === "1",
-    mcpClientEnabled: env.MCP_CLIENT_ENABLED === "1",
+    mcpClientEnabled,
     platformInfraMicrodollars: intEnv("PLATFORM_INFRA_MICRODOLLARS", 0),
     platformProviderFeesMicrodollars: intEnv(
       "PLATFORM_PROVIDER_FEES_MICRODOLLARS",
@@ -291,11 +408,23 @@ export function resolveCurrentCapacitySnapshot(
       0,
     ),
     fundedMonthlyMicrodollars: intEnv("FUNDED_MONTHLY_MICRODOLLARS", 0),
-    searchActorDailyMicrodollars: intEnv("SEARCH_ACTOR_DAILY_MICRODOLLARS", 0),
-    searchGlobalDailyMicrodollars: intEnv(
-      "SEARCH_GLOBAL_DAILY_MICRODOLLARS",
-      0,
-    ),
+    searchActorHourlyRequests,
+    searchActorDailyRequests,
+    searchGlobalDailyRequests,
+    searchActorDailyMicrodollars,
+    searchGlobalDailyMicrodollars,
+    searchMaxResults: SEARCH_LIMITS.results,
+    searchTimeoutMs: SEARCH_LIMITS.timeoutMs,
+    searchContextBytes: SEARCH_LIMITS.contextBytes,
+    searchTransportBytes: SEARCH_LIMITS.transportBytes,
+    byokHourlyLimit: BYOK_LIMITS.hourly,
+    byokDailyLimit: BYOK_LIMITS.daily,
+    byokGlobalDailyLimit: BYOK_LIMITS.globalDaily,
+    byokActorConcurrency: BYOK_LIMITS.actorConcurrency,
+    byokGlobalConcurrency: BYOK_LIMITS.globalConcurrency,
+    byokActorRecords: BYOK_LIMITS.actorRecords,
+    byokGlobalRecords: BYOK_LIMITS.globalRecords,
+    byokMetadataBytes: BYOK_LIMITS.metadataBytes,
     attachmentPlatformBytes: intEnv(
       "ATTACHMENT_PLATFORM_BYTES",
       100 * 1024 * 1024,
@@ -312,14 +441,19 @@ export function resolveCurrentCapacitySnapshot(
       100 * 1024 * 1024,
     ),
     attachmentMaxUserFiles: attachmentLimits.userFiles,
-    byokHourlyLimit: BYOK_LIMITS.hourly,
-    byokDailyLimit: BYOK_LIMITS.daily,
-    byokGlobalDailyLimit: BYOK_LIMITS.globalDaily,
-    byokActorConcurrency: BYOK_LIMITS.actorConcurrency,
-    byokGlobalConcurrency: BYOK_LIMITS.globalConcurrency,
+    attachmentMaxFileBytes: attachmentLimits.fileBytes,
+    attachmentMaxPerMessage: attachmentLimits.perMessage,
+    attachmentUploadLeaseMs: attachmentLimits.uploadLeaseMs,
     imageMaxBytes: imageLimits.bytes,
+    imageMaxMilliseconds: imageLimits.milliseconds,
+    imageMaxPromptCharacters: imageLimits.prompt,
     mcpMaxProfiles: MCP_CLIENT_LIMITS.maxProfiles,
     mcpMaxTimeoutMs: MCP_CLIENT_LIMITS.maxTimeoutMs,
+    mcpMaxRequestBytes: MCP_CLIENT_LIMITS.maxRequestBytes,
+    mcpMaxEnvelopeBytes: MCP_CLIENT_LIMITS.maxEnvelopeBytes,
+    mcpMaxTransportResponseBytes: MCP_CLIENT_LIMITS.maxTransportResponseBytes,
+    mcpMaxDecodedBodyBytes: MCP_CLIENT_LIMITS.maxDecodedBodyBytes,
+    mcpProfilesDigest,
   };
 }
 

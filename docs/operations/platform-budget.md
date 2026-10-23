@@ -25,11 +25,15 @@ Where:
 ## 2. Finite Capacity Snapshot & Coverage Assertions
 
 ### Finite Runtime Capacity Allowlist
-The plan binds directly to normalized environment limits and real system constants:
-- Feature flags: `fundedInferenceEnabled`, `byokEnabled`, `searchToolsEnabled`, `attachmentsEnabled`, `imagesEnabled`, `mcpClientEnabled`.
-- Microdollar bounds: `platformInfraMicrodollars`, `platformProviderFeesMicrodollars`, `platformSafetyReserveMicrodollars`, `fundedMonthlyMicrodollars`, `searchActorDailyMicrodollars`, `searchGlobalDailyMicrodollars`.
-- Storage & transfer caps: `attachmentPlatformBytes` ($\le 100\text{ MiB}$), `attachmentUserBytes` ($\le 20\text{ MiB}$), `attachmentDailyTransferBytes` ($\le 100\text{ MiB}$), `attachmentMaxUserFiles` (from `attachmentLimits.userFiles`).
-- Concurrency & rate limits: `byokHourlyLimit`, `byokDailyLimit`, `byokGlobalDailyLimit`, `byokActorConcurrency`, `byokGlobalConcurrency` (from `BYOK_LIMITS`), `imageMaxBytes` (from `imageLimits`), `mcpMaxProfiles`, `mcpMaxTimeoutMs` (from `MCP_CLIENT_LIMITS`).
+The plan binds directly to normalized environment limits and real system constants across all functional areas:
+- **Feature enablement**: `fundedInferenceEnabled`, `byokEnabled`, `searchToolsEnabled`, `attachmentsEnabled`, `imagesEnabled`, `mcpClientEnabled`.
+- **Microdollar bounds**: `platformInfraMicrodollars`, `platformProviderFeesMicrodollars`, `platformSafetyReserveMicrodollars`, `fundedMonthlyMicrodollars`, `searchActorDailyMicrodollars`, `searchGlobalDailyMicrodollars`.
+- **Search bounds**: `searchActorHourlyRequests`, `searchActorDailyRequests`, `searchGlobalDailyRequests`, `searchActorDailyMicrodollars`, `searchGlobalDailyMicrodollars`, `searchMaxResults` (`SEARCH_LIMITS.results`), `searchTimeoutMs` (`SEARCH_LIMITS.timeoutMs`), `searchContextBytes` (`SEARCH_LIMITS.contextBytes`), `searchTransportBytes` (`SEARCH_LIMITS.transportBytes`).
+- **BYOK bounds**: `byokHourlyLimit`, `byokDailyLimit`, `byokGlobalDailyLimit`, `byokActorConcurrency`, `byokGlobalConcurrency`, `byokActorRecords`, `byokGlobalRecords`, `byokMetadataBytes` (from `BYOK_LIMITS`).
+- **Attachment bounds**: `attachmentPlatformBytes` ($\le 100\text{ MiB}$), `attachmentUserBytes` ($\le 20\text{ MiB}$), `attachmentDailyTransferBytes` ($\le 100\text{ MiB}$), `attachmentMaxUserFiles`, `attachmentMaxFileBytes`, `attachmentMaxPerMessage`, `attachmentUploadLeaseMs` (from `attachmentLimits`).
+- **Image bounds**: `imageMaxBytes`, `imageMaxMilliseconds`, `imageMaxPromptCharacters` (from `imageLimits`).
+- **MCP client bounds**: `mcpMaxProfiles`, `mcpMaxTimeoutMs`, `mcpMaxRequestBytes`, `mcpMaxEnvelopeBytes`, `mcpMaxTransportResponseBytes`, `mcpMaxDecodedBodyBytes` (from `MCP_CLIENT_LIMITS`).
+- **MCP profile map digest**: `mcpProfilesDigest` (canonical SHA-256 digest of sorted non-secret reviewed operator profile metadata: `profileId`, `revision`, `purpose`, `resource`, `issuer`, `credential`, `maxRequestBytes`, `maxResponseBytes`, `timeoutMs`). When `mcpClientEnabled` is false, this is an empty string; when enabled, changing any profile field invalidates the capacity digest. Secrets and tokens are strictly excluded from snapshot data.
 
 > [!WARNING]
 > These finite runtime bounds constrain local platform operations. They do not claim to prove external hosting provider billing; operator attestation is not hosted cost proof.
@@ -55,14 +59,15 @@ When bootstrapping a new UTC month plan $M$:
    $$\text{amount} = \max(\text{previous carried amount}, \text{current pending charged amount})$$
 3. $L_{\text{carried}}$ must be $\ge$ the sum of this union. Understating $L_{\text{carried}}$ fails closed with `400 carried_liability_insufficient`.
 4. Persisted carry records are **frozen and permanent**: subsequent settlement, release, user account deletion, or month transitions cannot shrink or delete carry rows.
-5. If an existing pending hold increases liability after bootstrap, or if an uncarried hold is discovered, `assertActivePlan` denies operations with `503 uncovered_legacy_exposure`.
+5. **Repeat Registration Invariants**: For existing plans, the store inspects persisted carry rows for month $M$. If any prior pending hold appears or increases above its persisted carry row amount, both repeat `registerReviewedPlan` and `assertActivePlan` fail closed with `503 uncovered_legacy_exposure`, even if $L_{\text{carried}}$ has headroom. Persisted carry is never mutated.
 
 ---
 
 ## 4. Transaction Isolation & Locking Architecture
 
 - **Awaited Advisory Lock**: All registration and assertion operations acquire PostgreSQL transaction advisory lock `41021406` (`FUNDING_ADVISORY_LOCK_ID`).
-- **Post-Await Re-Evaluation**: Configuration resolution, DB clock timestamping, killswitch checks (`funding_control` missing or stopped fails closed), time expiration (`reviewedAt <= DB now < expiresAt`), and credit exposure checks run strictly inside the transaction after the lock is acquired.
+- **Caller-Owned Candidate Isolation**: Candidate inputs are validated, cloned, and deeply frozen on entry via `parseBudgetPlanInput(unknown)`; original references are discarded. All public input parsing errors map to typed `AppError` (`400 invalid_budget_plan` or `400 invalid_budget_coverage`).
+- **Post-Await Re-Evaluation**: Configuration resolution, fresh DB clock timestamping (`clock_timestamp()`), killswitch checks (`funding_control` missing or stopped fails closed), time window expiration (`reviewedAt <= DB now < expiresAt`), month alignment, revision/digest matching, and capacity drift checks run strictly inside the transaction after lock acquisition, immediately prior to `INSERT`, and immediately before ANY transaction return. Any intermediate drift triggers transaction rollback with 0 partial rows.
 - **Append-Only Triggers**: Database triggers `platform_budget_plan_no_update_delete` and `platform_budget_carry_no_update_delete` reject all `UPDATE` and `DELETE` queries.
 
 ---

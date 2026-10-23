@@ -243,26 +243,24 @@ describe("Platform Budget & Shared Allocation Integration Suite", () => {
     expect(() => validateBudgetPlanArithmetics(overflowPlan)).toThrow();
 
     // 2.8 Missing coverage assertion fails with typed AppError
-    const badCoveragePlan = makeTestPlan();
-    // @ts-expect-error test coverage omission
-    delete badCoveragePlan.coverageAssertions.queues;
+    const badCoverageAssertions: Record<string, unknown> = {
+      ...makeTestPlan().coverageAssertions,
+    };
+    delete badCoverageAssertions.queues;
+    const badCoveragePlan: unknown = {
+      ...makeTestPlan(),
+      coverageAssertions: badCoverageAssertions,
+    };
     expect(() => parseBudgetPlanInput(badCoveragePlan)).toThrow();
 
     // 2.9 Unknown coverage assertion fails
-    const extraCoveragePlan = makeTestPlan({
+    const extraCoveragePlan: unknown = {
+      ...makeTestPlan(),
       coverageAssertions: {
-        infra: true,
-        storage: true,
-        transfer: true,
-        database: true,
-        queues: true,
-        ordinaryByok: true,
-        accountLevelCharges: true,
-        conservativeLegacyUnknownExposure: true,
-        // @ts-expect-error test unknown assertion
+        ...makeTestPlan().coverageAssertions,
         extraUnreviewedKey: true,
       },
-    });
+    };
     expect(() => parseBudgetPlanInput(extraCoveragePlan)).toThrow();
 
     // 2.10 Invalid month format (e.g. month 13) fails
@@ -806,5 +804,397 @@ describe("Platform Budget & Shared Allocation Integration Suite", () => {
       id: "uncovered_legacy_exposure",
       status: 503,
     });
+  });
+
+  test("11. mutable candidate isolation: queued candidate mutation cannot leak into DB", async () => {
+    const fixture = await betaFixture();
+    const store = new PlatformBudgetStore(fixture.db);
+
+    let releaseBlocker: (() => void) | undefined;
+    const blockerPromise = new Promise<void>((resolve) => {
+      releaseBlocker = resolve;
+    });
+
+    let blockerAcquired: (() => void) | undefined;
+    const acquiredPromise = new Promise<void>((resolve) => {
+      blockerAcquired = resolve;
+    });
+
+    const blockerTx = fixture.db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(41021406)`);
+      blockerAcquired?.();
+      await blockerPromise;
+    });
+
+    await acquiredPromise;
+
+    const baseCaps = resolveCurrentCapacitySnapshot(fixtureEnv);
+    const mutableCandidate = makeTestPlan({
+      month: "2026-11",
+      aCredit: 1_000_000,
+      capacitySnapshot: {
+        ...baseCaps,
+        fundedMonthlyMicrodollars: 1_000_000,
+      },
+    });
+    const originalDigest = computePlanDigest(mutableCandidate);
+    const env = makeConfiguredEnv(mutableCandidate);
+    const simNow = new Date("2026-11-15T12:00:00Z");
+
+    // Start registration in background - it queues behind blockerTx advisory lock
+    const queuedRegister = store.registerReviewedPlan(
+      mutableCandidate,
+      env,
+      simNow,
+    );
+
+    // Caller mutates the candidate while queued:
+    mutableCandidate.aCredit = 5_000_000;
+    mutableCandidate.bSelected = 1_000;
+    (
+      mutableCandidate.capacitySnapshot as Record<string, unknown>
+    ).fundedMonthlyMicrodollars = 5_000_000;
+    (mutableCandidate.coverageAssertions as Record<string, unknown>).database =
+      false;
+
+    // Release blocker transaction and let registration proceed
+    releaseBlocker?.();
+    await blockerTx;
+
+    const registered = await queuedRegister;
+
+    // Persisted plan strictly preserves the original validated clone
+    expect(registered.a_credit).toBe(1_000_000);
+    expect(registered.digest).toBe(originalDigest);
+    expect(registered.capacity_snapshot.fundedMonthlyMicrodollars).toBe(
+      1_000_000,
+    );
+    expect(registered.coverage_assertions.database).toBe(true);
+
+    const persisted = await store.getPlan("2026-11");
+    expect(persisted?.a_credit).toBe(1_000_000);
+    expect(persisted?.digest).toBe(originalDigest);
+  });
+
+  test("12. repeat register carry: new or increased prior pending hold rejects even with L headroom", async () => {
+    const fixture = await betaFixture();
+    const store = new PlatformBudgetStore(fixture.db);
+
+    const hold1Id = crypto.randomUUID();
+    const actorX = "d".repeat(64);
+    const digestY = "e".repeat(64);
+    await fixture.db.execute(sql`
+      INSERT INTO credit_reservation(
+        id, actor_key, actor_kind, idempotency_key, request_digest,
+        day, month, reserved_microdollars, charged_microdollars,
+        incurred_microdollars, state, price_snapshot
+      ) VALUES (
+        ${hold1Id}, ${actorX}, 'user', 'idem-oct-headroom', ${digestY},
+        '2026-10-15', '2026-10', 30000, 30000, 0, 'held', '{"id":"p1"}'::jsonb
+      )
+    `);
+
+    // Plan has L_carried = 80,000 (headroom of 50,000 above the 30,000 required)
+    const plan = makeTestPlan({
+      month: "2026-11",
+      lCarried: 80000,
+    });
+    const env = makeConfiguredEnv(plan);
+    const simNow = new Date("2026-11-15T12:00:00Z");
+
+    const registered1 = await store.registerReviewedPlan(plan, env, simNow);
+    expect(registered1.month).toBe("2026-11");
+
+    const carryRows1 = await store.getCarryRows("2026-11");
+    expect(carryRows1).toHaveLength(1);
+    expect(carryRows1[0].amount_microdollars).toBe(30000);
+
+    const assertOpts = {
+      month: "2026-11",
+      expectedRevision: plan.revision,
+      expectedDigest: computePlanDigest(plan),
+    };
+
+    // Subcase 12.1: A new prior-month hold appears after initial registration (amount 20,000; total required 50,000 <= 80,000)
+    const hold2Id = crypto.randomUUID();
+    await fixture.db.execute(sql`
+      INSERT INTO credit_reservation(
+        id, actor_key, actor_kind, idempotency_key, request_digest,
+        day, month, reserved_microdollars, charged_microdollars,
+        incurred_microdollars, state, price_snapshot
+      ) VALUES (
+        ${hold2Id}, ${actorX}, 'user', 'idem-oct-new-hold', ${digestY},
+        '2026-10-20', '2026-10', 20000, 20000, 0, 'held', '{"id":"p1"}'::jsonb
+      )
+    `);
+
+    // Repeat register MUST reject despite L headroom
+    expect(
+      await rejectionOf(store.registerReviewedPlan(plan, env, simNow)),
+    ).toMatchObject({
+      id: "uncovered_legacy_exposure",
+      status: 503,
+    });
+
+    // Assert active plan MUST also reject
+    expect(
+      await rejectionOf(store.assertActivePlan(assertOpts, env, simNow)),
+    ).toMatchObject({
+      id: "uncovered_legacy_exposure",
+      status: 503,
+    });
+
+    // Immutable carry was NOT mutated
+    const carryRowsAfterNew = await store.getCarryRows("2026-11");
+    expect(carryRowsAfterNew).toHaveLength(1);
+    expect(carryRowsAfterNew[0].amount_microdollars).toBe(30000);
+
+    // Clean up hold2
+    await fixture.db.execute(sql`
+      UPDATE credit_reservation SET state = 'released', charged_microdollars = 0 WHERE id = ${hold2Id}
+    `);
+
+    // Subcase 12.2: Existing carried hold increases charged liability from 30,000 to 45,000 (still <= 80,000)
+    await fixture.db.execute(sql`
+      UPDATE credit_reservation SET charged_microdollars = 45000 WHERE id = ${hold1Id}
+    `);
+
+    expect(
+      await rejectionOf(store.registerReviewedPlan(plan, env, simNow)),
+    ).toMatchObject({
+      id: "uncovered_legacy_exposure",
+      status: 503,
+    });
+
+    expect(
+      await rejectionOf(store.assertActivePlan(assertOpts, env, simNow)),
+    ).toMatchObject({
+      id: "uncovered_legacy_exposure",
+      status: 503,
+    });
+
+    // Carry rows remain frozen
+    const carryRowsAfterIncrease = await store.getCarryRows("2026-11");
+    expect(carryRowsAfterIncrease).toHaveLength(1);
+    expect(carryRowsAfterIncrease[0].amount_microdollars).toBe(30000);
+  });
+
+  test("13. stale validation after await: clock advancement or capacity drift before INSERT rolls back cleanly", async () => {
+    const fixture = await betaFixture();
+    const store = new PlatformBudgetStore(fixture.db);
+
+    // 13.1 Clock advances past expiresAt during awaits before INSERT
+    let callCount1 = 0;
+    const advancingExpiryClock = () => {
+      callCount1++;
+      if (callCount1 > 1) {
+        // Advanced past expiresAt (2026-11-20)
+        return new Date("2026-11-25T00:00:00Z");
+      }
+      return new Date("2026-11-15T12:00:00Z");
+    };
+
+    const plan1 = makeTestPlan({
+      month: "2026-11",
+      expiresAt: "2026-11-20T00:00:00Z",
+    });
+    const env1 = makeConfiguredEnv(plan1);
+
+    expect(
+      await rejectionOf(
+        store.registerReviewedPlan(plan1, env1, advancingExpiryClock),
+      ),
+    ).toMatchObject({
+      id: "plan_coverage_expired",
+      status: 503,
+    });
+
+    // Rollback invariant: 0 rows inserted in plan or carry
+    expect(await store.getPlan("2026-11")).toBeNull();
+    expect(await store.getCarryRows("2026-11")).toHaveLength(0);
+
+    // 13.2 Clock advances into next month during awaits before INSERT
+    let callCount2 = 0;
+    const advancingMonthClock = () => {
+      callCount2++;
+      if (callCount2 > 1) {
+        return new Date("2026-12-01T00:00:00Z");
+      }
+      return new Date("2026-11-15T12:00:00Z");
+    };
+
+    expect(
+      await rejectionOf(
+        store.registerReviewedPlan(plan1, env1, advancingMonthClock),
+      ),
+    ).toMatchObject({
+      id: "budget_month_not_current",
+      status: 400,
+    });
+    expect(await store.getPlan("2026-11")).toBeNull();
+    expect(await store.getCarryRows("2026-11")).toHaveLength(0);
+
+    // 13.3 Capacity drift occurring during awaits before INSERT
+    let envReads = 0;
+    const dynamicDriftEnv = new Proxy(env1, {
+      get(target, prop, receiver) {
+        if (prop === "ATTACHMENT_PLATFORM_BYTES" && envReads > 1) {
+          return "50000000"; // drifted
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+
+    let callCount3 = 0;
+    const trackingClock = () => {
+      callCount3++;
+      if (callCount3 > 1) {
+        envReads = 2; // Trigger drift for pre-INSERT check
+      }
+      return new Date("2026-11-15T12:00:00Z");
+    };
+
+    expect(
+      await rejectionOf(
+        store.registerReviewedPlan(plan1, dynamicDriftEnv, trackingClock),
+      ),
+    ).toMatchObject({
+      id: "capacity_drift",
+      status: 503,
+    });
+    expect(await store.getPlan("2026-11")).toBeNull();
+    expect(await store.getCarryRows("2026-11")).toHaveLength(0);
+  });
+
+  test("14. capacity bindings: each family limit and MCP profile drift invalidates plan", async () => {
+    const baseCaps = resolveCurrentCapacitySnapshot(fixtureEnv);
+
+    // 14.1 Changing search limit in snapshot causes capacity drift
+    const planSearchDrift = makeTestPlan({
+      capacitySnapshot: {
+        ...baseCaps,
+        searchMaxResults: 10, // differs from SEARCH_LIMITS.results (5)
+      },
+    });
+    expect(() =>
+      resolvePlatformBudgetConfig(makeConfiguredEnv(planSearchDrift)),
+    ).toThrow();
+
+    // 14.2 Changing BYOK limit in snapshot causes capacity drift
+    const planByokDrift = makeTestPlan({
+      capacitySnapshot: {
+        ...baseCaps,
+        byokHourlyLimit: 99, // differs from BYOK_LIMITS.hourly (30)
+      },
+    });
+    expect(() =>
+      resolvePlatformBudgetConfig(makeConfiguredEnv(planByokDrift)),
+    ).toThrow();
+
+    // 14.3 Changing attachment limit in snapshot causes capacity drift
+    const planAttachmentDrift = makeTestPlan({
+      capacitySnapshot: {
+        ...baseCaps,
+        attachmentMaxUserFiles: 999, // differs from attachmentLimits.userFiles (20)
+      },
+    });
+    expect(() =>
+      resolvePlatformBudgetConfig(makeConfiguredEnv(planAttachmentDrift)),
+    ).toThrow();
+
+    // 14.4 Changing image limit in snapshot causes capacity drift
+    const planImageDrift = makeTestPlan({
+      capacitySnapshot: {
+        ...baseCaps,
+        imageMaxMilliseconds: 999_999, // differs from imageLimits.milliseconds (60_000)
+      },
+    });
+    expect(() =>
+      resolvePlatformBudgetConfig(makeConfiguredEnv(planImageDrift)),
+    ).toThrow();
+
+    // 14.5 Changing MCP limit in snapshot causes capacity drift
+    const planMcpDrift = makeTestPlan({
+      capacitySnapshot: {
+        ...baseCaps,
+        mcpMaxTimeoutMs: 99_999, // differs from MCP_CLIENT_LIMITS.maxTimeoutMs (20_000)
+      },
+    });
+    expect(() =>
+      resolvePlatformBudgetConfig(makeConfiguredEnv(planMcpDrift)),
+    ).toThrow();
+
+    // 14.6 MCP profile canonical hashing: changing resource or timeout invalidates digest
+    const sampleProfiles = [
+      {
+        profileId: "crm",
+        revision: "rev-1",
+        purpose: "mcp.call",
+        resource: "https://crm.example.com/api",
+        issuer: "https://auth.example.com/",
+        credential: "none",
+        maxRequestBytes: 10000,
+        maxResponseBytes: 20000,
+        timeoutMs: 5000,
+        expiresAt: "2030-01-01T00:00:00Z",
+      },
+    ];
+
+    const mcpEnv = {
+      ...fixtureEnv,
+      MCP_CLIENT_ENABLED: "1",
+      MCP_CLIENT_PROFILES_JSON: JSON.stringify(sampleProfiles),
+    };
+
+    const capsWithMcp = resolveCurrentCapacitySnapshot(mcpEnv);
+    expect(capsWithMcp.mcpProfilesDigest).toMatch(/^[a-f0-9]{64}$/);
+    // Verified: no raw token or secret in snapshot, only hex digest
+    expect(JSON.stringify(capsWithMcp)).not.toContain("bearer");
+    expect(JSON.stringify(capsWithMcp)).not.toContain("secret");
+
+    // Alter resource in profile -> digest changes
+    const modifiedProfiles = [
+      {
+        ...sampleProfiles[0],
+        resource: "https://malicious.example.com/api",
+      },
+    ];
+    const alteredMcpEnv = {
+      ...fixtureEnv,
+      MCP_CLIENT_ENABLED: "1",
+      MCP_CLIENT_PROFILES_JSON: JSON.stringify(modifiedProfiles),
+    };
+    const capsAltered = resolveCurrentCapacitySnapshot(alteredMcpEnv);
+    expect(capsAltered.mcpProfilesDigest).not.toBe(
+      capsWithMcp.mcpProfilesDigest,
+    );
+
+    // Alter timeout in profile -> digest changes
+    const timeoutModifiedProfiles = [
+      {
+        ...sampleProfiles[0],
+        timeoutMs: 9000,
+      },
+    ];
+    const timeoutMcpEnv = {
+      ...fixtureEnv,
+      MCP_CLIENT_ENABLED: "1",
+      MCP_CLIENT_PROFILES_JSON: JSON.stringify(timeoutModifiedProfiles),
+    };
+    const capsTimeout = resolveCurrentCapacitySnapshot(timeoutMcpEnv);
+    expect(capsTimeout.mcpProfilesDigest).not.toBe(
+      capsWithMcp.mcpProfilesDigest,
+    );
+
+    // Feature disabled: digest is empty string, but enabling it changes identity
+    const capsDisabled = resolveCurrentCapacitySnapshot({
+      ...fixtureEnv,
+      MCP_CLIENT_ENABLED: "0",
+    });
+    expect(capsDisabled.mcpProfilesDigest).toBe("");
+    expect(capsDisabled.mcpClientEnabled).toBe(false);
+    expect(computeCapacityDigest(capsDisabled)).not.toBe(
+      computeCapacityDigest(capsWithMcp),
+    );
   });
 });

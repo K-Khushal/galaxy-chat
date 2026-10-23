@@ -5,12 +5,13 @@ import { type DatabaseTransaction, requireDb } from "@/lib/db/client";
 import { AppError } from "@/lib/errors";
 import {
   type BudgetPlanInput,
-  budgetPlanInputSchema,
   type CapacitySnapshot,
   type CoverageAssertions,
   computeCapacityDigest,
   computePlanDigest,
   FUNDING_ADVISORY_LOCK_ID,
+  type PlatformBudgetConfig,
+  parseBudgetPlanInput,
   resolveCurrentCapacitySnapshot,
   resolvePlatformBudgetConfig,
   validateBudgetPlanArithmetics,
@@ -54,10 +55,105 @@ export type AssertActivePlanOptions = {
   expectedDigest: string;
 };
 
+type ActiveValidationExpectations = {
+  month: string;
+  revision: string;
+  digest: string;
+  capacityDigest: string;
+  reviewedAt: string | Date;
+  expiresAt: string | Date;
+};
+
 export async function lockFunding(tx: DatabaseTransaction): Promise<void> {
   await tx.execute(
     sql`SELECT pg_advisory_xact_lock(${FUNDING_ADVISORY_LOCK_ID})`,
   );
+}
+
+/**
+ * Shared helper to verify that fresh DB clock, funding_control, runtime environment,
+ * candidate revision/digest, and capacity snapshot all remain valid.
+ */
+async function verifyActiveEnvironmentAndClock(
+  tx: DatabaseTransaction,
+  expected: ActiveValidationExpectations,
+  env: EnvSource,
+  nowProvider?: Date | (() => Date),
+): Promise<{ now: Date; runtimeConfig: PlatformBudgetConfig }> {
+  const [clock] = await tx.execute<{ now: Date }>(
+    sql`SELECT clock_timestamp() AS now`,
+  );
+  const now =
+    typeof nowProvider === "function"
+      ? nowProvider()
+      : (nowProvider ?? new Date(clock.now));
+
+  const [control] = await tx.execute<{ stopped: boolean }>(
+    sql`SELECT stopped FROM public.funding_control WHERE id = 'platform'`,
+  );
+  if (!control || control.stopped) {
+    throw new AppError("funded_inference_disabled", 503);
+  }
+
+  if (!/^[0-9]{4}-(0[1-9]|1[0-2])$/.test(expected.month)) {
+    throw new AppError("invalid_budget_month", 400);
+  }
+
+  const currentUtcMonth = now.toISOString().slice(0, 7);
+  if (expected.month !== currentUtcMonth) {
+    throw new AppError("budget_month_not_current", 400);
+  }
+
+  const runtimeConfig = resolvePlatformBudgetConfig(env, now);
+  if (!runtimeConfig || !runtimeConfig.enabled) {
+    throw new AppError("platform_budget_disabled", 503);
+  }
+  if (
+    runtimeConfig.plan.month !== expected.month ||
+    runtimeConfig.plan.revision !== expected.revision ||
+    runtimeConfig.digest !== expected.digest
+  ) {
+    throw new AppError("plan_candidate_mismatch", 400);
+  }
+
+  const reviewedTime = new Date(expected.reviewedAt).getTime();
+  const expiresTime = new Date(expected.expiresAt).getTime();
+  if (reviewedTime > now.getTime()) {
+    throw new AppError("plan_reviewed_in_future", 400);
+  }
+  if (expiresTime <= now.getTime()) {
+    throw new AppError("plan_coverage_expired", 503);
+  }
+
+  const currentCaps = resolveCurrentCapacitySnapshot(env);
+  const currentCapDigest = computeCapacityDigest(currentCaps);
+  if (currentCapDigest !== expected.capacityDigest) {
+    throw new AppError("capacity_drift", 503);
+  }
+
+  return { now, runtimeConfig };
+}
+
+/**
+ * Shared helper to inspect current month's persisted carry rows against fresh prior-month
+ * pending holds. Rejects if any prior pending hold is missing or has increased.
+ */
+async function checkUncoveredLegacyExposure(
+  tx: DatabaseTransaction,
+  month: string,
+): Promise<void> {
+  const [uncarried] = await tx.execute<{ count: number }>(sql`
+    SELECT count(*)::integer AS count
+    FROM public.credit_reservation r
+    LEFT JOIN public.platform_budget_carry c
+      ON c.month = ${month} AND c.source_reservation_id = r.id
+    WHERE r.month < ${month}
+      AND r.state IN ('reserved', 'entered', 'held')
+      AND (c.source_reservation_id IS NULL OR r.charged_microdollars > c.amount_microdollars)
+  `);
+  if (uncarried && uncarried.count > 0) {
+    throw new AppError("uncovered_legacy_exposure", 503);
+  }
 }
 
 export class PlatformBudgetStore {
@@ -65,16 +161,18 @@ export class PlatformBudgetStore {
 
   /**
    * Internal server-only API to register an operator-reviewed monthly budget plan.
+   * Clones and freezes candidate input to prevent caller mutations across awaits.
    * Enforces immutability: returns identical existing plan on exact match, or rejects
    * conflicts with 409. Bootstraps durable multi-month carry union from all prior carry
-   * rows and prior pending credit reservations. Both new and repeat calls verify credit exposure.
+   * rows and prior pending credit reservations. Both new and repeat calls verify credit exposure
+   * and fail closed if uncarried or increased legacy exposure exists.
    */
   async registerReviewedPlan(
-    planInput: BudgetPlanInput,
+    planCandidate: unknown,
     env: EnvSource = process.env,
-    testNow?: Date,
+    testNow?: Date | (() => Date),
   ): Promise<BudgetPlanRow> {
-    budgetPlanInputSchema.parse(planInput);
+    const planInput: BudgetPlanInput = parseBudgetPlanInput(planCandidate);
     validateBudgetPlanArithmetics(planInput);
 
     const computedDigest = computePlanDigest(planInput);
@@ -86,46 +184,19 @@ export class PlatformBudgetStore {
       async (tx) => {
         await lockFunding(tx);
 
-        const [clock] = await tx.execute<{ now: Date }>(
-          sql`SELECT clock_timestamp() AS now`,
+        await verifyActiveEnvironmentAndClock(
+          tx,
+          {
+            month: planInput.month,
+            revision: planInput.revision,
+            digest: computedDigest,
+            capacityDigest: computedCapacityDigest,
+            reviewedAt: planInput.reviewedAt,
+            expiresAt: planInput.expiresAt,
+          },
+          env,
+          testNow,
         );
-        const now = testNow ?? new Date(clock.now);
-
-        const [control] = await tx.execute<{ stopped: boolean }>(
-          sql`SELECT stopped FROM public.funding_control WHERE id = 'platform'`,
-        );
-        if (!control || control.stopped) {
-          throw new AppError("funded_inference_disabled", 503);
-        }
-
-        if (!/^[0-9]{4}-(0[1-9]|1[0-2])$/.test(planInput.month)) {
-          throw new AppError("invalid_budget_month", 400);
-        }
-
-        const currentUtcMonth = now.toISOString().slice(0, 7);
-        if (planInput.month !== currentUtcMonth) {
-          throw new AppError("budget_month_not_current", 400);
-        }
-
-        // Fresh config resolution AFTER awaited lock
-        const runtimeConfig = resolvePlatformBudgetConfig(env, now);
-        if (!runtimeConfig || !runtimeConfig.enabled) {
-          throw new AppError("platform_budget_disabled", 503);
-        }
-        if (
-          runtimeConfig.digest !== computedDigest ||
-          runtimeConfig.plan.revision !== planInput.revision
-        ) {
-          throw new AppError("plan_candidate_mismatch", 400);
-        }
-
-        if (new Date(planInput.reviewedAt).getTime() > now.getTime()) {
-          throw new AppError("plan_reviewed_in_future", 400);
-        }
-
-        if (new Date(planInput.expiresAt).getTime() <= now.getTime()) {
-          throw new AppError("plan_coverage_expired", 503);
-        }
 
         const [existing] = await tx.execute<BudgetPlanRow>(
           sql`SELECT * FROM public.platform_budget_plan WHERE month = ${planInput.month}`,
@@ -138,6 +209,45 @@ export class PlatformBudgetStore {
           ) {
             throw new AppError("plan_conflict", 409);
           }
+
+          // Credit exposure checks on existing plan
+          const [currentCredit] = await tx.execute<{ total: string }>(sql`
+            SELECT coalesce(sum(charged_microdollars), 0)::bigint AS total
+            FROM public.credit_reservation
+            WHERE month = ${existing.month}
+          `);
+          const creditCharged = Number(currentCredit?.total ?? 0);
+          if (creditCharged > existing.a_credit) {
+            throw new AppError("credit_allocation_exhausted", 429);
+          }
+
+          const K =
+            existing.k_infra + existing.k_provider_fees + existing.k_safety;
+          const totalExposure =
+            creditCharged + existing.a_mcp + K + existing.l_carried;
+          if (totalExposure > existing.b_selected) {
+            throw new AppError("platform_ceiling_exhausted", 429);
+          }
+
+          // Uncovered legacy exposure check against frozen persisted carry rows
+          await checkUncoveredLegacyExposure(tx, existing.month);
+
+          // Re-evaluate fresh clock, control, config, capacity immediately before returning
+          await verifyActiveEnvironmentAndClock(
+            tx,
+            {
+              month: existing.month,
+              revision: existing.revision,
+              digest: existing.digest,
+              capacityDigest: existing.capacity_digest,
+              reviewedAt: existing.reviewed_at,
+              expiresAt: existing.expires_at,
+            },
+            env,
+            testNow,
+          );
+
+          return existing;
         }
 
         // Multi-month durable carry union: ALL prior carry sources + prior pending holds
@@ -194,7 +304,6 @@ export class PlatformBudgetStore {
           throw new AppError("carried_liability_insufficient", 400);
         }
 
-        // Credit exposure checks (runs on BOTH new registration AND idempotent repeat)
         const [currentCredit] = await tx.execute<{ total: string }>(sql`
           SELECT coalesce(sum(charged_microdollars), 0)::bigint AS total
           FROM public.credit_reservation
@@ -205,13 +314,6 @@ export class PlatformBudgetStore {
           throw new AppError("credit_allocation_exhausted", 429);
         }
 
-        for (const row of priorPendingRows) {
-          const carried = carryUnionMap.get(row.source_reservation_id);
-          if (!carried || Number(row.pending_amount) > carried.amount) {
-            throw new AppError("uncovered_legacy_exposure", 503);
-          }
-        }
-
         const K =
           planInput.kInfra + planInput.kProviderFees + planInput.kSafety;
         const totalExposure =
@@ -220,12 +322,20 @@ export class PlatformBudgetStore {
           throw new AppError("platform_ceiling_exhausted", 429);
         }
 
-        if (existing) {
-          if (new Date(existing.expires_at).getTime() <= now.getTime()) {
-            throw new AppError("plan_coverage_expired", 503);
-          }
-          return existing;
-        }
+        // Re-eval immediately before INSERT
+        await verifyActiveEnvironmentAndClock(
+          tx,
+          {
+            month: planInput.month,
+            revision: planInput.revision,
+            digest: computedDigest,
+            capacityDigest: computedCapacityDigest,
+            reviewedAt: planInput.reviewedAt,
+            expiresAt: planInput.expiresAt,
+          },
+          env,
+          testNow,
+        );
 
         const [inserted] = await tx.execute<BudgetPlanRow>(sql`
           INSERT INTO public.platform_budget_plan (
@@ -255,6 +365,21 @@ export class PlatformBudgetStore {
           `);
         }
 
+        // Re-eval immediately before transaction return (after late await during carry inserts)
+        await verifyActiveEnvironmentAndClock(
+          tx,
+          {
+            month: inserted.month,
+            revision: inserted.revision,
+            digest: inserted.digest,
+            capacityDigest: inserted.capacity_digest,
+            reviewedAt: inserted.reviewed_at,
+            expiresAt: inserted.expires_at,
+          },
+          env,
+          testNow,
+        );
+
         return inserted;
       },
       { isolationLevel: "read committed" },
@@ -268,7 +393,7 @@ export class PlatformBudgetStore {
   async assertActivePlan(
     expected: AssertActivePlanOptions,
     env: EnvSource = process.env,
-    testNow?: Date,
+    testNow?: Date | (() => Date),
   ): Promise<BudgetPlanRow> {
     return this.db.transaction(
       async (tx) => {
@@ -277,7 +402,10 @@ export class PlatformBudgetStore {
         const [clock] = await tx.execute<{ now: Date }>(
           sql`SELECT clock_timestamp() AS now`,
         );
-        const now = testNow ?? new Date(clock.now);
+        const now =
+          typeof testNow === "function"
+            ? testNow()
+            : (testNow ?? new Date(clock.now));
 
         const [control] = await tx.execute<{ stopped: boolean }>(
           sql`SELECT stopped FROM public.funding_control WHERE id = 'platform'`,
@@ -322,32 +450,22 @@ export class PlatformBudgetStore {
           throw new AppError("plan_identity_mismatch", 409);
         }
 
-        if (new Date(plan.reviewed_at).getTime() > now.getTime()) {
-          throw new AppError("plan_reviewed_in_future", 400);
-        }
+        await verifyActiveEnvironmentAndClock(
+          tx,
+          {
+            month: plan.month,
+            revision: plan.revision,
+            digest: plan.digest,
+            capacityDigest: plan.capacity_digest,
+            reviewedAt: plan.reviewed_at,
+            expiresAt: plan.expires_at,
+          },
+          env,
+          testNow,
+        );
 
-        if (new Date(plan.expires_at).getTime() <= now.getTime()) {
-          throw new AppError("plan_coverage_expired", 503);
-        }
-
-        const currentCaps = resolveCurrentCapacitySnapshot(env);
-        if (computeCapacityDigest(currentCaps) !== plan.capacity_digest) {
-          throw new AppError("capacity_drift", 503);
-        }
-
-        // Verify no uncarried or increased legacy exposure from prior months
-        const [uncarried] = await tx.execute<{ count: number }>(sql`
-          SELECT count(*)::integer AS count
-          FROM public.credit_reservation r
-          LEFT JOIN public.platform_budget_carry c
-            ON c.month = ${expected.month} AND c.source_reservation_id = r.id
-          WHERE r.month < ${expected.month}
-            AND r.state IN ('reserved', 'entered', 'held')
-            AND (c.source_reservation_id IS NULL OR r.charged_microdollars > c.amount_microdollars)
-        `);
-        if (uncarried && uncarried.count > 0) {
-          throw new AppError("uncovered_legacy_exposure", 503);
-        }
+        // Verify no uncarried or increased legacy exposure from prior months against frozen carry rows
+        await checkUncoveredLegacyExposure(tx, expected.month);
 
         const [currentCredit] = await tx.execute<{ total: string }>(sql`
           SELECT coalesce(sum(charged_microdollars), 0)::bigint AS total
@@ -364,6 +482,21 @@ export class PlatformBudgetStore {
         if (totalExposure > plan.b_selected) {
           throw new AppError("platform_ceiling_exhausted", 429);
         }
+
+        // Final re-evaluation immediately before return
+        await verifyActiveEnvironmentAndClock(
+          tx,
+          {
+            month: plan.month,
+            revision: plan.revision,
+            digest: plan.digest,
+            capacityDigest: plan.capacity_digest,
+            reviewedAt: plan.reviewed_at,
+            expiresAt: plan.expires_at,
+          },
+          env,
+          testNow,
+        );
 
         return plan;
       },
