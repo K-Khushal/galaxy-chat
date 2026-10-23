@@ -132,11 +132,17 @@ async function validLease(tx: DatabaseTransaction, lease: JobLease) {
 export class JobStore {
   constructor(private readonly db: Database) {}
 
+  private transaction<T>(run: (tx: DatabaseTransaction) => Promise<T>) {
+    // Every post-lock statement needs a fresh snapshot, including when the
+    // database role defaults to repeatable read. Match CreditStore admission.
+    return this.db.transaction(run, { isolationLevel: "read committed" });
+  }
+
   async enqueue(ownerId: string, raw: unknown): Promise<JobView> {
     const parsed = jobRequest.safeParse(raw);
     if (!parsed.success) fail("invalid_job", 400);
     const input = parsed.data;
-    return this.db.transaction(async (tx) => {
+    return this.transaction(async (tx) => {
       await lock(tx, ownerId);
       const [existing] = await tx.execute<Row>(
         sql`SELECT * FROM durable_job WHERE id=${input.id}`,
@@ -176,14 +182,14 @@ export class JobStore {
   }
 
   async read(ownerId: string, id: string) {
-    return this.db.transaction(async (tx) => {
+    return this.transaction(async (tx) => {
       await lock(tx, ownerId);
       return view(await job(tx, ownerId, id));
     });
   }
 
   async list(ownerId: string) {
-    return this.db.transaction(async (tx) => {
+    return this.transaction(async (tx) => {
       await lock(tx, ownerId);
       return (
         await tx.execute<Row>(
@@ -210,7 +216,7 @@ export class JobStore {
    */
   async claim(id: string): Promise<JobLease | null> {
     if (!jobRequest.shape.id.safeParse(id).success) fail("invalid_job", 400);
-    return this.db.transaction(async (tx) => {
+    return this.transaction(async (tx) => {
       // Read owner hint only. Recheck identity/existence under the common locks.
       const [hint] = await tx.execute<{ user_id: string }>(
         sql`SELECT user_id FROM durable_job WHERE id=${id}`,
@@ -307,7 +313,7 @@ export class JobStore {
 
   async checkpoint(rawLease: JobLease) {
     const lease = { ...rawLease };
-    return this.db.transaction(async (tx) => {
+    return this.transaction(async (tx) => {
       await lock(tx, lease.ownerId);
       const row = await fenced(tx, lease);
       if (row.action_revision !== JOB_ACTION_REVISION)
@@ -376,7 +382,7 @@ export class JobStore {
     const parsed = jobApproval.safeParse(raw);
     if (!parsed.success) fail("invalid_job_approval", 400);
     const input = parsed.data;
-    return this.db.transaction(async (tx) => {
+    return this.transaction(async (tx) => {
       await lock(tx, ownerId);
       const row = await job(tx, ownerId, input.id);
       if (row.checkpoint_digest !== input.checkpoint)
@@ -397,7 +403,7 @@ export class JobStore {
   }
 
   async cancel(ownerId: string, id: string) {
-    return this.db.transaction(async (tx) => {
+    return this.transaction(async (tx) => {
       await lock(tx, ownerId, false);
       const row = await job(tx, ownerId, id);
       if (["completed", "failed", "cancelled"].includes(row.state))
@@ -416,7 +422,7 @@ export class JobStore {
     return (
       await this.db.execute<{ id: string }>(sql`SELECT id FROM durable_job
       WHERE state='queued' OR (state='running' AND lease_expires_at<=clock_timestamp())
-      OR (state='awaiting_approval' AND (approval_expires_at<=clock_timestamp() OR started_at+${JOB_LIMITS.wallMs} * interval '1 millisecond'<=clock_timestamp())) ORDER BY created_at,id LIMIT 100`)
+      OR (state='awaiting_approval' AND (approval_expires_at<=clock_timestamp() OR started_at+${JOB_LIMITS.wallMs} * interval '1 millisecond'<=clock_timestamp())) ORDER BY CASE WHEN state IN ('running','awaiting_approval') THEN 0 ELSE 1 END,created_at,id LIMIT 100`)
     ).map((row) => row.id);
   }
 }

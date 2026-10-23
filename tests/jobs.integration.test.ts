@@ -491,3 +491,134 @@ test("physical offline database restore retains exact checkpoint and approval, t
   expect(f.seen).toHaveLength(0);
   expect(networkCalls).toBe(0);
 });
+
+async function oldQueuePrefix() {
+  const f = get();
+  // Each seeded request is admissible: ten queued jobs for each of ten invited
+  // owners, with a real owned immutable source and no active jobs for them.
+  await f.db.$client
+    .unsafe(`BEGIN;
+    INSERT INTO "user"(id,name,email,email_verified,github_login)
+      SELECT 'queue-owner-'||n,'Queue owner '||n,'queue-'||n||'@example.invalid',true,'queue-owner-'||n FROM generate_series(1,10) n;
+    INSERT INTO chat(id,user_id,title)
+      SELECT 'queue-chat-'||n,'queue-owner-'||n,'Owned source' FROM generate_series(1,10) n;
+    INSERT INTO chat_message(id,chat_id,user_id,role,parts,attachments)
+      SELECT 'queue-message-'||n,'queue-chat-'||n,'queue-owner-'||n,'assistant','[{"type":"text","text":"Owned local source"}]'::jsonb,'[]'::jsonb FROM generate_series(1,10) n;
+    INSERT INTO artifact(id,user_id,chat_id,message_id,kind,head)
+      SELECT 'queue-artifact-'||n,'queue-owner-'||n,'queue-chat-'||n,'queue-message-'||n,'markdown',1 FROM generate_series(1,10) n;
+    INSERT INTO artifact_revision(artifact_id,user_id,version,title,content)
+      SELECT 'queue-artifact-'||n,'queue-owner-'||n,1,'Owned source','Owned local source' FROM generate_series(1,10) n;
+    INSERT INTO durable_job(id,user_id,source_artifact_id,source_version,state,created_at)
+      SELECT gen_random_uuid()::text,'queue-owner-'||n,'queue-artifact-'||n,1,'queued',clock_timestamp()-interval '1 hour'
+      FROM generate_series(1,10) n CROSS JOIN generate_series(1,10) request;
+    COMMIT;`)
+    .simple();
+  process.env.GITHUB_INVITE_LOGINS = `alice,bob,${Array.from({ length: 10 }, (_, index) => `queue-owner-${index + 1}`).join(",")}`;
+  const bob = await mutateArtifact("bob", {
+    action: "create",
+    chatId: "bob-chat",
+    messageId: "bob-message",
+    kind: "markdown",
+    title: "Bob source",
+  });
+  const first = request(f.source),
+    second = request(bob.id);
+  await f.store.enqueue("alice", first);
+  await f.store.enqueue("bob", second);
+  return { ...f, newer: [first, second] };
+}
+
+test("recovery finds two newer expired running leases beyond one hundred older blocked queued requests", async () => {
+  const f = await oldQueuePrefix();
+  for (const input of f.newer)
+    expect(await f.store.claim(input.id)).not.toBeNull();
+  await f.db.execute(
+    sql`UPDATE durable_job SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE state='running'`,
+  );
+  const ids = await f.store.pendingDeliveryIds();
+  expect(ids).toHaveLength(100);
+  expect(ids.slice(0, 2).sort()).toEqual(
+    f.newer.map((input) => input.id).sort(),
+  );
+  await localFixtureWorker(f.store).recover();
+  for (const [index, owner] of ["alice", "bob"].entries()) {
+    expect(await f.store.read(owner, f.newer[index].id)).toMatchObject({
+      state: "awaiting_approval",
+      attempts: 2,
+    });
+  }
+  const [counts] = await f.db.execute<{ active: number; queued: number }>(
+    sql`SELECT count(*) FILTER(WHERE state IN ('running','awaiting_approval'))::integer AS active,count(*) FILTER(WHERE state='queued')::integer AS queued FROM durable_job`,
+  );
+  expect(counts).toEqual({ active: 2, queued: 100 });
+});
+
+test("recovery expires two newer waiting approvals before an older blocked queue prefix and admits only two queued owners", async () => {
+  const f = await oldQueuePrefix();
+  for (const input of f.newer)
+    await localFixtureWorker(f.store).deliver(input.id);
+  // Restore these exact checkpoints with elapsed approval timestamps. Preserve
+  // their identity, proposal, fence and attempts while leaving the job wall live.
+  await f.db.$client
+    .unsafe(`BEGIN;
+    CREATE TEMP TABLE elapsed_approvals AS SELECT * FROM durable_job WHERE state='awaiting_approval';
+    DELETE FROM durable_job WHERE state='awaiting_approval';
+    INSERT INTO durable_job(id,user_id,source_artifact_id,source_version,action_revision,state,checkpoint,checkpoint_digest,proposal,approval_expires_at,approved_digest,fence,attempts,started_at,created_at)
+      SELECT id,user_id,source_artifact_id,source_version,action_revision,state,checkpoint,checkpoint_digest,proposal,clock_timestamp()-interval '1 second',approved_digest,fence,attempts,clock_timestamp()-interval '6 minutes',created_at FROM elapsed_approvals;
+    DROP TABLE elapsed_approvals;
+    COMMIT;`)
+    .simple();
+  expect((await f.store.pendingDeliveryIds()).slice(0, 2).sort()).toEqual(
+    f.newer.map((input) => input.id).sort(),
+  );
+  await localFixtureWorker(f.store).recover();
+  for (const [index, owner] of ["alice", "bob"].entries()) {
+    expect(await f.store.read(owner, f.newer[index].id)).toMatchObject({
+      state: "failed",
+      error: "job_approval_expired",
+      resultArtifactId: null,
+      attempts: 1,
+    });
+  }
+  const [counts] = await f.db.execute<{ active: number; queued: number }>(
+    sql`SELECT count(*) FILTER(WHERE state IN ('running','awaiting_approval'))::integer AS active,count(*) FILTER(WHERE state='queued')::integer AS queued FROM durable_job`,
+  );
+  expect(counts).toEqual({ active: 2, queued: 98 });
+  expect(f.seen).toHaveLength(0);
+});
+
+test("job transactions override a repeatable-read role default with real SQL read-committed admission and checkpoint writes", async () => {
+  const f = get();
+  await f.db.$client
+    .unsafe(`SET default_transaction_isolation='repeatable read';
+    CREATE TABLE job_isolation_probe(level text NOT NULL);
+    CREATE FUNCTION record_job_isolation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+      INSERT INTO job_isolation_probe(level) VALUES(current_setting('transaction_isolation')); RETURN NEW; END $$;
+    CREATE TRIGGER record_job_isolation BEFORE INSERT OR UPDATE ON durable_job FOR EACH ROW EXECUTE FUNCTION record_job_isolation();`)
+    .simple();
+  const inherited = await f.db.transaction(
+    async (tx) =>
+      (
+        await tx.execute<{ level: string }>(
+          sql`SELECT current_setting('transaction_isolation') AS level`,
+        )
+      )[0].level,
+  );
+  expect(inherited).toBe("repeatable read");
+  const input = request(f.source);
+  await f.store.enqueue("alice", input);
+  await localFixtureWorker(f.store).deliver(input.id);
+  const proposal = await f.store.read("alice", input.id);
+  if (!proposal.checkpoint) throw new Error("missing_checkpoint");
+  await f.store.approve("alice", {
+    id: input.id,
+    checkpoint: proposal.checkpoint,
+    actionRevision: "publish-fixture-report-v1",
+  });
+  await f.store.cancel("alice", input.id);
+  const levels = await f.db.execute<{ level: string }>(
+    sql`SELECT level FROM job_isolation_probe`,
+  );
+  expect(levels).toHaveLength(5);
+  expect(levels.every((row) => row.level === "read committed")).toBe(true);
+});
