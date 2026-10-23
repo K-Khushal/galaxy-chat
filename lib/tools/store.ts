@@ -5,6 +5,8 @@ import { resourceActor } from "@/lib/byok/config";
 import { lockByokResources } from "@/lib/byok/store";
 import { type DatabaseTransaction, requireDb } from "@/lib/db/client";
 import { AppError } from "@/lib/errors";
+import type { McpActionBinding } from "@/lib/mcp/catalog-contract";
+import { verifyMcpActionInTx } from "@/lib/mcp/catalog-store";
 import {
   type SearchRunState,
   searchEvidenceSchema,
@@ -38,6 +40,7 @@ export type ActionBinding = {
   arguments: Record<string, unknown>;
   target: string;
   costMicrodollars: number;
+  mcp?: McpActionBinding;
 };
 /** Canonical JSON is bounded and lossless; unknown/non-JSON values are rejected. */
 export function canonical(value: unknown): string {
@@ -62,6 +65,77 @@ export function canonical(value: unknown): string {
   if (Buffer.byteLength(result) > 8192)
     throw new AppError("invalid_tool_action", 400);
   return result;
+}
+/** Caller holds BYOK (and funding first if needed). No nested transaction. */
+export async function issueToolApprovalInTx(
+  tx: DatabaseTransaction,
+  userId: string,
+  input: ActionBinding,
+  expiresAt: Date,
+) {
+  const binding: ActionBinding = JSON.parse(canonical(input));
+  const deadline = new Date(expiresAt);
+  if (
+    !Number.isSafeInteger(binding.costMicrodollars) ||
+    binding.costMicrodollars < 0 ||
+    !Number.isFinite(deadline.getTime()) ||
+    deadline.getTime() <= Date.now() ||
+    deadline.getTime() > Date.now() + 300000
+  )
+    throw new AppError("invalid_tool_action", 400);
+  const [count] = await tx.execute<{ count: number }>(
+    sql`SELECT count(*)::integer AS count FROM tool_approval WHERE run_id=${binding.runId}`,
+  );
+  if (count.count >= TOOL_LIMITS.calls)
+    throw new AppError("tool_approval_limit", 429);
+  const id = crypto.randomUUID();
+  const rows = await tx.execute(
+    sql`INSERT INTO tool_approval(id,user_id,run_id,binding,expires_at) SELECT ${id},${userId},id,${canonical(binding)}::jsonb,LEAST(${deadline.toISOString()}::timestamptz,created_at+interval '20 seconds') FROM tool_run WHERE id=${binding.runId} AND user_id=${userId} AND created_at>clock_timestamp()-interval '20 seconds' AND ${deadline.toISOString()}::timestamptz>clock_timestamp() RETURNING id`,
+  );
+  if (!rows.length) throw new AppError("not_found", 404);
+  return id;
+}
+/** Same owner decision and four-approval/20-second contract; MCP adds persisted exact verification. */
+export async function decideToolApprovalInTx(
+  tx: DatabaseTransaction,
+  userId: string,
+  id: string,
+  decision: "approve" | "deny" | "revoke",
+) {
+  const [approval] = await tx.execute<{ binding: ActionBinding }>(
+    sql`SELECT binding FROM tool_approval WHERE id=${id} AND user_id=${userId}`,
+  );
+  if (!approval) throw new AppError("tool_approval_denied", 409);
+  if (approval.binding.mcp)
+    await verifyMcpActionInTx(tx, userId, id, approval.binding, "decision");
+  const rows = await tx.execute(
+    sql`UPDATE tool_approval SET state=${decision === "approve" ? "approved" : decision === "deny" ? "denied" : "revoked"} WHERE id=${id} AND user_id=${userId} AND expires_at>clock_timestamp() AND (state='pending' OR (${decision}='revoke' AND state='approved')) RETURNING id`,
+  );
+  if (!rows.length) throw new AppError("tool_approval_denied", 409);
+  if (approval.binding.mcp)
+    await verifyMcpActionInTx(
+      tx,
+      userId,
+      id,
+      approval.binding,
+      decision === "approve" ? "approved" : "terminal-decision",
+    );
+}
+/** Future operation entry uses this in its existing transaction, never this store's wrapper. */
+export async function consumeToolApprovalInTx(
+  tx: DatabaseTransaction,
+  userId: string,
+  id: string,
+  input: ActionBinding,
+) {
+  const binding: ActionBinding = JSON.parse(canonical(input));
+  if (binding.mcp) await verifyMcpActionInTx(tx, userId, id, binding);
+  const rows = await tx.execute(
+    sql`UPDATE tool_approval SET state='consumed' WHERE id=${id} AND user_id=${userId} AND run_id=${binding.runId} AND binding=${canonical(binding)}::jsonb AND state='approved' AND expires_at>clock_timestamp() RETURNING id`,
+  );
+  if (!rows.length) throw new AppError("tool_approval_denied", 403);
+  if (binding.mcp)
+    await verifyMcpActionInTx(tx, userId, id, binding, "consumed");
 }
 export class ToolStore {
   constructor(private readonly db = requireDb()) {}
@@ -248,45 +322,38 @@ export class ToolStore {
   }
   /** Internal issuance only: no client endpoint can invent an action or turn a boolean into authority. */
   async issueApproval(userId: string, binding: ActionBinding, expiresAt: Date) {
-    canonical(binding);
-    if (
-      !Number.isSafeInteger(binding.costMicrodollars) ||
-      binding.costMicrodollars < 0 ||
-      expiresAt.getTime() <= Date.now() ||
-      expiresAt.getTime() > Date.now() + 300000
-    )
-      throw new AppError("invalid_tool_action", 400);
-    const id = crypto.randomUUID();
-    return this.db.transaction(async (tx) => {
-      await lockByokResources(tx);
-      const [count] = await tx.execute<{ count: number }>(
-        sql`SELECT count(*)::integer AS count FROM tool_approval WHERE run_id=${binding.runId}`,
-      );
-      if (count.count >= TOOL_LIMITS.calls)
-        throw new AppError("tool_approval_limit", 429);
-      const rows = await tx.execute(
-        sql`INSERT INTO tool_approval(id,user_id,run_id,binding,expires_at) SELECT ${id},${userId},id,${canonical(binding)}::jsonb,LEAST(${expiresAt.toISOString()}::timestamptz,created_at+interval '20 seconds') FROM tool_run WHERE id=${binding.runId} AND user_id=${userId} AND created_at>now()-interval '20 seconds' RETURNING id`,
-      );
-      if (!rows.length) throw new AppError("not_found", 404);
-      return id;
-    });
+    if (binding.mcp)
+      throw new AppError("mcp_catalog_authority_unavailable", 503);
+    return this.db.transaction(
+      async (tx) => {
+        await lockByokResources(tx);
+        return issueToolApprovalInTx(tx, userId, binding, expiresAt);
+      },
+      { isolationLevel: "read committed" },
+    );
   }
   async decideApproval(
     userId: string,
     id: string,
     decision: "approve" | "deny" | "revoke",
   ) {
-    const rows = await this.db.execute(
-      sql`UPDATE tool_approval SET state=${decision === "approve" ? "approved" : decision === "deny" ? "denied" : "revoked"} WHERE id=${id} AND user_id=${userId} AND expires_at>now() AND (state='pending' OR (${decision}='revoke' AND state='approved')) RETURNING id`,
+    await this.db.transaction(
+      async (tx) => {
+        await lockByokResources(tx);
+        await decideToolApprovalInTx(tx, userId, id, decision);
+      },
+      { isolationLevel: "read committed" },
     );
-    if (!rows.length) throw new AppError("tool_approval_denied", 409);
   }
   /** Consume before dispatch: a crash after this commit must never re-execute the action. */
   async consumeApproval(userId: string, id: string, binding: ActionBinding) {
-    const rows = await this.db.execute(
-      sql`UPDATE tool_approval SET state='consumed' WHERE id=${id} AND user_id=${userId} AND run_id=${binding.runId} AND binding=${canonical(binding)}::jsonb AND state='approved' AND expires_at>now() RETURNING id`,
+    await this.db.transaction(
+      async (tx) => {
+        await lockByokResources(tx);
+        await consumeToolApprovalInTx(tx, userId, id, binding);
+      },
+      { isolationLevel: "read committed" },
     );
-    if (!rows.length) throw new AppError("tool_approval_denied", 403);
   }
   async export(userId: string) {
     const runs = await this.db.execute(
