@@ -204,7 +204,6 @@ export const byokOperation = pgTable("byok_operation", {
     .notNull()
     .defaultNow(),
 });
-
 export const artifact = pgTable("artifact", {
   id: text("id").primaryKey(),
   userId: text("user_id")
@@ -257,4 +256,24 @@ export const memory = pgTable("memory", {
   }),
   content: text("content").notNull(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const mcpConnection = pgTable("mcp_connection", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  profileId: text("profile_id").notNull(),
+  profileRevision: text("profile_revision").notNull(),
+  purpose: text("purpose").notNull(),
+  profileDigest: text("profile_digest").notNull(),
+  label: text("label").notNull(),
+  state: text("state").notNull().default("configured"),
+  revision: text("revision").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
 });

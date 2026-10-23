@@ -22,6 +22,7 @@ import {
 } from "@/lib/db/schema";
 import { AppError } from "@/lib/errors";
 import { ImageStore } from "@/lib/images/store";
+import { McpRegistryStore } from "@/lib/mcp/registry-store";
 import { SearchStore } from "@/lib/search/store";
 import { ToolStore } from "@/lib/tools/store";
 
@@ -44,6 +45,7 @@ export type AccountExport = {
   projects: Array<typeof project.$inferSelect>;
   providerCredentials: CredentialView[];
   searchCredentials: Awaited<ReturnType<SearchStore["credentials"]>>;
+  mcpConnections: Awaited<ReturnType<McpRegistryStore["export"]>>;
   byokOperations: Array<{
     id: string;
     provider: string;
@@ -168,6 +170,7 @@ export async function exportOwnedAccount(
     .where(eq(project.userId, userId));
   const providerCredentials = await new ByokStore(db).credentials(userId);
   const searchCredentials = await new SearchStore(db).credentials(userId);
+  const mcpConnections = await new McpRegistryStore(db).export(userId);
   let actor: string | undefined;
   try {
     actor = resourceActor(userId, process.env);
@@ -215,6 +218,7 @@ export async function exportOwnedAccount(
     runs,
     providerCredentials,
     searchCredentials,
+    mcpConnections,
     byokOperations,
   };
 }
