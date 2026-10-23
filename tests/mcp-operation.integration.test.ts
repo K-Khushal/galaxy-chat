@@ -309,6 +309,164 @@ describe("MCP operation accounting — synthetic offline amounts, NO real cost/t
     }
     expect(await f.store.status("alice", input.id)).toEqual(settled);
   });
+  test("SQL rejects malformed receipts on an otherwise valid entered-to-settled transition without losing liability", async () => {
+    const f = get(),
+      input = await f.authorized();
+    await f.store.reserve("alice", input);
+    const entered = await f.store.enter("alice", input.id, 1);
+    const receipt = {
+      id: crypto.randomUUID(),
+      operationId: input.id,
+      bindingDigest: operationDigest(input),
+      evidenceDigest: "a".repeat(64),
+      incurredMicrodollars: 1000,
+      terminal: true,
+      revision: "synthetic-receipt-v1",
+    };
+    const invalid: Array<{
+      label: string;
+      value: unknown;
+      receiptId?: string;
+    }> = [
+      { label: "empty object", value: {} },
+      { label: "JSON null", value: null },
+      { label: "array", value: [] },
+      { label: "boolean scalar", value: true },
+      { label: "number scalar", value: 1000 },
+      { label: "string scalar", value: "receipt" },
+      { label: "unknown field", value: { ...receipt, unexpected: true } },
+      {
+        label: "foreign receipt ID",
+        value: { ...receipt, id: crypto.randomUUID() },
+      },
+      { label: "invalid receipt UUID", value: { ...receipt, id: "invalid" } },
+      {
+        label: "matching invalid receipt UUID",
+        value: { ...receipt, id: "invalid" },
+        receiptId: "invalid",
+      },
+      {
+        label: "foreign operation",
+        value: { ...receipt, operationId: crypto.randomUUID() },
+      },
+      {
+        label: "foreign binding",
+        value: { ...receipt, bindingDigest: "0".repeat(64) },
+      },
+      {
+        label: "invalid evidence digest",
+        value: { ...receipt, evidenceDigest: "z".repeat(64) },
+      },
+      {
+        label: "uppercase evidence digest",
+        value: { ...receipt, evidenceDigest: "A".repeat(64) },
+      },
+      {
+        label: "short evidence digest",
+        value: { ...receipt, evidenceDigest: "a".repeat(63) },
+      },
+      { label: "empty revision", value: { ...receipt, revision: "" } },
+      {
+        label: "invalid revision",
+        value: { ...receipt, revision: "has spaces" },
+      },
+      {
+        label: "oversized revision",
+        value: { ...receipt, revision: "a".repeat(161) },
+      },
+      { label: "nonterminal", value: { ...receipt, terminal: false } },
+      {
+        label: "conflicting amount",
+        value: { ...receipt, incurredMicrodollars: 1001 },
+      },
+      {
+        label: "negative amount",
+        value: { ...receipt, incurredMicrodollars: -1 },
+      },
+      {
+        label: "fractional amount",
+        value: { ...receipt, incurredMicrodollars: 1000.5 },
+      },
+      {
+        label: "unsafe amount",
+        value: {
+          ...receipt,
+          incurredMicrodollars: Number.MAX_SAFE_INTEGER + 1,
+        },
+      },
+      {
+        label: "object amount",
+        value: { ...receipt, incurredMicrodollars: {} },
+      },
+      {
+        label: "array amount",
+        value: { ...receipt, incurredMicrodollars: [] },
+      },
+      {
+        label: "boolean amount",
+        value: { ...receipt, incurredMicrodollars: true },
+      },
+      {
+        label: "invalid numeric text",
+        value: { ...receipt, incurredMicrodollars: "not-a-number" },
+      },
+    ];
+    for (const [key, value] of Object.entries(receipt)) {
+      const missing = { ...receipt };
+      Reflect.deleteProperty(missing, key);
+      invalid.push(
+        { label: `missing ${key}`, value: missing },
+        { label: `null ${key}`, value: { ...receipt, [key]: null } },
+        {
+          label: `mistyped ${key}`,
+          value: {
+            ...receipt,
+            [key]: typeof value === "string" ? 42 : String(value),
+          },
+        },
+      );
+    }
+    const quote = (value: string) => `'${value.replaceAll("'", "''")}'`;
+    for (const candidate of invalid) {
+      const statement = `UPDATE mcp_operation SET state='settled',incurred_microdollars=1000,receipt_id=${quote(candidate.receiptId ?? receipt.id)},receipt=${quote(JSON.stringify(candidate.value))}::jsonb,revision=revision+1 WHERE id=${quote(input.id)}`;
+      const error = await f.db.$client
+        .unsafe(statement)
+        .simple()
+        .then(
+          () => {
+            throw new Error(
+              `Malformed receipt unexpectedly settled: ${candidate.label}`,
+            );
+          },
+          (error: unknown) => error,
+        );
+      expect(error).toMatchObject({
+        code: "23514",
+        message: expect.stringContaining("mcp_operation_receipt_valid"),
+      });
+      expect(await f.store.status("alice", input.id)).toEqual(entered);
+      const [retained] = await f.db.execute<{
+        receipt_id: string | null;
+        receipt: unknown;
+        commitment: string;
+      }>(
+        sql`SELECT receipt_id,receipt,(SELECT amount_microdollars::text FROM mcp_operation_commitment WHERE source_id=${input.id}) AS commitment FROM mcp_operation WHERE id=${input.id}`,
+      );
+      expect(retained).toEqual({
+        receipt_id: null,
+        receipt: null,
+        commitment: "10000",
+      });
+    }
+    await f.store.issueFixtureReceipt(receipt);
+    expect(
+      await f.store.reconcile(input.id, receipt.bindingDigest, receipt.id, 2),
+    ).toMatchObject({
+      state: "settled",
+      incurredMicrodollars: 1000,
+      reservedMicrodollars: 10000,
+    });
+  });
 });
 
 describe("MCP final awaits — actual SQL execution then deterministic offline drift", () => {

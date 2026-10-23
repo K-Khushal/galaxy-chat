@@ -23,10 +23,33 @@ CREATE TABLE mcp_operation (
  CHECK((state='settled')=(receipt IS NOT NULL)),
  CHECK((receipt_id IS NULL)=(receipt IS NULL)),
  CHECK(state<>'released' OR incurred_microdollars=0),
- CHECK(receipt IS NULL OR (
-   receipt->>'id'=receipt_id AND receipt->>'operationId'=id AND receipt->>'bindingDigest'=binding_digest
-   AND receipt->>'terminal'='true' AND (receipt->>'incurredMicrodollars')::numeric=incurred_microdollars
- ))
+ -- CHECK accepts SQL NULL, so every non-null receipt must prove the complete
+ -- strict OperationReceipt shape and binding with an explicitly TRUE predicate.
+ CONSTRAINT mcp_operation_receipt_valid CHECK(receipt IS NULL OR (CASE
+   WHEN jsonb_typeof(receipt)='object' THEN
+     receipt ?& ARRAY['id','operationId','bindingDigest','evidenceDigest','incurredMicrodollars','terminal','revision']
+     AND receipt - ARRAY['id','operationId','bindingDigest','evidenceDigest','incurredMicrodollars','terminal','revision']='{}'::jsonb
+     AND jsonb_typeof(receipt->'id')='string'
+     AND jsonb_typeof(receipt->'operationId')='string'
+     AND receipt->>'id' ~ '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$'
+     AND receipt->>'operationId' ~ '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$'
+     AND receipt->>'id'=receipt_id AND receipt->>'operationId'=id
+     AND jsonb_typeof(receipt->'bindingDigest')='string'
+     AND receipt->>'bindingDigest' ~ '^[a-f0-9]{64}$'
+     AND receipt->>'bindingDigest'=binding_digest
+     AND jsonb_typeof(receipt->'evidenceDigest')='string'
+     AND receipt->>'evidenceDigest' ~ '^[a-f0-9]{64}$'
+     AND jsonb_typeof(receipt->'revision')='string'
+     AND receipt->>'revision' ~ '^[a-zA-Z0-9:_-]{1,160}$'
+     AND jsonb_typeof(receipt->'terminal')='boolean'
+     AND receipt->'terminal'='true'::jsonb
+     -- CASE prevents mistyped JSON from raising a cast error before the CHECK.
+     AND CASE WHEN jsonb_typeof(receipt->'incurredMicrodollars')='number' THEN
+       (receipt->>'incurredMicrodollars')::numeric BETWEEN 0 AND 9007199254740991
+       AND trunc((receipt->>'incurredMicrodollars')::numeric)=(receipt->>'incurredMicrodollars')::numeric
+       AND (receipt->>'incurredMicrodollars')::numeric=incurred_microdollars
+     ELSE false END
+   ELSE false END) IS TRUE)
 );
 CREATE INDEX mcp_operation_actor_day ON mcp_operation(actor_key,day);
 CREATE INDEX mcp_operation_state ON mcp_operation(state);
