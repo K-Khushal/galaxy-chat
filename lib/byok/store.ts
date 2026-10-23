@@ -1,7 +1,7 @@
 import "server-only";
 import { sql } from "drizzle-orm";
 import type { EnvSource } from "@/lib/auth/env";
-import { requireDb } from "@/lib/db/client";
+import { type EntryValidation, requireDb } from "@/lib/db/client";
 import { AppError } from "@/lib/errors";
 import { BYOK_LIMITS, requireByok, resourceActor } from "./config";
 import type { ByokProvider, ByokView, CredentialView } from "./contract";
@@ -25,7 +25,7 @@ type Operation = {
   credential_revision: string;
   state: "reserved" | "entered" | "held" | "complete" | "released";
   digest: string;
-  kind: "chat" | "test";
+  kind: "chat" | "test" | "image";
 };
 const active = sql`state IN ('reserved','entered','held')`;
 export async function lockByokResources(tx: Tx) {
@@ -85,7 +85,11 @@ export class ByokStore {
       return { configured: true, state, credentials };
     });
   }
-  private async limits(tx: Tx, actor: string): Promise<ByokView["state"]> {
+  private async limits(
+    tx: Tx,
+    actor: string,
+    resourceUnits = 1,
+  ): Promise<ByokView["state"]> {
     const [row] = await tx.execute<{
       actor_active: number;
       global_active: number;
@@ -97,9 +101,9 @@ export class ByokStore {
     }>(sql`
       SELECT count(*) FILTER(WHERE actor_key=${actor} AND ${active})::integer AS actor_active,
       count(*) FILTER(WHERE ${active})::integer AS global_active,
-      count(*) FILTER(WHERE actor_key=${actor} AND created_at>=(date_trunc('hour',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'))::integer AS hourly,
-      count(*) FILTER(WHERE actor_key=${actor} AND created_at>=(date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'))::integer AS daily,
-      count(*) FILTER(WHERE created_at>=(date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'))::integer AS global_daily,
+      COALESCE(sum(resource_units) FILTER(WHERE actor_key=${actor} AND created_at>=(date_trunc('hour',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')),0)::integer AS hourly,
+      COALESCE(sum(resource_units) FILTER(WHERE actor_key=${actor} AND created_at>=(date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')),0)::integer AS daily,
+      COALESCE(sum(resource_units) FILTER(WHERE created_at>=(date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')),0)::integer AS global_daily,
       count(*) FILTER(WHERE actor_key=${actor})::integer AS actor_records, count(*)::integer AS global_records FROM byok_operation`);
     if (
       row.actor_active >= BYOK_LIMITS.actorConcurrency ||
@@ -107,9 +111,9 @@ export class ByokStore {
     )
       return "busy";
     if (
-      row.hourly >= BYOK_LIMITS.hourly ||
-      row.daily >= BYOK_LIMITS.daily ||
-      row.global_daily >= BYOK_LIMITS.globalDaily ||
+      row.hourly + resourceUnits > BYOK_LIMITS.hourly ||
+      row.daily + resourceUnits > BYOK_LIMITS.daily ||
+      row.global_daily + resourceUnits > BYOK_LIMITS.globalDaily ||
       row.actor_records >= BYOK_LIMITS.actorRecords ||
       row.global_records >= BYOK_LIMITS.globalRecords
     )
@@ -160,49 +164,71 @@ export class ByokStore {
       );
     });
   }
+  async reserveIn(
+    tx: Tx,
+    options: {
+      id: string;
+      userId: string;
+      provider: ByokProvider;
+      kind: "chat" | "test" | "image";
+      digest: string;
+      env: EnvSource;
+      revision?: string;
+      resourceUnits?: 1 | 3;
+    },
+  ) {
+    requireByok(options.env);
+    const actor = resourceActor(options.userId, options.env);
+    const units = options.resourceUnits ?? 1;
+    if (units !== 1 && units !== 3)
+      throw new AppError("byok_resource_limited", 429);
+    await lockByokResources(tx);
+    const [prior] = await tx.execute<Operation>(
+      sql`SELECT * FROM byok_operation WHERE id=${options.id}`,
+    );
+    if (prior)
+      throw new AppError(
+        prior.actor_key === actor && prior.digest !== options.digest
+          ? "idempotency_conflict"
+          : "request_already_processed",
+        409,
+      );
+    const state = await this.limits(tx, actor, units);
+    if (state !== "available")
+      throw new AppError(
+        state === "busy" ? "byok_busy" : "byok_resource_limited",
+        429,
+      );
+    const row = await credential(tx, options.userId, options.provider);
+    if (options.revision && options.revision !== row.revision)
+      throw new AppError("byok_key_changed", 409);
+    if (options.kind !== "test" && row.test_state === "invalid")
+      throw new AppError("byok_key_invalid", 403);
+    await tx.execute(
+      sql`INSERT INTO byok_operation(id,actor_key,provider,credential_revision,kind,digest,state,resource_units) VALUES(${options.id},${actor},${options.provider},${row.revision},${options.kind},${options.digest},'reserved',${units})`,
+    );
+    return row.revision;
+  }
   async reserve(options: {
     id: string;
     userId: string;
     provider: ByokProvider;
-    kind: "chat" | "test";
+    kind: "chat" | "test" | "image";
     digest: string;
     env: EnvSource;
     revision?: string;
+    resourceUnits?: 1 | 3;
   }) {
-    requireByok(options.env);
-    const actor = resourceActor(options.userId, options.env);
-    return this.transaction(async (tx) => {
-      await lockByokResources(tx);
-      const [prior] = await tx.execute<Operation>(
-        sql`SELECT * FROM byok_operation WHERE id=${options.id}`,
-      );
-      if (prior)
-        throw new AppError(
-          prior.actor_key === actor && prior.digest !== options.digest
-            ? "idempotency_conflict"
-            : "request_already_processed",
-          409,
-        );
-      const state = await this.limits(tx, actor);
-      if (state !== "available")
-        throw new AppError(
-          state === "busy" ? "byok_busy" : "byok_resource_limited",
-          429,
-        );
-      const row = await credential(tx, options.userId, options.provider);
-      if (options.revision && options.revision !== row.revision)
-        throw new AppError("byok_key_changed", 409);
-      if (options.kind === "chat" && row.test_state === "invalid")
-        throw new AppError("byok_key_invalid", 403);
-      await tx.execute(
-        sql`INSERT INTO byok_operation(id,actor_key,provider,credential_revision,kind,digest,state) VALUES(${options.id},${actor},${options.provider},${row.revision},${options.kind},${options.digest},'reserved')`,
-      );
-      return row.revision;
-    });
+    return this.transaction((tx) => this.reserveIn(tx, options));
   }
   /** Commit entry before execution. Replacement/delete serialize against this check.
    * A key already in use cannot be recalled from the remote provider. */
-  async enter(id: string, userId: string, env: EnvSource) {
+  async enter(
+    id: string,
+    userId: string,
+    env: EnvSource,
+    validateEntry?: EntryValidation,
+  ) {
     requireByok(env);
     const actor = resourceActor(userId, env);
     return this.transaction(async (tx) => {
@@ -215,8 +241,11 @@ export class ByokStore {
       const row = await credential(tx, userId, operation.provider);
       if (row.revision !== operation.credential_revision)
         throw new AppError("byok_key_changed", 409);
-      if (operation.kind === "chat" && row.test_state === "invalid")
+      if (operation.kind !== "test" && row.test_state === "invalid")
         throw new AppError("byok_key_invalid", 403);
+      // Use only this transaction queue for the final owned-context check.
+      await validateEntry?.(tx);
+      requireByok(env);
       const key = decrypt(row, env);
       await tx.execute(
         sql`UPDATE byok_operation SET state='entered',updated_at=now() WHERE id=${id} AND actor_key=${actor}`,

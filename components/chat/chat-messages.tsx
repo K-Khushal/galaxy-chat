@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { ConversationArtifacts } from "@/components/artifacts/artifact-workbench";
 import { ErrorActions } from "@/components/chat/message/message-action";
 import { MessagePart } from "@/components/chat/message/message-part";
 import {
@@ -31,6 +32,7 @@ export function ChatMessages({
   setMessages,
   onPrompt,
   actionsEnabled = false,
+  artifactChatId,
   onEdit,
 }: {
   messages: TypeUIMessage[];
@@ -40,6 +42,7 @@ export function ChatMessages({
   setMessages: UseChatHelpers<TypeUIMessage>["setMessages"];
   onPrompt?: (text: string) => void;
   actionsEnabled?: boolean;
+  artifactChatId?: string;
   onEdit?: (messageId: string, text: string) => Promise<boolean>;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -149,6 +152,34 @@ export function ChatMessages({
                     </SourcesContent>
                   </Sources>
                 )}
+                {message.parts
+                  .filter((part) => part.type === "data-attachments")
+                  .map((part) => (
+                    <div
+                      key="attachment-provenance"
+                      className="mb-2 rounded-lg border border-border p-3 text-xs text-muted-foreground"
+                    >
+                      <p className="font-medium">
+                        Files sent with this request
+                      </p>
+                      <ul>
+                        {part.data.sources.map((source) => (
+                          <li
+                            key={source.id}
+                            className="break-words [overflow-wrap:anywhere]"
+                          >
+                            {source.name}
+                            {source.pages ? ` · ${source.pages} pages` : ""} ·
+                            source {source.id}
+                          </li>
+                        ))}
+                      </ul>
+                      <p className="mt-1">
+                        Untrusted source data; citations can refer to the
+                        attachment id and PDF page.
+                      </p>
+                    </div>
+                  ))}
                 {message.parts.map((part, index) => (
                   <MessagePart
                     key={`${message.id}-${index}`}
@@ -167,6 +198,18 @@ export function ChatMessages({
                     }
                   />
                 ))}
+                {artifactChatId &&
+                  message.role === "assistant" &&
+                  status !== "streaming" &&
+                  status !== "submitted" &&
+                  message.parts.some(
+                    (part) => part.type === "text" && part.text.trim(),
+                  ) && (
+                    <ConversationArtifacts
+                      chatId={artifactChatId}
+                      messageId={message.id}
+                    />
+                  )}
               </article>
             );
           })}

@@ -1,5 +1,6 @@
 import {
   boolean,
+  integer,
   jsonb,
   pgTable,
   primaryKey,
@@ -72,6 +73,9 @@ export const chat = pgTable("chat", {
     .references(() => user.id, { onDelete: "cascade" }),
   visibility: text("visibility").notNull().default("private"),
   lastContext: jsonb("last_context"),
+  projectId: text("project_id").references(() => project.id, {
+    onDelete: "set null",
+  }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -162,7 +166,26 @@ export const providerCredential = pgTable(
   },
   (table) => [primaryKey({ columns: [table.userId, table.provider] })],
 );
+export const searchCredential = pgTable(
+  "search_credential",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    provider: text("provider").notNull(),
+    revision: text("revision").notNull(),
+    keyVersion: text("key_version").notNull(),
+    nonce: text("nonce").notNull(),
+    ciphertext: text("ciphertext").notNull(),
+    maskedKey: text("masked_key").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.provider] })],
+);
 export const byokOperation = pgTable("byok_operation", {
+  resourceUnits: integer("resource_units").notNull().default(1),
   id: text("id").primaryKey(),
   actorKey: text("actor_key").notNull(),
   provider: text("provider").notNull(),
@@ -170,6 +193,10 @@ export const byokOperation = pgTable("byok_operation", {
   kind: text("kind").notNull(),
   digest: text("digest").notNull(),
   state: text("state").notNull(),
+  priceRevision: text("price_revision"),
+  reservedMicrodollars: integer("reserved_microdollars"),
+  actualMicrodollars: integer("actual_microdollars"),
+  receiptCredits: integer("receipt_credits"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -177,3 +204,79 @@ export const byokOperation = pgTable("byok_operation", {
     .notNull()
     .defaultNow(),
 });
+
+export const artifact = pgTable("artifact", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  chatId: text("chat_id")
+    .notNull()
+    .references(() => chat.id, { onDelete: "cascade" }),
+  messageId: text("message_id")
+    .notNull()
+    .references(() => chatMessage.id, { onDelete: "cascade" }),
+  kind: text("kind").notNull(),
+  head: integer("head").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+export const artifactRevision = pgTable(
+  "artifact_revision",
+  {
+    artifactId: text("artifact_id")
+      .notNull()
+      .references(() => artifact.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull(),
+    version: integer("version").notNull(),
+    title: text("title").notNull(),
+    content: text("content").notNull(),
+    restoredFrom: integer("restored_from"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.artifactId, table.version] })],
+);
+
+/** Explicit user-authored context only. No inference writes to these tables. */
+export const project = pgTable("project", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  instructions: text("instructions").notNull(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+export const memory = pgTable("memory", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  projectId: text("project_id").references(() => project.id, {
+    onDelete: "cascade",
+  }),
+  content: text("content").notNull(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const mcpConnection = pgTable("mcp_connection", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  profileId: text("profile_id").notNull(),
+  profileRevision: text("profile_revision").notNull(),
+  purpose: text("purpose").notNull(),
+  profileDigest: text("profile_digest").notNull(),
+  label: text("label").notNull(),
+  state: text("state").notNull().default("configured"),
+  revision: text("revision").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export * from "./platform-budget-schema";

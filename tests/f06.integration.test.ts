@@ -3,10 +3,10 @@ import type { LanguageModelUsage, UIMessageChunk } from "ai";
 import {
   type CreditFixture,
   createCreditFixture,
-  withCreditsFixture,
 } from "./helpers/credits-fixture";
 
 import { rejectionOf } from "./helpers/rejection";
+import { setupFixtureBeforeEach } from "./helpers/setup-fixture";
 
 mock.module("server-only", () => ({}));
 const { CreditStore, actorFor } = await import("../lib/credits/store");
@@ -70,8 +70,18 @@ const actor = (id = crypto.randomUUID(), kind: "user" | "guest" = "user") =>
 const config = () => resolveFundingConfig(env);
 const digest = "a".repeat(64);
 const fixtureOptions = { actor, config, digest };
-const withCreditFixture = (run: (fixture: CreditFixture) => Promise<void>) =>
-  withCreditsFixture(fixtureOptions, run);
+const useCreditFixture = setupFixtureBeforeEach(() =>
+  createCreditFixture(fixtureOptions),
+);
+const withCreditFixture =
+  (run: (fixture: CreditFixture) => Promise<void>) => async () => {
+    const fixture = useCreditFixture();
+    try {
+      await run(fixture);
+    } finally {
+      await fixture.close();
+    }
+  };
 
 function usage(cost: unknown = 0.000003): LanguageModelUsage {
   return {

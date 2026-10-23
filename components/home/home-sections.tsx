@@ -24,7 +24,7 @@ const features = [
   {
     icon: TextCursorInput,
     title: "Stay with the substance",
-    text: "Read Markdown and code, copy an answer, or stop a response. A quiet interface keeps the work in view.",
+    text: "Turn a saved response into a Markdown, HTML, chart, or typed-table artifact. Edit its source, restore a revision, and download a copy.",
   },
 ];
 
@@ -57,9 +57,14 @@ export function HomeSections() {
           ))}
         </div>
         <p className={styles.roadmap}>
-          <span>Here today:</span> text conversations and account controls.{" "}
-          <span>Still ahead:</span> saved memory, attachments, artifacts, tools,
-          and browser work.
+          <span>Implemented for the gated beta:</span> text conversations,
+          explicit memory, projects, temporary chat, private attachments when
+          storage is configured, versioned Markdown, HTML, chart, and
+          typed-table artifacts, default-off image generation with a reviewed
+          OpenRouter endpoint and your provider key, bounded tools with reviewed
+          provider models, optional separately funded Tavily search when
+          configured, and account controls. <span>Still ahead:</span> browser
+          work.
         </p>
       </section>
       <section
@@ -111,6 +116,11 @@ export function HomeSections() {
               Use your OpenRouter or Vercel AI Gateway key with the models
               configured for this workspace. Add, test, replace, or delete it in
               Account &amp; settings → Keys after signing in.
+            </p>
+            <p>
+              Optional web search uses its own encrypted Tavily key, exact-query
+              approval, and separate ceiling. Model keys and platform credits do
+              not fund search.
             </p>
             <ul className={styles.keyList}>
               <li>

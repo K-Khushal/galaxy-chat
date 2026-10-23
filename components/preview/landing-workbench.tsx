@@ -8,7 +8,13 @@ const pages = [
   { path: "/", label: "Home" },
   { path: "/help", label: "Help" },
   { path: "/privacy", label: "Privacy & data" },
+  { path: "/preview/artifacts", label: "Local artifacts fixture" },
+  { path: "/preview/charts", label: "Local chart fixture" },
+  { path: "/preview/tables", label: "Local typed table fixture" },
   { path: "/guest", label: "Guest (public)" },
+  { path: "/preview/ui?context=1", label: "Local memory & projects fixture" },
+  { path: "/preview/ui?attachments=1", label: "Local attachments fixture" },
+  { path: "/preview/ui?tools=1", label: "Local tools fixture" },
   {
     path: "/preview/ui?guest=available",
     label: "Local guest fixture: available",

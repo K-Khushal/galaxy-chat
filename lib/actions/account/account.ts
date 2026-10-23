@@ -1,18 +1,30 @@
 import { asc, desc, eq, sql } from "drizzle-orm";
+import type { AttachmentView } from "@/lib/attachments/contract";
+import { cleanupAfterDeletion } from "@/lib/attachments/service";
+import { attachmentView, lockAttachments } from "@/lib/attachments/store";
 import { resourceActor } from "@/lib/byok/config";
 import type { CredentialView } from "@/lib/byok/contract";
 import { ByokStore, lockByokResources } from "@/lib/byok/store";
+import { lockContext } from "@/lib/context/service";
 import { requireDb } from "@/lib/db/client";
 import {
   account,
+  artifact,
+  artifactRevision,
   chatBranch,
   chatMessage,
   chatRun,
   chat as chatTable,
+  memory,
+  project,
   usageRecord,
   user,
 } from "@/lib/db/schema";
 import { AppError } from "@/lib/errors";
+import { ImageStore } from "@/lib/images/store";
+import { McpRegistryStore } from "@/lib/mcp/registry-store";
+import { SearchStore } from "@/lib/search/store";
+import { ToolStore } from "@/lib/tools/store";
 
 export type AccountProfile = {
   id: string;
@@ -24,7 +36,16 @@ export type AccountProfile = {
 
 export type AccountExport = {
   profile: AccountProfile;
+  imageData: Awaited<ReturnType<ImageStore["export"]>>;
+  toolData: Awaited<ReturnType<ToolStore["export"]>>;
+  attachments: Array<AttachmentView & { extractedText: string }>;
+  artifacts: Array<typeof artifact.$inferSelect>;
+  artifactRevisions: Array<typeof artifactRevision.$inferSelect>;
+  memories: Array<typeof memory.$inferSelect>;
+  projects: Array<typeof project.$inferSelect>;
   providerCredentials: CredentialView[];
+  searchCredentials: Awaited<ReturnType<SearchStore["credentials"]>>;
+  mcpConnections: Awaited<ReturnType<McpRegistryStore["export"]>>;
   byokOperations: Array<{
     id: string;
     provider: string;
@@ -36,6 +57,7 @@ export type AccountExport = {
     id: string;
     title: string;
     visibility: string;
+    projectId: string | null;
     createdAt: Date;
     updatedAt: Date;
   }>;
@@ -86,11 +108,14 @@ export async function exportOwnedAccount(
 ): Promise<AccountExport> {
   const db = requireDb();
   const profile = await ownedProfile(userId);
+  const imageData = await new ImageStore(db).export(userId);
+  const toolData = await new ToolStore(db).export(userId);
   const chats = await db
     .select({
       id: chatTable.id,
       title: chatTable.title,
       visibility: chatTable.visibility,
+      projectId: chatTable.projectId,
       createdAt: chatTable.createdAt,
       updatedAt: chatTable.updatedAt,
     })
@@ -127,7 +152,25 @@ export async function exportOwnedAccount(
     .select()
     .from(chatRun)
     .where(eq(chatRun.userId, userId));
+  const artifacts = await db
+    .select()
+    .from(artifact)
+    .where(eq(artifact.userId, userId));
+  const artifactRevisions = await db
+    .select()
+    .from(artifactRevision)
+    .where(eq(artifactRevision.userId, userId));
+  const memories = await db
+    .select()
+    .from(memory)
+    .where(eq(memory.userId, userId));
+  const projects = await db
+    .select()
+    .from(project)
+    .where(eq(project.userId, userId));
   const providerCredentials = await new ByokStore(db).credentials(userId);
+  const searchCredentials = await new SearchStore(db).credentials(userId);
+  const mcpConnections = await new McpRegistryStore(db).export(userId);
   let actor: string | undefined;
   try {
     actor = resourceActor(userId, process.env);
@@ -152,24 +195,50 @@ export async function exportOwnedAccount(
     state: row.state,
     createdAt: row.created_at,
   }));
+  const attachmentRows = await db.execute<
+    import("@/lib/attachments/store").AttachmentRow
+  >(sql`SELECT * FROM attachment WHERE user_id=${userId} ORDER BY created_at`);
+  const attachments = attachmentRows.map((row) => ({
+    ...attachmentView(row),
+    extractedText: row.extracted_text,
+  }));
   return {
     profile,
+    toolData,
+    imageData,
+    attachments,
+    artifacts,
+    artifactRevisions,
+    memories,
+    projects,
     chats,
     messages,
     usageRecords,
     branches,
     runs,
     providerCredentials,
+    searchCredentials,
+    mcpConnections,
     byokOperations,
   };
 }
 
 export async function deleteOwnedAccount(userId: string) {
   const db = requireDb();
-  return db.transaction(async (tx) => {
+  let hasAttachments = false;
+  await db.transaction(async (tx) => {
     // Serialize deletion with credential reads/provider entry. Anonymous resource
     // leases survive the cascade and still count until remote work is terminal.
     await lockByokResources(tx);
+    await lockContext(tx, userId);
+    await lockAttachments(tx);
+    hasAttachments = Boolean(
+      (
+        await tx.execute(
+          sql`SELECT id FROM attachment WHERE user_id=${userId} UNION ALL SELECT id FROM image_object WHERE user_id=${userId} LIMIT 1`,
+        )
+      )[0],
+    );
     const owned = await tx
       .select({ id: user.id })
       .from(user)
@@ -180,6 +249,8 @@ export async function deleteOwnedAccount(userId: string) {
     }
     await tx.delete(account).where(eq(account.userId, userId));
     await tx.delete(user).where(eq(user.id, userId));
-    return { deleted: true };
   });
+  return hasAttachments
+    ? { deleted: true, attachmentCleanup: await cleanupAfterDeletion() }
+    : { deleted: true };
 }

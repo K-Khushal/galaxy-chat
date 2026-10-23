@@ -91,6 +91,36 @@ export default function HelpPage() {
           guarantee a maximum provider bill.
         </p>
       </section>
+      <section id="files">
+        <h2>Ground a saved conversation in private files</h2>
+        <p>
+          After the first saved message, choose Add file in the composer. Text,
+          Markdown, PNG, JPEG, WebP, and text PDFs are supported when private
+          storage is enabled. Files are limited to 2 MiB each (text and
+          Markdown: 128 KiB), PDFs to 12 pages, and extracted text to 24,000
+          characters. Choose at most three files, then review Exact file
+          context. Large selections may exceed the smaller request context
+          limit; upload a shorter excerpt.
+        </p>
+        <p>
+          Only checked files are sent with a request. Text and PDF excerpts
+          include filename, attachment id, and page labels; they are untrusted
+          source data, and answers can still be wrong. Images require an
+          explicitly reviewed image-capable BYOK model. Platform funding
+          supports text excerpts only. Scanned PDFs do not trigger OCR or paid
+          extraction. Guests and temporary conversations cannot upload or use
+          files.
+        </p>
+        <p>
+          Cancel upload stops processing where possible. Delete removes the file
+          from selection and queues its private object for cleanup. An uncertain
+          upload can retain a storage reservation until the operator confirms
+          that the remote write ended; a timeout or successful delete alone does
+          not prove cancellation. Storage and daily transfer limits may pause
+          new files. If private storage is unavailable, ordinary text chat still
+          works when files are cleared.
+        </p>
+      </section>
       <section>
         <h2>Find, branch, export, or delete</h2>
         <p>
@@ -103,6 +133,107 @@ export default function HelpPage() {
           Account. Remove a saved key from the Keys tab.{" "}
           <Link href="/privacy">Read the data notice</Link> for provider and
           retained-record limitations.
+        </p>
+      </section>
+      <section id="artifacts">
+        <h2>Save an answer as an artifact</h2>
+        <p>
+          Under a saved assistant response, choose Create artifact, add a title,
+          and select Markdown, HTML, Chart from JSON, or Typed table from JSON.
+          You can also reopen saved documents with Artifacts in the conversation
+          header. Guest and temporary conversations cannot save artifacts.
+        </p>
+        <p>
+          Edit the source and choose Save revision. History lets you restore a
+          saved version as a new revision. The reading preview disables links,
+          scripts, images, custom styles, and external resources. Download saves
+          Markdown or HTML source as a text file; Galaxy does not run it.
+        </p>
+        <p>
+          Charts accept a version 1 JSON spec for bar, line, area, or scatter
+          plots, with a title, description, labeled axes, series, and rows.
+          Preview includes an equivalent data table. Use null for missing
+          values; at most eight series and 2,000 scalar value slots, including
+          missing values, are allowed (scatter pairs, including missing pairs,
+          count as two). Unknown fields, code, and remote data are rejected.
+          Save a revision to download its chart JSON or inert SVG. Editing and
+          rendering a chart do not call a model.
+        </p>
+        <p>
+          Typed tables accept version 1 JSON with labeled columns and rows. Each
+          positional cell must be text, a finite number, or a boolean; formulas
+          and workbook uploads are not supported. The preview is a paginated
+          accessible data table. Choose a saved revision, then download CSV or a
+          single-sheet XLSX. CSV reduces formula-injection risk by adding a
+          leading tab to formula-like text; typed negative numbers remain
+          numbers, and the saved JSON is unchanged. This is not a universal
+          guarantee across spreadsheet applications. Downloads still need
+          compatibility checks in supported versions of Microsoft Excel,
+          LibreOffice Calc, Apple Numbers, and Google Sheets. XLSX stores text
+          explicitly and contains no formulas, macros, external references, or
+          active links.
+        </p>
+        <p>
+          Each artifact allows 128 KiB of source per revision and 40 revisions.
+          Your account can store 50 artifacts and 8 MiB of revision source in
+          total. Download a copy before deleting an artifact; deletion removes
+          all of its revisions. Deleting its originating message, conversation,
+          or account also removes the artifact.
+        </p>
+        <p>
+          A table can contain at most 10,000 rows, 50 columns, 200,000 value
+          slots, and 4,096 characters per text cell. Generated CSV and XLSX
+          files are limited to 8 MiB.
+        </p>
+      </section>
+      <section id="images">
+        <h2>Generate a private image when configured</h2>
+        <p>
+          Image generation is disabled by default. An Image choice appears only
+          after an operator reviews one exact OpenRouter model, endpoint, price,
+          and expiry and configures private storage. Your saved OpenRouter key
+          pays; Galaxy supplies application storage and capacity. Before
+          Generate, review the exact provider, estimate, application ceiling,
+          and required provider-budget acknowledgement. The estimate and ceiling
+          gate dispatch but cannot guarantee your provider bill or fees. Set
+          provider spending limits.
+        </p>
+        <p>
+          Each explicit request generates one 1024 × 1024 PNG of at most 4 MiB,
+          with no automatic retry, fallback, rewrite, or upscale. Editing and
+          masks are unavailable because the adapter has no verified input
+          support. Galaxy sends your prompt to OpenRouter and the selected
+          provider and stores a canonical private PNG with immutable provenance.
+          Restore adds a revision referencing the same image. Download selects
+          an explicit revision through an ownership-checked private route.
+          Images share the private-file storage, object, and transfer limits.
+        </p>
+        <p>
+          Cancel stops pre-entry work. Entered requests may still run and incur
+          charges; unknown outcomes stay held and are never retried
+          automatically. Deletion queues private objects, including repeated
+          cleanup for unresolved writes. Live model compatibility, provider
+          pricing and spending controls, abort receipts, and hosted
+          storage/download behavior still need verification before activation.
+        </p>
+      </section>
+      <section id="tools">
+        <h2>Run bounded tools with your provider key</h2>
+        <p>
+          Open Tools to ask a reviewed BYOK model to use arithmetic or read the
+          exact saved artifact revisions you select. If search is configured,
+          you may separately authorize one exact Tavily query with its own key,
+          price snapshot, ceiling, and privacy acknowledgement. A run allows up
+          to three model steps and four tool calls within 20 seconds. Tool and
+          search results are untrusted; browser, external write, connector, and
+          code execution tools are unavailable.
+        </p>
+        <p>
+          Choose the provider model and set an application cost ceiling at or
+          above its estimate, then acknowledge that your provider still bills
+          the key. The estimate and application ceiling cannot guarantee the
+          provider bill, so keep provider spending controls enabled. If no
+          reviewed model or usable key is configured, Tools stays off.
         </p>
       </section>
       <section>
@@ -124,10 +255,19 @@ export default function HelpPage() {
       <section>
         <h2>What is still ahead?</h2>
         <p>
-          Saved memory and projects, attachments, artifacts, tools, search, and
-          browser work are roadmap features. This beta focuses on text chat.
-          Live guest verification, provider behavior, deployment, and the
-          release quality gate still require verification before public beta.
+          In the workspace, Memory &amp; projects lets you explicitly create,
+          edit, and delete reusable context and start grouped conversations.
+          Request context shows exactly which memories and project instructions
+          will be sent. Temporary conversation keeps its transcript out of saved
+          history; provider retention and anonymous cost records are separate.
+          Private attachment support requires configured storage and reviewed
+          model capabilities. Artifacts can be created explicitly from saved
+          assistant replies. Bounded tools require a reviewed BYOK model and
+          provider spending controls. Optional bounded search requires separate
+          Tavily funding and reviewed operator configuration. Browser work
+          remains a roadmap feature. Live guest verification, provider behavior,
+          deployment, and the release quality gate still require verification
+          before public beta.
         </p>
       </section>
     </InfoPage>

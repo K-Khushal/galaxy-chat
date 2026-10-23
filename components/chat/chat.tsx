@@ -4,15 +4,21 @@ import { DefaultChatTransport } from "ai";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { ConversationArtifacts } from "@/components/artifacts/artifact-workbench";
+import { AttachmentComposer } from "@/components/chat/attachment-composer";
 import { BranchNavigation } from "@/components/chat/branch-navigation";
 import { ChatInput } from "@/components/chat/chat-input";
 import { ChatMessages } from "@/components/chat/chat-messages";
+import { ContextPicker } from "@/components/chat/context-picker";
 import { FundingSelector } from "@/components/chat/funding-selector";
 import { usePlatformAccess } from "@/components/chat/platform-access";
 import { ChatHeader } from "@/components/shell/chat-header";
 import type { AppUsage } from "@/lib/ai/usage";
 import { getChatErrorMessage } from "@/lib/ai/utils";
+import type { AttachmentSelection } from "@/lib/attachments/contract";
 import type { FundingChoice } from "@/lib/byok/contract";
+import type { ContextSelection } from "@/lib/context/contract";
+import { temporaryHistory } from "@/lib/context/transient";
 import type { TypeUIMessage } from "@/lib/types";
 import type { ChatAvailability } from "@/lib/ui/availability";
 import type { ComposerSubmission } from "@/lib/ui/composer";
@@ -27,6 +33,8 @@ export default function Chat({
   initialBranchId = id,
   initialBranches = [],
   initialRuns = [],
+  initialProjectId = null,
+  temporary = false,
 }: {
   id: string;
   chatMessages: TypeUIMessage[];
@@ -35,7 +43,33 @@ export default function Chat({
   initialBranchId?: string;
   initialBranches?: Branch[];
   initialRuns?: Run[];
+  initialProjectId?: string | null;
+  temporary?: boolean;
 }) {
+  const contextRef = useRef<ContextSelection | undefined>(undefined);
+  const [contextSelection, setContextSelection] = useState<ContextSelection>();
+  const attachmentRef = useRef<AttachmentSelection | undefined>(undefined);
+  const attachmentReadyRef = useRef(true);
+  const [attachmentReady, setAttachmentReady] = useState(true);
+  const onAttachmentsChange = useCallback(
+    (selection: AttachmentSelection | undefined, ready: boolean) => {
+      attachmentRef.current = selection;
+      attachmentReadyRef.current = ready;
+      setAttachmentReady(ready);
+    },
+    [],
+  );
+  const [contextReady, setContextReady] = useState(false);
+  const contextReadyRef = useRef(false);
+  const onContextChange = useCallback(
+    (selection: ContextSelection | undefined, ready: boolean) => {
+      contextReadyRef.current = ready;
+      contextRef.current = selection;
+      setContextSelection(selection);
+      setContextReady(ready);
+    },
+    [],
+  );
   const [text, setText] = useState("");
   const [model, setModel] = useState("");
   const [funding, setFunding] = useState<FundingChoice>("platform");
@@ -50,6 +84,10 @@ export default function Chat({
   const inFlight = useRef(false);
   const [submitting, setSubmitting] = useState(false);
   const persisted = useRef(initialBranches.length > 0);
+  const [persistedChatId, setPersistedChatId] = useState<string | undefined>(
+    initialBranches.length > 0 ? id : undefined,
+  );
+  const artifactChatId = !temporary && persistedChatId === id ? id : undefined;
   const [localStopped, setLocalStopped] = useState(false);
   const access = usePlatformAccess();
   const byokKey = access.byok?.credentials.find(
@@ -95,15 +133,16 @@ export default function Chat({
   } = useChat<TypeUIMessage>({
     id,
     messages: chatMessages,
-    experimental_throttle: 100,
+    throttle: 100,
     generateId: () => crypto.randomUUID(),
     transport: new DefaultChatTransport({
       api: "/api/chat",
       fetch: (async (input, init) => {
         const response = await fetch(input, init);
         const selected = response.headers.get("x-chat-branch");
-        if (selected) {
+        if (selected && !temporary) {
           persisted.current = true;
+          setPersistedChatId(id);
           branchRef.current = selected;
           setBranchId(selected);
         }
@@ -121,12 +160,23 @@ export default function Chat({
           funding: fundingRef.current,
           visibility: "private",
           webSearch: false,
+          ...(contextRef.current ? { context: contextRef.current } : {}),
+          ...(attachmentRef.current
+            ? { attachments: attachmentRef.current }
+            : {}),
+          ...(temporary
+            ? {
+                temporary: true,
+                transientMessages: temporaryHistory(request.messages),
+              }
+            : {}),
           ...request.body,
         },
       }),
     }),
     onFinish: async () => {
       refreshRef.current();
+      if (temporary) return;
       window.dispatchEvent(
         new CustomEvent("chat-created", { detail: { chatId: id } }),
       );
@@ -150,6 +200,8 @@ export default function Chat({
         );
         if (!response.ok) throw new Error("history_unavailable");
         const view = await response.json();
+        persisted.current = true;
+        setPersistedChatId(id);
         setBranches(view.branches);
         setRuns(view.runs);
         setMessages(view.messages);
@@ -196,7 +248,15 @@ export default function Chat({
     action: "send" | "edit" | "regenerate" | "retry" = "send",
     anchorId?: string,
   ): ComposerSubmission {
-    if (inFlight.current || busy || syncing || availability.state !== "ready")
+    if (
+      inFlight.current ||
+      busy ||
+      syncing ||
+      !contextReadyRef.current ||
+      !attachmentReadyRef.current ||
+      availability.state !== "ready" ||
+      (temporary && action !== "send")
+    )
       return { accepted: false };
     inFlight.current = true;
     setSubmitting(true);
@@ -245,27 +305,48 @@ export default function Chat({
   }
   const currentRun = runs.filter((r) => r.branchId === branchId).at(-1);
   return (
-    <div className="flex h-dvh min-h-0 min-w-0 flex-col bg-background">
+    <div
+      className="flex h-dvh min-h-0 min-w-0 flex-col bg-background"
+      data-conversation-mode={temporary ? "temporary" : "saved"}
+    >
       <ChatHeader
-        title={title ?? "New conversation"}
+        title={
+          temporary ? "Temporary conversation" : (title ?? "New conversation")
+        }
         onNewChat={() => window.location.assign("/chat")}
+        actions={
+          artifactChatId ? (
+            <ConversationArtifacts chatId={artifactChatId} />
+          ) : undefined
+        }
       />
-      <BranchNavigation
-        branches={branches}
-        branchId={branchId}
-        busy={busy || submitting}
-        syncing={syncing}
-        state={localStopped ? "stopped" : currentRun?.state}
-        onSelect={(selected) => void reload(selected)}
-        onReload={() => void reload()}
-        onRetry={() => retry("retry")}
-        retryEnabled={availability.state === "ready"}
-      />
+      {temporary && (
+        <p className="border-b border-border px-4 py-3 text-sm leading-relaxed text-muted-foreground">
+          Temporary: this conversation stays in this tab and never enters saved
+          history or memory. Leaving clears it. Anonymous cost and resource
+          records remain. Your provider processes requests under its own
+          retention policy.
+        </p>
+      )}
+      {!temporary && (
+        <BranchNavigation
+          branches={branches}
+          branchId={branchId}
+          busy={busy || submitting}
+          syncing={syncing}
+          state={localStopped ? "stopped" : currentRun?.state}
+          onSelect={(selected) => void reload(selected)}
+          onReload={() => void reload()}
+          onRetry={() => retry("retry")}
+          retryEnabled={availability.state === "ready"}
+        />
+      )}
       <ChatMessages
         key={id}
         messages={messages}
         setMessages={setMessages}
         status={status}
+        artifactChatId={!syncing && !submitting ? artifactChatId : undefined}
         error={error}
         regenerate={() => retry(error ? "retry" : "regenerate")}
         onEdit={async (messageId, draft) => {
@@ -275,7 +356,12 @@ export default function Chat({
           return true;
         }}
         actionsEnabled={
-          availability.state === "ready" && !syncing && !submitting
+          !temporary &&
+          contextReady &&
+          attachmentReady &&
+          availability.state === "ready" &&
+          !syncing &&
+          !submitting
         }
         onPrompt={(prompt) => {
           setText(prompt);
@@ -283,6 +369,26 @@ export default function Chat({
         }}
       />
       <div className="mx-auto w-full max-w-3xl shrink-0 px-3 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:px-6">
+        <ContextPicker
+          projectId={initialProjectId}
+          locked={persisted.current}
+          disabled={busy || syncing || submitting}
+          onChange={onContextChange}
+        />
+        <AttachmentComposer
+          chatId={id}
+          saved={persisted.current}
+          temporary={temporary}
+          busy={busy || syncing || submitting}
+          context={contextSelection}
+          contextReady={contextReady}
+          model={model}
+          funding={funding}
+          imagesSupported={Boolean(
+            models.find((item) => item.id === model)?.capabilities?.images,
+          )}
+          onChange={onAttachmentsChange}
+        />
         <FundingSelector
           value={funding}
           onChange={setFunding}
@@ -290,7 +396,7 @@ export default function Chat({
         />
         <ChatInput
           onSend={(draft) => submit(draft)}
-          blocked={syncing || submitting}
+          blocked={syncing || submitting || !contextReady || !attachmentReady}
           availability={availability}
           models={models}
           status={status}

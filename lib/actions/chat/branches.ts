@@ -2,7 +2,13 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { requireDb } from "@/lib/db/client";
-import { chat, chatBranch, chatMessage, chatRun } from "@/lib/db/schema";
+import {
+  chat,
+  chatBranch,
+  chatMessage,
+  chatRun,
+  project,
+} from "@/lib/db/schema";
 import { AppError } from "@/lib/errors";
 import type { TypeUIMessage } from "@/lib/types";
 
@@ -13,6 +19,7 @@ export type BranchInput = {
   branchId: string;
   action: BranchAction;
   anchorId?: string;
+  context?: { projectId: string | null };
   message: TypeUIMessage;
   model: string;
   funding: "platform" | "openrouter" | "gateway";
@@ -80,6 +87,19 @@ export async function prepareRun(input: BranchInput, userId: string) {
       let owned = await tx.select().from(chat).where(eq(chat.id, input.id));
       if (owned[0] && owned[0].userId !== userId)
         throw new AppError("not_found", 404);
+      const projectId = input.context?.projectId ?? null;
+      if (
+        projectId &&
+        !(
+          await tx
+            .select()
+            .from(project)
+            .where(and(eq(project.id, projectId), eq(project.userId, userId)))
+        )[0]
+      )
+        throw new AppError("context_changed", 409);
+      if (owned[0] && owned[0].projectId !== projectId)
+        throw new AppError("project_mismatch", 409);
       if (!owned[0]) {
         if (input.action !== "send" || input.branchId !== input.id)
           throw new AppError("not_found", 404);
@@ -93,7 +113,13 @@ export async function prepareRun(input: BranchInput, userId: string) {
             .slice(0, 80) || "New conversation";
         owned = await tx
           .insert(chat)
-          .values({ id: input.id, userId, title, visibility: "private" })
+          .values({
+            id: input.id,
+            userId,
+            title,
+            visibility: "private",
+            projectId,
+          })
           .returning();
         await tx.insert(chatBranch).values({
           id: input.id,
@@ -154,6 +180,17 @@ export async function prepareRun(input: BranchInput, userId: string) {
           messages = messages.slice(0, userIndex);
         }
       }
+      // Provenance is derived by the server for this request, including retries;
+      // never retain an older anchor's selected files implicitly.
+      message = {
+        ...message,
+        parts: [
+          ...input.message.parts.filter(
+            (part) => part.type === "data-attachments",
+          ),
+          ...message.parts.filter((part) => part.type !== "data-attachments"),
+        ],
+      };
       // Every generation needs space for its user prompt and terminal assistant,
       // including after a failed user-only turn. Forks use their actual prefix.
       if (messages.length + 2 > 500)
@@ -183,7 +220,9 @@ export async function prepareRun(input: BranchInput, userId: string) {
         userId,
         role: "user",
         parts: message.parts,
-        attachments: [],
+        attachments: message.parts
+          .filter((part) => part.type === "data-attachments")
+          .flatMap((part) => part.data.sources),
       });
       await tx
         .update(chatBranch)

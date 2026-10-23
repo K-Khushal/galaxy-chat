@@ -3,7 +3,11 @@ import postgres from "postgres";
 import * as schema from "@/lib/db/schema";
 import { AppError } from "@/lib/errors";
 
-type Database = ReturnType<typeof drizzle<typeof schema>>;
+export type Database = ReturnType<typeof drizzle<typeof schema>>;
+export type DatabaseTransaction = Parameters<
+  Parameters<Database["transaction"]>[0]
+>[0];
+export type EntryValidation = (tx: DatabaseTransaction) => Promise<void>;
 
 let database: Database | null = null;
 let client: ReturnType<typeof postgres> | null = null;

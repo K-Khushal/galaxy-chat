@@ -10,6 +10,11 @@ export type ChatModel = {
     reasoning: boolean;
     sources: boolean;
     files: boolean;
+    images?: {
+      verified: true;
+      mediaTypes: string[];
+      maxTokensPerImage: number;
+    };
     tools: boolean;
     search: boolean;
   };

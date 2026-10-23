@@ -1,4 +1,5 @@
 import type { LanguageModelUsage, UIMessage } from "ai";
+import type { AttachmentSource } from "@/lib/attachments/contract";
 import type { AppUsage } from "../ai/usage";
 
 export type TypeUserProfile = {
@@ -15,6 +16,7 @@ export type ChatVisibility = "public" | "private";
 export type Chat = {
   id: string;
   title: string;
+  projectId?: string | null;
   userId: string;
   visibility: ChatVisibility;
   lastContext: AppUsage | null;
@@ -35,7 +37,10 @@ export type UsageMetadata = {
   usage: LanguageModelUsage;
 };
 
-export type TypeUIMessage = UIMessage<UsageMetadata>;
+export type TypeUIMessage = UIMessage<
+  UsageMetadata,
+  { attachments: { sources: AttachmentSource[] } }
+>;
 
 export type ChatHistory = {
   chats: Chat[];

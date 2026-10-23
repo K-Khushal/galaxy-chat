@@ -14,6 +14,7 @@ import {
   ProviderSettings,
   type ProviderSettingsClient,
 } from "@/components/provider-settings";
+import { SearchProviderSettings } from "@/components/search/search-provider-settings";
 import { CreditNotice } from "@/components/shell/credit-notice";
 import { ThemeControl } from "@/components/shell/theme-control";
 import { Button } from "@/components/ui/button";
@@ -173,7 +174,9 @@ export function SettingsDialog({
                   Your data belongs to you
                 </h2>
                 <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-                  Download your conversations and messages as a JSON file.
+                  Download conversations, memories, projects, artifact
+                  revisions, file metadata and extracted text as JSON. Download
+                  original files separately before deleting them.
                 </p>
                 <Button
                   className="mt-3"
@@ -193,7 +196,10 @@ export function SettingsDialog({
               <section className="border-t pt-5">
                 <h2 className="text-sm font-medium">Delete account</h2>
                 <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-                  Permanently remove your account, sessions, and conversations.
+                  Permanently remove your account, sessions, conversations,
+                  memories, projects, artifacts, and saved provider keys, and
+                  queue private file cleanup. Uncertain remote writes may need
+                  operator reconciliation.
                 </p>
                 <Button
                   className="mt-3"
@@ -216,6 +222,7 @@ export function SettingsDialog({
             </TabsContent>
             <TabsContent value="providers">
               <ProviderSettings client={providerClient} />
+              <SearchProviderSettings />
             </TabsContent>
             <TabsContent
               value="security"
@@ -225,8 +232,9 @@ export function SettingsDialog({
                 Private to your account
               </h2>
               <p>
-                Conversations are accessible through your signed-in account.
-                Expired and revoked sessions cannot open them.
+                Conversations, memories, projects, and artifacts are accessible
+                through your signed-in account. Expired and revoked sessions
+                cannot open them.
               </p>
               <p>
                 Sign-in uses GitHub and a server-managed invite list. This app
@@ -262,9 +270,12 @@ export function SettingsDialog({
           <DialogHeader>
             <DialogTitle>Delete your account?</DialogTitle>
             <DialogDescription>
-              This permanently deletes your conversations and account and signs
-              you out. Export anything you want to keep first. This cannot be
-              undone.
+              This permanently deletes your account, saved conversations,
+              memories, projects, artifacts and their revisions, and provider
+              keys, then signs you out. Export anything you want to keep first.
+              This cannot be undone. Private files are queued for deletion;
+              unfinished remote writes may retain anonymous cleanup records
+              until reconciled.
             </DialogDescription>
           </DialogHeader>
           {failure && (
@@ -287,7 +298,11 @@ export function SettingsDialog({
               disabled={pending !== null}
               onClick={() => void removeAccount()}
             >
-              {pending === "delete" && <Loader2 className="animate-spin" />}
+              {pending === "delete" ? (
+                <Loader2 aria-hidden="true" className="animate-spin" />
+              ) : (
+                <Trash2 aria-hidden="true" />
+              )}
               Delete account permanently
             </Button>
           </DialogFooter>

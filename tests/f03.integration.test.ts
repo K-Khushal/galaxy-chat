@@ -144,6 +144,17 @@ beforeAll(async () => {
     "0002_credit_ledger",
     "0003_chat_branches",
     "0004_byok",
+    "0005_explicit_context",
+    "0006_attachments",
+    "0007_artifacts",
+    "0008_tools",
+    "0009_chart_artifacts",
+    "0010_table_artifacts",
+    "0011_search_tools",
+    "0012_mcp_egress_replay",
+    "0013_image_artifacts",
+    "0014_mcp_connections",
+    "0015_platform_budget",
   ]);
 
   await db

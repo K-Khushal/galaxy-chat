@@ -1,5 +1,5 @@
 "use client";
-import { ArrowUp, Paperclip, Square } from "lucide-react";
+import { ArrowUp, Square } from "lucide-react";
 import { useRef, useState } from "react";
 import { ModelSelector } from "@/components/chat/model-selector";
 import { UsageNote } from "@/components/shell/usage-note";
@@ -116,16 +116,6 @@ export function ChatInput({
           }}
         />
         <div className="flex min-w-0 items-center gap-1">
-          <Button
-            type="button"
-            size="icon"
-            variant="ghost"
-            disabled
-            aria-label="Attachments unavailable"
-            title="Attachments are not available yet"
-          >
-            <Paperclip className="size-4" />
-          </Button>
           <div className="min-w-0 flex-1">
             <ModelSelector
               value={model}

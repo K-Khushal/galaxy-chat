@@ -11,9 +11,20 @@ import {
   getChatForUser,
   updateChat,
 } from "@/lib/actions/chat/chat";
+import {
+  attachmentInstructions,
+  attachmentTurns,
+  resolveAttachmentRequest,
+} from "@/lib/attachments/request";
+import { lockAttachments } from "@/lib/attachments/store";
 import { requireChatAccess } from "@/lib/auth/access";
 import { resolveByokModel } from "@/lib/byok/config";
 import { startByokStream } from "@/lib/byok/service";
+import {
+  assertTemporaryId,
+  resolveContext,
+  validateContextEntry,
+} from "@/lib/context/service";
 import { resolveFundingConfig } from "@/lib/credits/config";
 import { boundedJson } from "@/lib/credits/http";
 import {
@@ -22,6 +33,7 @@ import {
   type TextTurn,
 } from "@/lib/credits/service";
 import { actorFor } from "@/lib/credits/store";
+import type { DatabaseTransaction } from "@/lib/db/client";
 import { AppError, logErrorId } from "@/lib/errors";
 import { errorResponse } from "@/lib/http/error-response";
 import { assertSameOrigin } from "@/lib/http/origin";
@@ -61,16 +73,83 @@ export async function POST(request: Request) {
           .join("\n"),
       },
     ]);
-    const prepared = await prepareRun(
-      { ...body, message: body.message as TypeUIMessage },
-      access.userId,
-    );
-    run = {
-      id: body.requestId,
-      userId: access.userId,
-      branchId: prepared.branchId,
+    if (
+      body.temporary
+        ? body.action !== "send" || body.anchorId || body.branchId !== body.id
+        : body.transientMessages !== undefined
+    )
+      throw new AppError("invalid_request", 400);
+    if (body.temporary && body.attachments?.ids.length)
+      throw new AppError("temporary_attachments_unavailable", 400);
+    const context = await resolveContext(access.userId, body.context);
+    const selection = body.attachments?.ids.length
+      ? {
+          chatId: body.id,
+          ids: body.attachments.ids,
+          funding: body.funding,
+          model: body.model,
+        }
+      : undefined;
+    const files = selection
+      ? await resolveAttachmentRequest(access.userId, selection, {
+          expectedDigest: body.attachments?.digest,
+        })
+      : undefined;
+    const instructions = files
+      ? attachmentInstructions(context.instructions, files)
+      : context.instructions;
+    const validateEntry = async (tx: DatabaseTransaction) => {
+      await validateContextEntry(tx, access.userId, body.context);
+      if (selection && files) {
+        await lockAttachments(tx);
+        const fresh = await resolveAttachmentRequest(access.userId, selection, {
+          expectedDigest: files.digest,
+          executor: tx,
+        });
+        if (fresh.imageTokens !== files.imageTokens)
+          throw new AppError("attachment_context_changed", 409);
+      }
     };
-    const turns: TextTurn[] = prepared.messages.flatMap((m) =>
+    const serverMessage: TypeUIMessage = {
+      ...body.message,
+      parts: [
+        ...(files?.provenance.length
+          ? [
+              {
+                type: "data-attachments" as const,
+                data: { sources: files.provenance },
+              },
+            ]
+          : []),
+        ...body.message.parts,
+      ],
+    } as TypeUIMessage;
+    if (body.temporary) await assertTemporaryId(body.id);
+    // The latest prompt plus selected excerpts must fit before creating a run.
+    if (files)
+      attachmentTurns(
+        [
+          {
+            role: "user",
+            content: body.message.parts
+              .filter((part) => part.type === "text")
+              .map((part) => part.text)
+              .join("\n"),
+          },
+        ],
+        instructions,
+        files,
+      );
+    const prepared = body.temporary
+      ? { branchId: body.id, messages: [serverMessage] }
+      : await prepareRun({ ...body, message: serverMessage }, access.userId);
+    if (!body.temporary)
+      run = {
+        id: body.requestId,
+        userId: access.userId,
+        branchId: prepared.branchId,
+      };
+    let turns: TextTurn[] = prepared.messages.flatMap((m) =>
       m.role === "user" || m.role === "assistant"
         ? [
             {
@@ -83,6 +162,11 @@ export async function POST(request: Request) {
           ]
         : [],
     );
+    if (body.temporary) turns.unshift(...(body.transientMessages ?? []));
+    // Context is resolved from owned rows, never accepted as caller-authored instructions.
+    turns = files
+      ? attachmentTurns(turns, instructions, files)
+      : boundContext(turns, false, instructions);
     const result =
       body.funding !== "platform"
         ? await startByokStream({
@@ -91,11 +175,26 @@ export async function POST(request: Request) {
             model: body.model,
             idempotencyKey: body.requestId,
             turns,
+            instructions,
+            validateEntry,
+            ...(files?.imageTokens && selection
+              ? {
+                  attachmentImages: {
+                    preview: files,
+                    load: () =>
+                      resolveAttachmentRequest(access.userId, selection, {
+                        expectedDigest: files.digest,
+                        includeImageBytes: true,
+                      }),
+                  },
+                }
+              : {}),
             env: process.env,
             signal: request.signal,
           })
         : await startFundedStream({
             env: process.env,
+            retainProviderReference: !body.temporary,
             actor: actorFor(
               "user",
               access.userId,
@@ -104,6 +203,8 @@ export async function POST(request: Request) {
             model: body.model,
             idempotencyKey: body.requestId,
             turns,
+            instructions,
+            validateEntry,
             signal: request.signal,
           });
     void result.completion.catch(() =>
@@ -148,6 +249,7 @@ export async function POST(request: Request) {
         }
       },
       onEnd: async ({ responseMessage, outcome, isAborted }) => {
+        if (body.temporary) return;
         await finishRun(
           body.requestId,
           access.userId,
@@ -159,7 +261,11 @@ export async function POST(request: Request) {
           {
             id: responseMessage.id,
             role: responseMessage.role,
-            parts: responseMessage.parts,
+            // Providers cannot author attachment provenance or other app data.
+            parts: responseMessage.parts.filter(
+              (part): part is TypeUIMessage["parts"][number] =>
+                !part.type.startsWith("data-"),
+            ),
           },
         );
       },
@@ -169,7 +275,7 @@ export async function POST(request: Request) {
       stream,
       headers: {
         "cache-control": "no-store",
-        "x-chat-branch": prepared.branchId,
+        ...(body.temporary ? {} : { "x-chat-branch": prepared.branchId }),
       },
       consumeSseStream: ({ stream }) =>
         consumeStream({

@@ -11,6 +11,7 @@ import {
 } from "ai";
 import { redactedFundedModel } from "@/lib/ai/redacted-model";
 import type { EnvSource } from "@/lib/auth/env";
+import type { EntryValidation } from "@/lib/db/client";
 import { AppError } from "@/lib/errors";
 import {
   type FundingConfig,
@@ -22,7 +23,11 @@ import {
 import { type Actor, CreditStore, type Reservation } from "./store";
 
 export type TextTurn = { role: "user" | "assistant"; content: string };
-export function boundContext(turns: TextTurn[], guest = false): TextTurn[] {
+export function boundContext(
+  turns: TextTurn[],
+  guest = false,
+  instructions = INSTRUCTIONS,
+): TextTurn[] {
   if (!turns.length || turns.at(-1)?.role !== "user")
     throw new AppError("invalid_request", 400);
   const selected = turns.slice(-(guest ? 1 : LIMITS.messages));
@@ -32,10 +37,10 @@ export function boundContext(turns: TextTurn[], guest = false): TextTurn[] {
     throw new AppError("context_too_large", 400);
   while (
     selected.length > 1 &&
-    bytes([INSTRUCTIONS, selected]) > LIMITS.inputBytes
+    bytes([instructions, selected]) > LIMITS.inputBytes
   )
     selected.shift();
-  if (bytes([INSTRUCTIONS, selected]) > LIMITS.inputBytes)
+  if (bytes([instructions, selected]) > LIMITS.inputBytes)
     throw new AppError("context_too_large", 400);
   return selected;
 }
@@ -93,6 +98,7 @@ type ProviderCallbacks = {
   complete: (usage: LanguageModelUsage, responseId?: string) => Promise<void>;
   uncertain: () => void;
   signal?: AbortSignal;
+  instructions?: string;
 };
 export type FundedProvider = (
   config: FundingConfig,
@@ -126,7 +132,7 @@ export function openRouterProvider(
           },
         }),
       ),
-      instructions: INSTRUCTIONS,
+      instructions: callbacks.instructions ?? INSTRUCTIONS,
       messages: turns satisfies ModelMessage[],
       maxOutputTokens: LIMITS.outputTokens,
       maxRetries: 0,
@@ -168,19 +174,28 @@ export async function startFundedStream(options: {
   model?: string;
   store?: CreditStore;
   provider?: FundedProvider;
+  instructions?: string;
+  retainProviderReference?: boolean;
   beforeProvider?: () => Promise<void>;
+  prepareProvider?: () => Promise<void>;
+  validateEntry?: EntryValidation;
   signal?: AbortSignal;
 }) {
   const config = resolveFundingConfig(options.env);
   if (options.model !== undefined && options.model !== config.price.model)
     throw new AppError("model_not_funded", 403);
-  const turns = boundContext(options.turns, options.actor.kind === "guest");
+  const instructions = options.instructions ?? INSTRUCTIONS;
+  const turns = boundContext(
+    options.turns,
+    options.actor.kind === "guest",
+    instructions,
+  );
   const digest = createHash("sha256")
     .update(
       JSON.stringify({
         turns,
         model: config.price.model,
-        instructions: INSTRUCTIONS,
+        instructions,
       }),
     )
     .digest("hex");
@@ -203,7 +218,11 @@ async function enterAndStart(options: {
   turns: TextTurn[];
   reservation: Reservation;
   provider?: FundedProvider;
+  instructions?: string;
+  retainProviderReference?: boolean;
   beforeProvider?: () => Promise<void>;
+  prepareProvider?: () => Promise<void>;
+  validateEntry?: EntryValidation;
   signal?: AbortSignal;
 }) {
   const { store, actor, reservation } = options;
@@ -214,20 +233,27 @@ async function enterAndStart(options: {
   try {
     options.signal?.throwIfAborted();
     await options.beforeProvider?.();
+    await options.prepareProvider?.();
+    options.signal?.throwIfAborted();
     // Recheck the environment kill switch immediately before the durable claim.
     resolveFundingConfig(options.env);
-    await store.enter(reservation.id, actor);
+    await store.enter(reservation.id, actor, options.validateEntry);
     entered = true;
     const result = (options.provider ?? openRouterProvider(options.env))(
       options.config,
       options.turns,
       {
         signal: options.signal,
+        instructions: options.instructions,
         uncertain: () => {
           uncertain = true;
         },
         complete: async (usage, responseId) => {
-          if (responseId && responseId.length <= 200)
+          if (
+            options.retainProviderReference !== false &&
+            responseId &&
+            responseId.length <= 200
+          )
             providerReference = responseId;
           const receipt = knownReceipt(usage);
           if (!receipt) {
@@ -294,7 +320,7 @@ export function gatewayProvider(
     });
     const result = streamText({
       model: redactedFundedModel(gateway(config.price.model)),
-      instructions: INSTRUCTIONS,
+      instructions: callbacks.instructions ?? INSTRUCTIONS,
       messages: turns,
       providerOptions: { gateway: { only: [config.price.provider] } },
       maxOutputTokens: LIMITS.outputTokens,

@@ -7,10 +7,17 @@ import {
   toUIMessageStream,
   wrapLanguageModel,
 } from "ai";
+import {
+  type AttachmentImagePlan,
+  boundImageContext,
+  imageModelMessages,
+  loadImagePayload,
+} from "@/lib/attachments/model-payload";
 import type { EnvSource } from "@/lib/auth/env";
 import { INSTRUCTIONS, LIMITS } from "@/lib/credits/config";
 import { boundedJson } from "@/lib/credits/http";
-import { boundContext, type TextTurn } from "@/lib/credits/service";
+import type { TextTurn } from "@/lib/credits/service";
+import type { EntryValidation } from "@/lib/db/client";
 import { AppError, logErrorId } from "@/lib/errors";
 import { BYOK_LIMITS, resolveByokModel, resourceDigest } from "./config";
 import type { ByokProvider } from "./contract";
@@ -131,10 +138,20 @@ export async function startByokStream(options: {
   signal?: AbortSignal;
   store?: ByokStore;
   fetcher?: typeof fetch;
+  instructions?: string;
   beforeProvider?: () => Promise<void>;
+  prepareProvider?: () => Promise<void>;
+  validateEntry?: EntryValidation;
+  attachmentImages?: AttachmentImagePlan;
 }) {
   const model = resolveByokModel(options.env, options.model, options.provider);
-  const turns = boundContext(options.turns);
+  const instructions = options.instructions ?? INSTRUCTIONS;
+  const turns = boundImageContext(
+    options.turns,
+    instructions,
+    options.attachmentImages,
+    model.capabilities,
+  );
   const store = options.store ?? new ByokStore();
   const revision = await store.reserve({
     id: options.idempotencyKey,
@@ -142,7 +159,17 @@ export async function startByokStream(options: {
     provider: options.provider,
     kind: "chat",
     digest: resourceDigest(
-      JSON.stringify({ turns, model, instructions: INSTRUCTIONS }),
+      JSON.stringify({
+        turns,
+        model,
+        instructions,
+        ...(options.attachmentImages
+          ? {
+              attachmentDigest: options.attachmentImages.preview.digest,
+              imageTokens: options.attachmentImages.preview.imageTokens,
+            }
+          : {}),
+      }),
       options.env,
     ),
     env: options.env,
@@ -153,12 +180,29 @@ export async function startByokStream(options: {
   try {
     options.signal?.throwIfAborted();
     await options.beforeProvider?.();
+    await options.prepareProvider?.();
+    // Private image I/O is budgeted and completed while reserved, outside the
+    // final claim transaction. Never fetch URLs or await bytes after the claim.
+    const files = options.attachmentImages
+      ? await loadImagePayload(options.attachmentImages)
+      : [];
+    const messages = imageModelMessages(turns, files);
+    options.signal?.throwIfAborted();
     // Configuration and credential revocation are rechecked at the entry boundary.
     resolveByokModel(options.env, options.model, options.provider);
     const key = await store.enter(
       options.idempotencyKey,
       options.userId,
       options.env,
+      async (tx) => {
+        await options.validateEntry?.(tx);
+        if (
+          JSON.stringify(
+            resolveByokModel(options.env, options.model, options.provider),
+          ) !== JSON.stringify(model)
+        )
+          throw new AppError("byok_model_unavailable", 403);
+      },
     );
     entered = true;
     const fetcher: typeof fetch = Object.assign(
@@ -238,8 +282,8 @@ export async function startByokStream(options: {
       ...(model.adapter === "gateway"
         ? { providerOptions: { gateway: { only: [model.provider] } } }
         : {}),
-      instructions: INSTRUCTIONS,
-      messages: turns,
+      instructions,
+      messages,
       maxOutputTokens: LIMITS.outputTokens,
       maxRetries: 0,
       abortSignal: AbortSignal.any([
@@ -273,13 +317,30 @@ export async function startByokStream(options: {
       );
     void completion.catch(() => logErrorId("byok_completion_failed"));
     return { stream, completion };
-  } catch {
+  } catch (error) {
     await store.finish(
       options.idempotencyKey,
       options.userId,
       entered ? "unknown" : "before_entry",
       options.env,
     );
+    if (
+      error instanceof AppError &&
+      [
+        "context_changed",
+        "context_too_large",
+        "attachment_context_changed",
+        "attachment_context_limit",
+        "attachment_model_unsupported",
+        "attachment_integrity_failed",
+        "attachment_not_ready",
+        "attachments_unavailable",
+        "storage_unavailable",
+        "storage_download_failed",
+        "not_found",
+      ].includes(error.id)
+    )
+      throw error;
     throw new AppError(
       options.signal?.aborted ? "request_cancelled" : "byok_key_unavailable",
       options.signal?.aborted ? 499 : 503,

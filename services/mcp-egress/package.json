@@ -1,0 +1,14 @@
+{
+  "name": "@galaxy/mcp-egress",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node -e \"require('node:fs').rmSync('../../build/mcp-egress', {recursive:true, force:true})\" && tsc -p tsconfig.json && node -e \"require('node:fs').writeFileSync('../../build/mcp-egress/package.json', JSON.stringify({type:'module'}))\"",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test ../../build/mcp-egress/tests/*.node.js",
+    "start": "node ../../build/mcp-egress/src/main.js"
+  }
+}

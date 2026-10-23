@@ -1,4 +1,4 @@
-import type { FileUIPart, UIDataTypes, UIMessagePart, UITools } from "ai";
+import type { FileUIPart } from "ai";
 import type { TypeChatMessage, TypeUIMessage } from "../types";
 
 /**
@@ -8,6 +8,26 @@ import type { TypeChatMessage, TypeUIMessage } from "../types";
  */
 export function getChatErrorMessage(error: Error): string {
   const messages: Record<string, string> = {
+    attachments_unavailable:
+      "Private files are unavailable. Clear selected files to continue with ordinary text.",
+    temporary_attachments_unavailable:
+      "Files are unavailable in temporary conversations.",
+    attachment_context_changed:
+      "A selected file changed or was deleted. Refresh Exact file context and try again.",
+    attachment_not_ready:
+      "A selected file is no longer ready. Refresh or clear your file selection.",
+    attachment_context_limit:
+      "Selected file excerpts and images exceed the input limit. Select fewer files or a shorter excerpt.",
+    attachment_model_unsupported:
+      "This model cannot read the selected images. Choose a reviewed image-capable BYOK model or clear images.",
+    attachment_integrity_failed:
+      "A private file could not be verified. Delete it and upload a fresh copy.",
+    context_changed:
+      "Memory or project instructions changed. Refresh Request context and review the exact selection before sending again.",
+    project_mismatch:
+      "This conversation belongs to a different project. Reload it or start a new conversation.",
+    temporary_conflict:
+      "Start a fresh temporary conversation. Saved conversations cannot be opened in temporary mode.",
     byok_key_invalid:
       "Your provider rejected this key. Replace it in Account & settings → Keys. Platform credits were not used.",
     byok_key_unavailable:
@@ -16,7 +36,7 @@ export function getChatErrorMessage(error: Error): string {
       "Your key changed on another device. Reload before trying again. Platform credits were not used.",
     byok_key_missing: "Save a provider key in Account & settings → Keys.",
     byok_provider_failed:
-      "The provider could not finish this response. Your prompt is saved. Platform credits were not used. Uncertain requests may require service recovery.",
+      "The provider could not finish this response. Saved conversations retain the prompt. Temporary conversations remain only in this tab. Platform credits were not used. Uncertain requests may require service recovery.",
     byok_busy:
       "A BYOK request is active or awaiting service recovery. Platform credits were not used.",
     byok_resource_limited:
@@ -24,13 +44,13 @@ export function getChatErrorMessage(error: Error): string {
     byok_model_unavailable:
       "This BYOK model is unavailable. Choose a reviewed model for the selected provider.",
     byok_capability_denied:
-      "BYOK chat supports reviewed text models only. Files, tools and search are unavailable.",
+      "Use reviewed model capabilities and owned file selections. Direct file URLs, tools and search are unavailable.",
     request_already_recorded:
       "This request is already saved. Reload saved messages to see its status. A deliberate retry creates a new branch.",
     idempotency_conflict:
       "This request ID was already used. Reload the conversation before sending again.",
     funding_busy:
-      "A request is still active or awaiting usage reconciliation. Your current message is saved.",
+      "A request is still active or awaiting usage reconciliation. Saved conversations retain the current message; temporary messages remain in this tab.",
     chat_busy:
       "A saved request is still active. Wait for it to finish, then reload saved messages.",
     daily_exhausted:
@@ -38,11 +58,11 @@ export function getChatErrorMessage(error: Error): string {
     shared_exhausted:
       "The shared allowance is exhausted. Platform generation is paused.",
     provider_failed:
-      "The provider could not finish this response. Your prompt is saved. Any uncertain usage remains reserved until reconciled.",
+      "The provider could not finish this response. Saved conversations retain the prompt. Temporary conversations remain only in this tab. Any uncertain usage remains reserved until reconciled.",
     context_too_large:
       "This prompt exceeds the bounded context limit. Shorten it before sending.",
     funded_capability_denied:
-      "This funded model supports basic text only. Files, tools and search are unavailable.",
+      "This funded model supports basic text and bounded extracted text. Direct file URLs, images, tools and search are unavailable.",
     branch_limit_reached:
       "This conversation has reached its branch limit. Start a new conversation.",
     conversation_limit_reached:
@@ -104,7 +124,7 @@ export function convertToUIMessages(
   return messages.map((message) => ({
     id: message.id,
     role: message.role,
-    parts: message.parts as UIMessagePart<UIDataTypes, UITools>[],
+    parts: message.parts as TypeUIMessage["parts"],
   }));
 }
 
