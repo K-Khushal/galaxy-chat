@@ -226,6 +226,7 @@ export function ImageFixture() {
             catalog={{
               available: true,
               model: imageFixtureSnapshot,
+              reviewDigest: "0".repeat(64),
               credentialRevision: "10000000-0000-4000-8000-000000000001",
             }}
             chatId="fixture-chat"

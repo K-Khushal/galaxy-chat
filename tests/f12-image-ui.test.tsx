@@ -2,7 +2,10 @@ import { expect, test } from "bun:test";
 import { Window } from "happy-dom";
 import { act } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { imageFixtureSnapshot } from "../components/artifacts/image-fixture";
+import {
+  ImageFixture,
+  imageFixtureSnapshot,
+} from "../components/artifacts/image-fixture";
 import {
   type ImageClient,
   ImageComposer,
@@ -324,6 +327,134 @@ test("F12-C composer echoes catalog review digest and blocks dispatch without it
     if (!receivedInput) throw new Error("fixture_generate_not_called");
     expect(receivedInput.reviewDigest).toBe(testDigest);
     expect(receivedInput.modelId).toBe(imageFixtureSnapshot.id);
+  } finally {
+    await act(async () => root.unmount());
+    await window.happyDOM.close();
+    for (const { name, descriptor } of saved) {
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+      else Reflect.deleteProperty(globalThis, name);
+    }
+  }
+});
+
+test("F12-C ImageFixture enables local generate with valid prompt and ack, reaches fake editor, and held simulation keeps outcome held without revision", async () => {
+  const window = new Window();
+  const globals = {
+    window,
+    document: window.document,
+    Event: window.Event,
+    navigator: window.navigator,
+    HTMLElement: window.HTMLElement,
+    HTMLInputElement: window.HTMLInputElement,
+    HTMLTextAreaElement: window.HTMLTextAreaElement,
+    HTMLButtonElement: window.HTMLButtonElement,
+    requestAnimationFrame: window.requestAnimationFrame.bind(window),
+    cancelAnimationFrame: window.cancelAnimationFrame.bind(window),
+    IS_REACT_ACT_ENVIRONMENT: true,
+  };
+  const saved = Object.entries(globals).map(([name, value]) => {
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, name);
+    Object.defineProperty(globalThis, name, {
+      value,
+      configurable: true,
+      writable: true,
+    });
+    return { name, descriptor };
+  });
+
+  const { createRoot } = await import("react-dom/client");
+  const container = window.document.createElement("div");
+  window.document.body.append(container);
+  const root = createRoot(container as unknown as HTMLElement);
+
+  try {
+    await act(async () => {
+      root.render(<ImageFixture />);
+    });
+
+    const textarea = container.querySelector("textarea");
+    if (!(textarea instanceof window.HTMLTextAreaElement))
+      throw new Error("fixture_missing_textarea");
+    const nativeTextareaSetter = Object.getOwnPropertyDescriptor(
+      window.HTMLTextAreaElement.prototype,
+      "value",
+    )?.set;
+    if (!nativeTextareaSetter)
+      throw new Error("fixture_missing_textarea_setter");
+
+    const heldCheckbox = [
+      ...container.querySelectorAll('input[type="checkbox"]'),
+    ].find((c) =>
+      c.parentElement?.textContent?.includes(
+        "Simulate an unknown provider outcome",
+      ),
+    );
+    if (!(heldCheckbox instanceof window.HTMLInputElement))
+      throw new Error("fixture_missing_held_checkbox");
+
+    const ackCheckbox = [
+      ...container.querySelectorAll('input[type="checkbox"]'),
+    ].find((c) =>
+      c.parentElement?.textContent?.includes("OpenRouter key pays"),
+    );
+    if (!(ackCheckbox instanceof window.HTMLInputElement))
+      throw new Error("fixture_missing_ack_checkbox");
+
+    const generateBtn = [...container.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("Generate local fixture"),
+    );
+    if (!(generateBtn instanceof window.HTMLButtonElement))
+      throw new Error("fixture_missing_generate_button");
+
+    // 1. Initially disabled before prompt and ack
+    expect(generateBtn.hasAttribute("disabled")).toBe(true);
+
+    // 2. Enable held simulation, enter valid prompt, check ack -> button enables
+    await act(async () => {
+      heldCheckbox.click();
+      nativeTextareaSetter.call(textarea, "Imaginary planet landscape");
+      textarea.dispatchEvent(new window.Event("input", { bubbles: true }));
+      textarea.dispatchEvent(new window.Event("change", { bubbles: true }));
+      ackCheckbox.click();
+    });
+    expect(generateBtn.hasAttribute("disabled")).toBe(false);
+
+    // 3. Dispatch with unknown outcome simulation: request stays held, no revision saved, editor not reached
+    await act(async () => {
+      generateBtn.click();
+      await new Promise((r) => setTimeout(r, 400));
+    });
+    expect(container.textContent).toContain(
+      "The provider outcome is unknown. This request stays held",
+    );
+    expect(container.textContent).not.toContain("New fixture image");
+    expect(container.textContent).not.toContain("Image revision 1");
+
+    // 4. Uncheck held simulation, click generate again -> succeeds and reaches fake image editor with revision 1
+    await act(async () => {
+      heldCheckbox.click();
+    });
+    const generateBtnRetry = [...container.querySelectorAll("button")].find(
+      (b) => b.textContent?.includes("Generate local fixture"),
+    );
+    if (!(generateBtnRetry instanceof window.HTMLButtonElement))
+      throw new Error("fixture_missing_generate_button_retry");
+
+    await act(async () => {
+      generateBtnRetry.click();
+      await new Promise((r) => setTimeout(r, 400));
+    });
+
+    expect(container.textContent).toContain("New fixture image");
+    expect(container.textContent).toContain("Image revision 1");
+    expect(container.textContent).toContain("Saved image revision");
+    expect(container.textContent).toContain(
+      "Revision 1 — Quiet evening on an imaginary planet",
+    );
+    expect(container.textContent).toContain("Download PNG");
+    expect(container.textContent).toContain(
+      "No provider output or private-storage proof",
+    );
   } finally {
     await act(async () => root.unmount());
     await window.happyDOM.close();
