@@ -1070,8 +1070,11 @@ describe("Platform Budget & Shared Allocation Integration Suite", () => {
     expect(await store.getPlan("2026-11")).toBeNull();
     expect(await store.getCarryRows("2026-11")).toHaveLength(0);
 
-    // 13.4 Exact intra-helper control await delay: clock advances across control query await before clock query
-    let controlQueryDelayed = false;
+    // 13.4 Exact intra-helper control await delay in FINAL validation phase:
+    // Proxy deterministically identifies the final phase (after plan INSERT) and advances
+    // the clock during the final validation helper's funding_control query.
+    let afterPlanInsert = false;
+    let finalControlDelayed = false;
     let simTimeIntra = new Date("2026-11-15T12:00:00Z");
     const proxiedDb = new Proxy(fixture.db, {
       get(target, prop, receiver) {
@@ -1085,12 +1088,18 @@ describe("Platform Budget & Shared Allocation Integration Suite", () => {
                 get(t, p, r) {
                   if (p === "execute") {
                     return async (
-                      query: { queryChunks?: { value?: string }[] },
+                      query: { queryChunks?: { value?: string[] } },
                       ...args: unknown[]
                     ) => {
-                      if (JSON.stringify(query).includes("funding_control")) {
-                        controlQueryDelayed = true;
-                        // Advance clock across this EXACT intra-helper control query await!
+                      const qStr = JSON.stringify(query);
+                      if (
+                        qStr.includes("INSERT INTO public.platform_budget_plan")
+                      ) {
+                        afterPlanInsert = true;
+                      }
+                      if (afterPlanInsert && qStr.includes("funding_control")) {
+                        finalControlDelayed = true;
+                        // Advance clock across the FINAL validation helper's control query await!
                         simTimeIntra = new Date("2026-11-25T00:00:00Z"); // past expiresAt (2026-11-20)
                       }
                       return (
@@ -1123,7 +1132,8 @@ describe("Platform Budget & Shared Allocation Integration Suite", () => {
       id: "plan_coverage_expired",
       status: 503,
     });
-    expect(controlQueryDelayed).toBe(true);
+    expect(afterPlanInsert).toBe(true);
+    expect(finalControlDelayed).toBe(true);
     expect(await store.getPlan("2026-11")).toBeNull();
     expect(await store.getCarryRows("2026-11")).toHaveLength(0);
   });
