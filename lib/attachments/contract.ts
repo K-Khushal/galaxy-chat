@@ -9,6 +9,9 @@ export const attachmentLimits = {
   userFiles: 20,
   uploadLeaseMs: 5 * 60_000,
   signedSeconds: 60,
+  globalObjects: 1000,
+  globalProcessing: 2,
+  ownerProcessing: 1,
 } as const;
 export type AttachmentKind = "text" | "markdown" | "pdf" | "image";
 export type AttachmentView = {

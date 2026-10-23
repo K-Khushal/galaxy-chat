@@ -134,6 +134,17 @@ export const capacitySnapshotSchema = z
       .max(50 * 1024 * 1024),
     attachmentMaxPerMessage: z.number().int().min(1).max(100),
     attachmentUploadLeaseMs: z.number().int().min(1000).max(3_600_000),
+    attachmentTextBytes: z
+      .number()
+      .int()
+      .min(1)
+      .max(10 * 1024 * 1024),
+    attachmentExtractedCharacters: z.number().int().min(1).max(1_000_000),
+    attachmentPages: z.number().int().min(1).max(1000),
+    attachmentImagePixels: z.number().int().min(1).max(100_000_000),
+    attachmentGlobalObjects: z.number().int().min(1).max(100_000),
+    attachmentGlobalProcessing: z.number().int().min(1).max(100),
+    attachmentOwnerProcessing: z.number().int().min(1).max(100),
     // Image bounds
     imageMaxBytes: z
       .number()
@@ -380,6 +391,7 @@ export function resolveCurrentCapacitySnapshot(
         maxRequestBytes: p.maxRequestBytes,
         maxResponseBytes: p.maxResponseBytes,
         timeoutMs: p.timeoutMs,
+        expiresAt: p.expiresAt,
       }))
       .sort((a, b) =>
         `${a.profileId}::${a.revision}::${a.purpose}`.localeCompare(
@@ -444,6 +456,13 @@ export function resolveCurrentCapacitySnapshot(
     attachmentMaxFileBytes: attachmentLimits.fileBytes,
     attachmentMaxPerMessage: attachmentLimits.perMessage,
     attachmentUploadLeaseMs: attachmentLimits.uploadLeaseMs,
+    attachmentTextBytes: attachmentLimits.textBytes,
+    attachmentExtractedCharacters: attachmentLimits.extractedCharacters,
+    attachmentPages: attachmentLimits.pages,
+    attachmentImagePixels: attachmentLimits.imagePixels,
+    attachmentGlobalObjects: attachmentLimits.globalObjects,
+    attachmentGlobalProcessing: attachmentLimits.globalProcessing,
+    attachmentOwnerProcessing: attachmentLimits.ownerProcessing,
     imageMaxBytes: imageLimits.bytes,
     imageMaxMilliseconds: imageLimits.milliseconds,
     imageMaxPromptCharacters: imageLimits.prompt,

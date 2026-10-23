@@ -829,16 +829,24 @@ describe("Platform Budget & Shared Allocation Integration Suite", () => {
     await acquiredPromise;
 
     const baseCaps = resolveCurrentCapacitySnapshot(fixtureEnv);
-    const mutableCandidate = makeTestPlan({
-      month: "2026-11",
-      aCredit: 1_000_000,
-      capacitySnapshot: {
-        ...baseCaps,
-        fundedMonthlyMicrodollars: 1_000_000,
-      },
-    });
-    const originalDigest = computePlanDigest(mutableCandidate);
-    const env = makeConfiguredEnv(mutableCandidate);
+    const mutableCoverage: Record<string, unknown> = {
+      ...makeTestPlan().coverageAssertions,
+    };
+    const mutableCaps: Record<string, unknown> = {
+      ...baseCaps,
+      fundedMonthlyMicrodollars: 1_000_000,
+    };
+    const mutableCandidate: Record<string, unknown> = {
+      ...makeTestPlan({
+        month: "2026-11",
+        aCredit: 1_000_000,
+      }),
+      capacitySnapshot: mutableCaps,
+      coverageAssertions: mutableCoverage,
+    };
+    const validatedBase = parseBudgetPlanInput(mutableCandidate);
+    const originalDigest = computePlanDigest(validatedBase);
+    const env = makeConfiguredEnv(validatedBase);
     const simNow = new Date("2026-11-15T12:00:00Z");
 
     // Start registration in background - it queues behind blockerTx advisory lock
@@ -851,11 +859,8 @@ describe("Platform Budget & Shared Allocation Integration Suite", () => {
     // Caller mutates the candidate while queued:
     mutableCandidate.aCredit = 5_000_000;
     mutableCandidate.bSelected = 1_000;
-    (
-      mutableCandidate.capacitySnapshot as Record<string, unknown>
-    ).fundedMonthlyMicrodollars = 5_000_000;
-    (mutableCandidate.coverageAssertions as Record<string, unknown>).database =
-      false;
+    mutableCaps.fundedMonthlyMicrodollars = 5_000_000;
+    mutableCoverage.database = false;
 
     // Release blocker transaction and let registration proceed
     releaseBlocker?.();
@@ -1064,6 +1069,63 @@ describe("Platform Budget & Shared Allocation Integration Suite", () => {
     });
     expect(await store.getPlan("2026-11")).toBeNull();
     expect(await store.getCarryRows("2026-11")).toHaveLength(0);
+
+    // 13.4 Exact intra-helper control await delay: clock advances across control query await before clock query
+    let controlQueryDelayed = false;
+    let simTimeIntra = new Date("2026-11-15T12:00:00Z");
+    const proxiedDb = new Proxy(fixture.db, {
+      get(target, prop, receiver) {
+        if (prop === "transaction") {
+          return (
+            cb: (tx: unknown) => unknown,
+            opts?: Parameters<typeof target.transaction>[1],
+          ) => {
+            return target.transaction(async (tx: unknown) => {
+              const proxiedTx = new Proxy(tx as object, {
+                get(t, p, r) {
+                  if (p === "execute") {
+                    return async (
+                      query: { queryChunks?: { value?: string }[] },
+                      ...args: unknown[]
+                    ) => {
+                      if (JSON.stringify(query).includes("funding_control")) {
+                        controlQueryDelayed = true;
+                        // Advance clock across this EXACT intra-helper control query await!
+                        simTimeIntra = new Date("2026-11-25T00:00:00Z"); // past expiresAt (2026-11-20)
+                      }
+                      return (
+                        t as {
+                          execute: (
+                            q: unknown,
+                            ...a: unknown[]
+                          ) => Promise<unknown>;
+                        }
+                      ).execute(query, ...args);
+                    };
+                  }
+                  return Reflect.get(t, p, r);
+                },
+              });
+              return cb(proxiedTx);
+            }, opts);
+          };
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+
+    const storeWithProxy = new PlatformBudgetStore(proxiedDb);
+    expect(
+      await rejectionOf(
+        storeWithProxy.registerReviewedPlan(plan1, env1, () => simTimeIntra),
+      ),
+    ).toMatchObject({
+      id: "plan_coverage_expired",
+      status: 503,
+    });
+    expect(controlQueryDelayed).toBe(true);
+    expect(await store.getPlan("2026-11")).toBeNull();
+    expect(await store.getCarryRows("2026-11")).toHaveLength(0);
   });
 
   test("14. capacity bindings: each family limit and MCP profile drift invalidates plan", async () => {
@@ -1100,6 +1162,28 @@ describe("Platform Budget & Shared Allocation Integration Suite", () => {
     });
     expect(() =>
       resolvePlatformBudgetConfig(makeConfiguredEnv(planAttachmentDrift)),
+    ).toThrow();
+
+    // 14.3b Changing attachment textBytes in snapshot causes capacity drift
+    const planTextBytesDrift = makeTestPlan({
+      capacitySnapshot: {
+        ...baseCaps,
+        attachmentTextBytes: 999_999,
+      },
+    });
+    expect(() =>
+      resolvePlatformBudgetConfig(makeConfiguredEnv(planTextBytesDrift)),
+    ).toThrow();
+
+    // 14.3c Changing attachment globalObjects in snapshot causes capacity drift
+    const planGlobalObjectsDrift = makeTestPlan({
+      capacitySnapshot: {
+        ...baseCaps,
+        attachmentGlobalObjects: 5000,
+      },
+    });
+    expect(() =>
+      resolvePlatformBudgetConfig(makeConfiguredEnv(planGlobalObjectsDrift)),
     ).toThrow();
 
     // 14.4 Changing image limit in snapshot causes capacity drift
@@ -1183,6 +1267,23 @@ describe("Platform Budget & Shared Allocation Integration Suite", () => {
     };
     const capsTimeout = resolveCurrentCapacitySnapshot(timeoutMcpEnv);
     expect(capsTimeout.mcpProfilesDigest).not.toBe(
+      capsWithMcp.mcpProfilesDigest,
+    );
+
+    // Alter expiresAt in profile -> digest changes
+    const expiryModifiedProfiles = [
+      {
+        ...sampleProfiles[0],
+        expiresAt: "2031-12-31T23:59:59Z",
+      },
+    ];
+    const expiryMcpEnv = {
+      ...fixtureEnv,
+      MCP_CLIENT_ENABLED: "1",
+      MCP_CLIENT_PROFILES_JSON: JSON.stringify(expiryModifiedProfiles),
+    };
+    const capsExpiry = resolveCurrentCapacitySnapshot(expiryMcpEnv);
+    expect(capsExpiry.mcpProfilesDigest).not.toBe(
       capsWithMcp.mcpProfilesDigest,
     );
 

@@ -80,6 +80,13 @@ async function verifyActiveEnvironmentAndClock(
   env: EnvSource,
   nowProvider?: Date | (() => Date),
 ): Promise<{ now: Date; runtimeConfig: PlatformBudgetConfig }> {
+  const [control] = await tx.execute<{ stopped: boolean }>(
+    sql`SELECT stopped FROM public.funding_control WHERE id = 'platform'`,
+  );
+  if (!control || control.stopped) {
+    throw new AppError("funded_inference_disabled", 503);
+  }
+
   const [clock] = await tx.execute<{ now: Date }>(
     sql`SELECT clock_timestamp() AS now`,
   );
@@ -87,13 +94,6 @@ async function verifyActiveEnvironmentAndClock(
     typeof nowProvider === "function"
       ? nowProvider()
       : (nowProvider ?? new Date(clock.now));
-
-  const [control] = await tx.execute<{ stopped: boolean }>(
-    sql`SELECT stopped FROM public.funding_control WHERE id = 'platform'`,
-  );
-  if (!control || control.stopped) {
-    throw new AppError("funded_inference_disabled", 503);
-  }
 
   if (!/^[0-9]{4}-(0[1-9]|1[0-2])$/.test(expected.month)) {
     throw new AppError("invalid_budget_month", 400);
@@ -399,6 +399,13 @@ export class PlatformBudgetStore {
       async (tx) => {
         await lockFunding(tx);
 
+        const [control] = await tx.execute<{ stopped: boolean }>(
+          sql`SELECT stopped FROM public.funding_control WHERE id = 'platform'`,
+        );
+        if (!control || control.stopped) {
+          throw new AppError("funded_inference_disabled", 503);
+        }
+
         const [clock] = await tx.execute<{ now: Date }>(
           sql`SELECT clock_timestamp() AS now`,
         );
@@ -406,13 +413,6 @@ export class PlatformBudgetStore {
           typeof testNow === "function"
             ? testNow()
             : (testNow ?? new Date(clock.now));
-
-        const [control] = await tx.execute<{ stopped: boolean }>(
-          sql`SELECT stopped FROM public.funding_control WHERE id = 'platform'`,
-        );
-        if (!control || control.stopped) {
-          throw new AppError("funded_inference_disabled", 503);
-        }
 
         if (!/^[0-9]{4}-(0[1-9]|1[0-2])$/.test(expected.month)) {
           throw new AppError("invalid_budget_month", 400);
