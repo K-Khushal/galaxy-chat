@@ -57,7 +57,9 @@ export async function GET(request: Request) {
           headers: {
             ...privateHeaders,
             "content-type":
-              document.kind === "chart" || document.kind === "table"
+              document.kind === "chart" ||
+              document.kind === "table" ||
+              document.kind === "image"
                 ? "application/json; charset=utf-8"
                 : "text/plain; charset=utf-8",
             "content-disposition": `attachment; filename="${artifactFilename(document.title, document.kind)}"`,

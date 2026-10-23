@@ -1,6 +1,8 @@
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { boundedLimit } from "@/lib/actions/chat/chat";
+import { lockAttachments } from "@/lib/attachments/store";
 import { requireChatAccess } from "@/lib/auth/access";
+import { lockByokResources } from "@/lib/byok/store";
 import { requireDb } from "@/lib/db/client";
 import { chatMessage, chat as chatTable } from "@/lib/db/schema";
 import { AppError } from "@/lib/errors";
@@ -268,10 +270,14 @@ export async function deleteMessage(
   userId: string,
 ): Promise<boolean> {
   const db = requireDb();
-  const rows = await db
-    .delete(chatMessage)
-    .where(and(eq(chatMessage.id, id), eq(chatMessage.userId, userId)))
-    .returning({ id: chatMessage.id });
+  const rows = await db.transaction(async (tx) => {
+    await lockByokResources(tx);
+    await lockAttachments(tx);
+    return tx
+      .delete(chatMessage)
+      .where(and(eq(chatMessage.id, id), eq(chatMessage.userId, userId)))
+      .returning({ id: chatMessage.id });
+  });
   return rows.length > 0;
 }
 
@@ -285,21 +291,25 @@ export async function deleteTrailingMessages(
     throw new AppError("forbidden", 403);
   }
   const db = requireDb();
-  const rows = await db
-    .delete(chatMessage)
-    .where(
-      and(
-        eq(chatMessage.chatId, chatId),
-        eq(chatMessage.userId, userId),
-        sql`(${chatMessage.createdAt}, ${chatMessage.id}) > (
+  const rows = await db.transaction(async (tx) => {
+    await lockByokResources(tx);
+    await lockAttachments(tx);
+    return tx
+      .delete(chatMessage)
+      .where(
+        and(
+          eq(chatMessage.chatId, chatId),
+          eq(chatMessage.userId, userId),
+          sql`(${chatMessage.createdAt}, ${chatMessage.id}) > (
           select created_at, id from public.chat_message
           where id = ${anchorId}
             and chat_id = ${chatId}
             and user_id = ${userId}
         )`,
-      ),
-    )
-    .returning({ id: chatMessage.id });
+        ),
+      )
+      .returning({ id: chatMessage.id });
+  });
   return rows.length;
 }
 

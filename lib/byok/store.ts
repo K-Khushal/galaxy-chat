@@ -25,7 +25,7 @@ type Operation = {
   credential_revision: string;
   state: "reserved" | "entered" | "held" | "complete" | "released";
   digest: string;
-  kind: "chat" | "test";
+  kind: "chat" | "test" | "image";
 };
 const active = sql`state IN ('reserved','entered','held')`;
 export async function lockByokResources(tx: Tx) {
@@ -164,49 +164,62 @@ export class ByokStore {
       );
     });
   }
-  async reserve(options: {
-    id: string;
-    userId: string;
-    provider: ByokProvider;
-    kind: "chat" | "test";
-    digest: string;
-    env: EnvSource;
-    revision?: string;
-    resourceUnits?: 1 | 3;
-  }) {
+  async reserveIn(
+    tx: Tx,
+    options: {
+      id: string;
+      userId: string;
+      provider: ByokProvider;
+      kind: "chat" | "test" | "image";
+      digest: string;
+      env: EnvSource;
+      revision?: string;
+      resourceUnits?: 1 | 3;
+    },
+  ) {
     requireByok(options.env);
     const actor = resourceActor(options.userId, options.env);
     const units = options.resourceUnits ?? 1;
     if (units !== 1 && units !== 3)
       throw new AppError("byok_resource_limited", 429);
-    return this.transaction(async (tx) => {
-      await lockByokResources(tx);
-      const [prior] = await tx.execute<Operation>(
-        sql`SELECT * FROM byok_operation WHERE id=${options.id}`,
+    await lockByokResources(tx);
+    const [prior] = await tx.execute<Operation>(
+      sql`SELECT * FROM byok_operation WHERE id=${options.id}`,
+    );
+    if (prior)
+      throw new AppError(
+        prior.actor_key === actor && prior.digest !== options.digest
+          ? "idempotency_conflict"
+          : "request_already_processed",
+        409,
       );
-      if (prior)
-        throw new AppError(
-          prior.actor_key === actor && prior.digest !== options.digest
-            ? "idempotency_conflict"
-            : "request_already_processed",
-          409,
-        );
-      const state = await this.limits(tx, actor, units);
-      if (state !== "available")
-        throw new AppError(
-          state === "busy" ? "byok_busy" : "byok_resource_limited",
-          429,
-        );
-      const row = await credential(tx, options.userId, options.provider);
-      if (options.revision && options.revision !== row.revision)
-        throw new AppError("byok_key_changed", 409);
-      if (options.kind === "chat" && row.test_state === "invalid")
-        throw new AppError("byok_key_invalid", 403);
-      await tx.execute(
-        sql`INSERT INTO byok_operation(id,actor_key,provider,credential_revision,kind,digest,state,resource_units) VALUES(${options.id},${actor},${options.provider},${row.revision},${options.kind},${options.digest},'reserved',${units})`,
+    const state = await this.limits(tx, actor, units);
+    if (state !== "available")
+      throw new AppError(
+        state === "busy" ? "byok_busy" : "byok_resource_limited",
+        429,
       );
-      return row.revision;
-    });
+    const row = await credential(tx, options.userId, options.provider);
+    if (options.revision && options.revision !== row.revision)
+      throw new AppError("byok_key_changed", 409);
+    if (options.kind !== "test" && row.test_state === "invalid")
+      throw new AppError("byok_key_invalid", 403);
+    await tx.execute(
+      sql`INSERT INTO byok_operation(id,actor_key,provider,credential_revision,kind,digest,state,resource_units) VALUES(${options.id},${actor},${options.provider},${row.revision},${options.kind},${options.digest},'reserved',${units})`,
+    );
+    return row.revision;
+  }
+  async reserve(options: {
+    id: string;
+    userId: string;
+    provider: ByokProvider;
+    kind: "chat" | "test" | "image";
+    digest: string;
+    env: EnvSource;
+    revision?: string;
+    resourceUnits?: 1 | 3;
+  }) {
+    return this.transaction((tx) => this.reserveIn(tx, options));
   }
   /** Commit entry before execution. Replacement/delete serialize against this check.
    * A key already in use cannot be recalled from the remote provider. */
@@ -228,11 +241,12 @@ export class ByokStore {
       const row = await credential(tx, userId, operation.provider);
       if (row.revision !== operation.credential_revision)
         throw new AppError("byok_key_changed", 409);
-      if (operation.kind === "chat" && row.test_state === "invalid")
+      if (operation.kind !== "test" && row.test_state === "invalid")
         throw new AppError("byok_key_invalid", 403);
-      const key = decrypt(row, env);
       // Use only this transaction queue for the final owned-context check.
       await validateEntry?.(tx);
+      requireByok(env);
+      const key = decrypt(row, env);
       await tx.execute(
         sql`UPDATE byok_operation SET state='entered',updated_at=now() WHERE id=${id} AND actor_key=${actor}`,
       );

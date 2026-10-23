@@ -45,6 +45,7 @@
         "date-fns": "^4.1.0",
         "drizzle-orm": "0.45.4",
         "embla-carousel-react": "^8.6.0",
+        "fast-png": "8.0.0",
         "framer-motion": "^12.23.22",
         "hast-util-from-html": "2.0.3",
         "hast-util-sanitize": "5.0.2",
@@ -1113,7 +1114,11 @@
 
     "fast-equals": ["fast-equals@5.4.5", "", {}, "sha512-yKEpcFuRPu/pTQL2VB8YKE2yFldrLlIsoWtJeBnAdqEhvu21OgkFT0C8njf/xYc2LSZGEr3K9JGjthHJxnVLvQ=="],
 
+    "fast-png": ["fast-png@8.0.0", "", { "dependencies": { "fflate": "^0.8.2", "iobuffer": "^6.0.1" } }, "sha512-gCysNasJ8KEMgfdYIKd/wTDo6ENK1PWT0RJO7O+0pgmuHPw2O6tA1WvdxFRJoLf9V8yFYpG0FA1YgI8X97OhJA=="],
+
     "fastdom": ["fastdom@1.0.12", "", { "dependencies": { "strictdom": "^1.0.1" } }, "sha512-LB+xjSTEbjHE1cWsxu+tN2Xqr1kpi+V9aADI7sVM5ZMaXyYGPHULQMzpJMYqOTULK/73pUkWVzzObFRBkPr+hg=="],
+
+    "fflate": ["fflate@0.8.3", "", {}, "sha512-tbZNuJrLwGUp3zshBtdy4W+ORxZuIh8a5ilyIEQDC5rY1f3U20JMry0Ll3WBzU58EZKsEuJFXhb5gwv8CsPvgA=="],
 
     "finalhandler": ["finalhandler@2.1.1", "", { "dependencies": { "debug": "^4.4.0", "encodeurl": "^2.0.0", "escape-html": "^1.0.3", "on-finished": "^2.4.1", "parseurl": "^1.3.3", "statuses": "^2.0.1" } }, "sha512-S8KoZgRZN+a5rNwqTxlZZePjT/4cnm0ROV70LedRHZ0p8u9fRID0hJUZQpkKLzro8LfmC8sx23bY6tVNxv8pQA=="],
 
@@ -1214,6 +1219,8 @@
     "input-otp": ["input-otp@1.5.0", "", { "peerDependencies": { "react": "^16.8 || ^17.0 || ^18.0 || ^19.0.0 || ^19.0.0-rc", "react-dom": "^16.8 || ^17.0 || ^18.0 || ^19.0.0 || ^19.0.0-rc" } }, "sha512-3AcfdW1sNG0FmSA5hHMBXG7jNW5CdcdKs8ln8JOmn6S2SRkoXoJx+2UwC+ZvjflfnOdHJx0SfQ9/YjlxVYLtGQ=="],
 
     "internmap": ["internmap@2.0.3", "", {}, "sha512-5Hh7Y1wQbvY5ooGgPbDaL5iYLAPzMTUrjMulskHLH6wnv/A+1q5rgEaiuqEjB+oxGXIVZs1FF+R/KPN3ZSQYYg=="],
+
+    "iobuffer": ["iobuffer@6.0.1", "", {}, "sha512-SZWYkWNfjIXIBYSDpXDYIgshqtbOPsi4lviawAEceR1Kqk+sHDlcQjWrzNQsii80AyBY0q5c8HCTNjqo74ul+Q=="],
 
     "ipaddr.js": ["ipaddr.js@1.9.1", "", {}, "sha512-0KI/607xoxSToH7GjN1FfSbLoU0+btTicjsQSWQlh/hZykN8KpmMf7uYwPW3R+akZ6R/w18ZlXSHBYXiYUPO3g=="],
 

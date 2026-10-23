@@ -176,7 +176,7 @@ test("Supabase REST uses private checks, bounded internal signed URL, octet-stre
     "application/octet-stream",
   );
   expect(calls[3].init?.headers).toBeUndefined();
-  expect(calls[3].init?.redirect).toBe("error");
+  expect(calls[3].init?.redirect).toBe("manual");
   expect(calls[4].url).toBe(
     "https://fixture.supabase.co/storage/v1/object/private",
   );
@@ -684,4 +684,58 @@ test("attachment configuration remains unavailable without explicit reviewed sto
       if (!(key in previous)) delete process.env[key];
     Object.assign(process.env, previous);
   }
+});
+
+test("F10 private storage cancels every manual redirect and never follows to a second origin", async () => {
+  let cancelled = 0,
+    calls = 0;
+  const redirect = () =>
+    new Response(
+      new ReadableStream({
+        cancel() {
+          cancelled++;
+        },
+      }),
+      { status: 302, headers: { location: "https://evil.invalid/storage" } },
+    );
+  const network = Object.assign(
+    async (_input: RequestInfo | URL, init?: RequestInit) => {
+      calls++;
+      expect(init?.redirect).toBe("manual");
+      return redirect();
+    },
+    { preconnect: fetch.preconnect },
+  );
+  const storage = new SupabaseAttachmentStorage(config.storage, network);
+  for (const action of [
+    () => storage.assertPrivate(),
+    () => storage.upload("alice/test", new Uint8Array([1])),
+    () => storage.remove("alice/test"),
+    () => storage.download("alice/test", 1),
+  ]) {
+    const before = calls;
+    await errorId(action(), "storage_redirect_denied");
+    expect(calls).toBe(before + 1);
+  }
+  expect(cancelled).toBe(4);
+  const signed = new SupabaseAttachmentStorage(
+    config.storage,
+    Object.assign(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        expect(init?.redirect).toBe("manual");
+        if (init?.method === "POST")
+          return Response.json({
+            signedURL: "/object/sign/private/alice/test?token=fixture",
+          });
+        expect(String(input)).toBe(
+          "https://fixture.supabase.co/storage/v1/object/sign/private/alice/test?token=fixture",
+        );
+        expect(init?.headers).toBeUndefined();
+        return redirect();
+      },
+      { preconnect: fetch.preconnect },
+    ),
+  );
+  await errorId(signed.download("alice/test", 1), "storage_redirect_denied");
+  expect(cancelled).toBe(5);
 });

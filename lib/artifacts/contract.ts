@@ -7,12 +7,19 @@ export const artifactLimits = {
   ownerBytes: 8 * 1024 * 1024,
   requestBytes: 800 * 1024,
 } as const;
-export const artifactKind = z.enum(["markdown", "html", "chart", "table"]);
+export const artifactKind = z.enum([
+  "markdown",
+  "html",
+  "chart",
+  "table",
+  "image",
+]);
 export const artifactKindLabel = {
   markdown: "Markdown",
   html: "HTML",
   chart: "Chart",
   table: "Table",
+  image: "Image",
 } as const;
 export const artifactIdentifier = z
   .string()
@@ -39,7 +46,7 @@ export const artifactMutation = z.discriminatedUnion("action", [
       action: z.literal("create"),
       chatId: artifactIdentifier,
       messageId: artifactIdentifier,
-      kind: artifactKind,
+      kind: artifactKind.exclude(["image"]),
       title: artifactTitle,
     })
     .strict(),
@@ -90,7 +97,7 @@ export function artifactFilename(title: string, kind: ArtifactKind) {
       .replace(/^-+|-+$/g, "")
       .slice(0, 72) || "artifact";
   // Source is deliberately delivered as text, never as an executable HTML page.
-  return `${stem}.${kind === "html" ? "html.txt" : kind === "chart" ? "chart.json" : kind === "table" ? "table.json" : "md"}`;
+  return `${stem}.${kind === "html" ? "html.txt" : kind === "chart" ? "chart.json" : kind === "table" ? "table.json" : kind === "image" ? "provenance.json" : "md"}`;
 }
 export function tableExportFilename(
   title: string,

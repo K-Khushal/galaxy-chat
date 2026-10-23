@@ -14,7 +14,6 @@ import { AppError } from "@/lib/errors";
 
 type Db = ReturnType<typeof requireDb>;
 export type AttachmentExecutor = Pick<Db, "execute">;
-type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 export type AttachmentRow = {
   id: string;
   user_id: string;
@@ -62,7 +61,7 @@ export async function readOwnedAttachment(
   if (!rows[0]) throw new AppError("not_found", 404);
   return rows[0];
 }
-function ownerKey(userId: string) {
+export function privateOwnerKey(userId: string) {
   return createHash("sha256")
     .update(`galaxy-attachment-owner-v1:${userId}`)
     .digest("hex");
@@ -84,17 +83,6 @@ export class AttachmentStore {
   async owned(userId: string, id: string) {
     return readOwnedAttachment(this.db, userId, id);
   }
-  private async transfer(tx: Tx, bytes: number, config: AttachmentConfig) {
-    // Bill a minimum per operation to bound tiny-file request/metadata amplification.
-    const billed = Math.max(bytes, 65_536);
-    const rows =
-      await tx.execute(sql`INSERT INTO attachment_transfer_budget(day,bytes) SELECT (now() AT TIME ZONE 'UTC')::date,${billed} WHERE ${billed}::bigint<=${config.dailyTransferBytes}::bigint
-   ON CONFLICT(day) DO UPDATE SET bytes=attachment_transfer_budget.bytes+EXCLUDED.bytes WHERE attachment_transfer_budget.bytes+EXCLUDED.bytes<=${config.dailyTransferBytes} RETURNING day`);
-    if (!rows[0]) throw new AppError("attachment_transfer_limit", 429);
-    await tx.execute(
-      sql`DELETE FROM attachment_transfer_budget WHERE day<(now() AT TIME ZONE 'UTC')::date-35`,
-    );
-  }
   async reserve(
     userId: string,
     chatId: string,
@@ -103,7 +91,7 @@ export class AttachmentStore {
   ) {
     if (!userId || userId.length > 128)
       throw new AppError("invalid_object", 400);
-    const owner = ownerKey(userId);
+    const owner = privateOwnerKey(userId);
     return this.db.transaction(async (tx) => {
       await lockAttachments(tx);
       // Pin parent identity/deletion without blocking artifact FK key-share reads.
@@ -112,32 +100,8 @@ export class AttachmentStore {
         sql`SELECT id FROM chat WHERE id=${chatId} AND user_id=${userId} FOR KEY SHARE`,
       );
       if (!chat[0]) throw new AppError("not_found", 404);
-      const totals = await tx.execute<{
-        total: string;
-        owned: string;
-        count: string;
-        user_count: string;
-        active: string;
-        owned_active: string;
-      }>(sql`SELECT
-    (COALESCE(SUM(bytes),0)+(SELECT COALESCE(SUM(bytes),0) FROM attachment_delete_queue))::text AS total,
-    (COALESCE(SUM(bytes) FILTER(WHERE user_id=${userId}),0)+(SELECT COALESCE(SUM(bytes),0) FROM attachment_delete_queue WHERE split_part(object_key,'/',1)=${owner}))::text AS owned,
-    (COUNT(*)+(SELECT COUNT(*) FROM attachment_delete_queue))::text AS count,
-    (COUNT(*) FILTER(WHERE user_id=${userId})+(SELECT COUNT(*) FROM attachment_delete_queue WHERE split_part(object_key,'/',1)=${owner}))::text AS user_count,
-    COUNT(*) FILTER(WHERE state='processing' AND lease_until>now())::text AS active,
-    COUNT(*) FILTER(WHERE user_id=${userId} AND state='processing' AND lease_until>now())::text AS owned_active FROM attachment`);
-      const t = totals[0];
-      if (
-        !t ||
-        Number(t.total) + file.bytes > config.platformBytes ||
-        Number(t.owned) + file.bytes > config.userBytes ||
-        Number(t.count) >= 1000 ||
-        Number(t.user_count) >= attachmentLimits.userFiles
-      )
-        throw new AppError("attachment_storage_limit", 413);
-      if (Number(t.active) >= 2 || Number(t.owned_active) >= 1)
-        throw new AppError("attachment_processing_limit", 429);
-      await this.transfer(tx, file.bytes, config);
+      await reservePrivateCapacity(tx, userId, file.bytes, config);
+      await reservePrivateTransfer(tx, file.bytes, config);
       const id = crypto.randomUUID();
       const key = `${owner}/${id}`;
       const rows =
@@ -213,7 +177,7 @@ export class AttachmentStore {
         sql`SELECT a.* FROM attachment a JOIN chat c ON c.id=a.chat_id AND c.user_id=a.user_id WHERE a.id=${id} AND a.user_id=${userId} AND a.state='ready' FOR UPDATE OF a`,
       );
       if (!rows[0]) throw new AppError("attachment_not_ready", 409);
-      await this.transfer(tx, rows[0].bytes, config);
+      await reservePrivateTransfer(tx, rows[0].bytes, config);
       return rows[0];
     });
   }
@@ -259,4 +223,58 @@ export class AttachmentStore {
       return false;
     });
   }
+}
+
+export async function reservePrivateTransfer(
+  tx: AttachmentExecutor,
+  bytes: number,
+  config: AttachmentConfig,
+) {
+  // Bill a minimum per operation to bound tiny-file request/metadata amplification.
+  const billed = Math.max(bytes, 65_536);
+  const rows =
+    await tx.execute(sql`INSERT INTO attachment_transfer_budget(day,bytes) SELECT (now() AT TIME ZONE 'UTC')::date,${billed} WHERE ${billed}::bigint<=${config.dailyTransferBytes}::bigint
+   ON CONFLICT(day) DO UPDATE SET bytes=attachment_transfer_budget.bytes+EXCLUDED.bytes WHERE attachment_transfer_budget.bytes+EXCLUDED.bytes<=${config.dailyTransferBytes} RETURNING day`);
+  if (!rows[0]) throw new AppError("attachment_transfer_limit", 429);
+  await tx.execute(
+    sql`DELETE FROM attachment_transfer_budget WHERE day<(now() AT TIME ZONE 'UTC')::date-35`,
+  );
+}
+
+export async function reservePrivateCapacity(
+  tx: AttachmentExecutor,
+  userId: string,
+  bytes: number,
+  config: AttachmentConfig,
+  existing = false,
+) {
+  const owner = privateOwnerKey(userId);
+  const totals = await tx.execute<{
+    total: string;
+    owned: string;
+    count: string;
+    user_count: string;
+    active: string;
+    owned_active: string;
+  }>(sql`SELECT
+    (COALESCE(SUM(bytes),0)+(SELECT COALESCE(SUM(bytes),0) FROM attachment_delete_queue))::text AS total,
+    (COALESCE(SUM(bytes) FILTER(WHERE user_id=${userId}),0)+(SELECT COALESCE(SUM(bytes),0) FROM attachment_delete_queue WHERE split_part(object_key,'/',1)=${owner}))::text AS owned,
+    (COUNT(*)+(SELECT COUNT(*) FROM attachment_delete_queue))::text AS count,
+    (COUNT(*) FILTER(WHERE user_id=${userId})+(SELECT COUNT(*) FROM attachment_delete_queue WHERE split_part(object_key,'/',1)=${owner}))::text AS user_count,
+    COUNT(*) FILTER(WHERE state='processing' AND lease_until>now())::text AS active,
+    COUNT(*) FILTER(WHERE user_id=${userId} AND state='processing' AND lease_until>now())::text AS owned_active FROM (SELECT user_id,bytes,state,lease_until FROM attachment UNION ALL SELECT user_id,bytes,state,lease_until FROM image_object) objects`);
+  const t = totals[0];
+  if (
+    !t ||
+    Number(t.total) + bytes > config.platformBytes ||
+    Number(t.owned) + bytes > config.userBytes ||
+    Number(t.count) + (existing ? 0 : 1) > 1000 ||
+    Number(t.user_count) + (existing ? 0 : 1) > attachmentLimits.userFiles
+  )
+    throw new AppError("attachment_storage_limit", 413);
+  if (
+    Number(t.active) + (existing ? 0 : 1) > 2 ||
+    Number(t.owned_active) + (existing ? 0 : 1) > 1
+  )
+    throw new AppError("attachment_processing_limit", 429);
 }
