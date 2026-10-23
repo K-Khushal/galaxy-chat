@@ -2,7 +2,7 @@
 ALTER TABLE artifact DROP CONSTRAINT artifact_kind_check;
 ALTER TABLE artifact ADD CONSTRAINT artifact_kind_check CHECK(kind IN ('markdown','html','chart','table','image'));
 ALTER TABLE byok_operation DROP CONSTRAINT byok_operation_kind_check;
-ALTER TABLE byok_operation ADD CONSTRAINT byok_operation_kind_check CHECK(kind IN ('chat','test','image'));
+ALTER TABLE byok_operation ADD CONSTRAINT byok_operation_kind_check CHECK(kind IN ('chat','test','search','image'));
 CREATE TABLE image_generation (
  id text PRIMARY KEY, user_id text NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
  chat_id text NOT NULL, message_id text NOT NULL,

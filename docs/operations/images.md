@@ -30,9 +30,9 @@ There is no platform-funded fallback or hidden rewrite, retry, or upscale.
 `ATTACHMENTS_ENABLED=1` and the existing verified-private storage configuration and
 byte/transfer budgets are also required. Images and F10 attachments share private
 capacity, object limits, processing limits, transfer budget, and durable delete
-queue. Apply migrations through `bun run db:migrate`; 0013 is deliberately allowed
-to follow 0010 in this branch while 0011/0012 belong to separate unmerged work.
-Do not create placeholder migration files.
+queue. Apply migrations through `bun run db:migrate`; migrations 0011 and 0012
+are inherited from reviewed main, and 0013 adds image artifacts to them while
+preserving absent-intermediate number upgrade support. Do not create placeholder migration files.
 
 ## Execution and lifecycle
 

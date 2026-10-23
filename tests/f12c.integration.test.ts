@@ -646,6 +646,234 @@ describe("F12-C image lifecycle", () => {
     expect((await f.query("SELECT * FROM image_generation")).length).toBe(1);
     expect((await f.query("SELECT * FROM image_object")).length).toBe(1);
   });
+  test("F12-C post-upgrade search operations reserve normally and existing holds count toward caps", async () => {
+    const f = current;
+    const { SearchStore } = await import("../lib/search/store");
+    const { resolveSearchConfig } = await import("../lib/search/config");
+
+    const searchEnv = {
+      ...process.env,
+      SEARCH_TOOLS_ENABLED: "1",
+      SEARCH_PRICE_JSON: JSON.stringify({
+        id: "tavily-basic-fixture",
+        provider: "tavily",
+        contract: "tavily-basic-v1",
+        endpoint: "https://api.tavily.com/search",
+        creditsPerRequest: 1,
+        worstCaseMicrodollars: 8000,
+        verified: true,
+        verifiedAt: "2026-10-18T00:00:00Z",
+        expiresAt: "2030-01-01T00:00:00Z",
+      }),
+      SEARCH_ACTOR_HOURLY_REQUESTS: "4",
+      SEARCH_ACTOR_DAILY_REQUESTS: "12",
+      SEARCH_GLOBAL_DAILY_REQUESTS: "100",
+      SEARCH_ACTOR_DAILY_MICRODOLLARS: "96000",
+      SEARCH_GLOBAL_DAILY_MICRODOLLARS: "800000",
+    };
+
+    const searchStore = new SearchStore(f.db);
+    const searchKey = "f13b-local-tavily-key-never-sent-live-123456";
+    await searchStore.save("alice", searchKey, null, searchEnv);
+    const [cred] = await searchStore.credentials("alice");
+
+    await f.query(
+      "INSERT INTO tool_run(id,user_id,request,state) VALUES('search-run-1','alice','{}'::jsonb,'running'); INSERT INTO tool_call(run_id,id,name,state) VALUES('search-run-1','search-call-1','webSearch','running'); INSERT INTO tool_call(run_id,id,name,state) VALUES('search-run-1','search-call-2','webSearch','running')",
+    );
+
+    const searchConfig = resolveSearchConfig(searchEnv);
+    if (!searchConfig) throw new Error("fixture_missing_search_config");
+    const opId = crypto.randomUUID();
+    await searchStore.reserve({
+      id: opId,
+      runId: "search-run-1",
+      callId: "search-call-1",
+      userId: "alice",
+      selection: {
+        provider: "tavily",
+        query: "fixture search query",
+        credentialRevision: cred.revision,
+        priceRevision: "tavily-basic-fixture",
+        estimateMicrodollars: 8000,
+        ceilingMicrodollars: 8000,
+        providerBudgetAcknowledged: true,
+        querySharingAcknowledged: true,
+      },
+      config: searchConfig,
+      digest: "e".repeat(64),
+      env: searchEnv,
+    });
+
+    const [newOp] = await f.query("SELECT * FROM byok_operation WHERE id=$1", [
+      opId,
+    ]);
+    expect(newOp.kind).toBe("search");
+    expect(newOp.state).toBe("reserved");
+    expect(newOp.reserved_microdollars).toBe(8000);
+
+    // Anti-abuse request retention: capping hourly requests to 1 rejects second reservation even before entry
+    expect(
+      await rejectionOf(
+        searchStore.reserve({
+          id: crypto.randomUUID(),
+          runId: "search-run-1",
+          callId: "search-call-2",
+          userId: "alice",
+          selection: {
+            provider: "tavily",
+            query: "fixture search query 2",
+            credentialRevision: cred.revision,
+            priceRevision: "tavily-basic-fixture",
+            estimateMicrodollars: 8000,
+            ceilingMicrodollars: 8000,
+            providerBudgetAcknowledged: true,
+            querySharingAcknowledged: true,
+          },
+          config: {
+            ...searchConfig,
+            caps: { ...searchConfig.caps, actorHourlyRequests: 1 },
+          },
+          digest: "f".repeat(64),
+          env: searchEnv,
+        }),
+      ),
+    ).toMatchObject({ id: "search_resource_limited" });
+
+    // Direct held-money test: transition the first search operation to held with reserved 8000 liability
+    await f.query("UPDATE byok_operation SET state='held' WHERE id=$1", [opId]);
+
+    const [heldOp] = await f.query(
+      "SELECT id,kind,state,reserved_microdollars FROM byok_operation WHERE id=$1",
+      [opId],
+    );
+    expect(heldOp.id).toBe(opId);
+    expect(heldOp.kind).toBe("search");
+    expect(heldOp.state).toBe("held");
+    expect(heldOp.reserved_microdollars).toBe(8000);
+
+    // Provide running tool calls bound to opId so id<>options.runId avoids accidental concurrency denial
+    await f.query(
+      `INSERT INTO tool_run(id,user_id,request,state) VALUES('${opId}','alice','{}'::jsonb,'running'); INSERT INTO tool_call(run_id,id,name,state) VALUES('${opId}','search-call-actor-cap','webSearch','running'),('${opId}','search-call-global-cap','webSearch','running'),('${opId}','search-call-second','webSearch','running');`,
+    );
+
+    // Exact 8000 actor moneycap blocks another 8000 reservation while keeping normal request caps high
+    expect(
+      await rejectionOf(
+        searchStore.reserve({
+          id: crypto.randomUUID(),
+          runId: opId,
+          callId: "search-call-actor-cap",
+          userId: "alice",
+          selection: {
+            provider: "tavily",
+            query: "fixture search query actor cap",
+            credentialRevision: cred.revision,
+            priceRevision: "tavily-basic-fixture",
+            estimateMicrodollars: 8000,
+            ceilingMicrodollars: 8000,
+            providerBudgetAcknowledged: true,
+            querySharingAcknowledged: true,
+          },
+          config: {
+            ...searchConfig,
+            caps: {
+              ...searchConfig.caps,
+              actorHourlyRequests: 10,
+              actorDailyRequests: 20,
+              actorDailyMicrodollars: 8000,
+              globalDailyMicrodollars: 800_000,
+            },
+          },
+          digest: "a".repeat(64),
+          env: searchEnv,
+        }),
+      ),
+    ).toMatchObject({ id: "search_resource_limited" });
+
+    // Exact 8000 global moneycap separately blocks
+    expect(
+      await rejectionOf(
+        searchStore.reserve({
+          id: crypto.randomUUID(),
+          runId: opId,
+          callId: "search-call-global-cap",
+          userId: "alice",
+          selection: {
+            provider: "tavily",
+            query: "fixture search query global cap",
+            credentialRevision: cred.revision,
+            priceRevision: "tavily-basic-fixture",
+            estimateMicrodollars: 8000,
+            ceilingMicrodollars: 8000,
+            providerBudgetAcknowledged: true,
+            querySharingAcknowledged: true,
+          },
+          config: {
+            ...searchConfig,
+            caps: {
+              ...searchConfig.caps,
+              actorHourlyRequests: 10,
+              actorDailyRequests: 20,
+              actorDailyMicrodollars: 96_000,
+              globalDailyMicrodollars: 8000,
+            },
+          },
+          digest: "b".repeat(64),
+          env: searchEnv,
+        }),
+      ),
+    ).toMatchObject({ id: "search_resource_limited" });
+
+    // Raising BOTH monetary caps to 16000 allows second reserve
+    const secondOpId = crypto.randomUUID();
+    await searchStore.reserve({
+      id: secondOpId,
+      runId: opId,
+      callId: "search-call-second",
+      userId: "alice",
+      selection: {
+        provider: "tavily",
+        query: "fixture search query second allowed",
+        credentialRevision: cred.revision,
+        priceRevision: "tavily-basic-fixture",
+        estimateMicrodollars: 8000,
+        ceilingMicrodollars: 8000,
+        providerBudgetAcknowledged: true,
+        querySharingAcknowledged: true,
+      },
+      config: {
+        ...searchConfig,
+        caps: {
+          ...searchConfig.caps,
+          actorHourlyRequests: 10,
+          actorDailyRequests: 20,
+          actorDailyMicrodollars: 16000,
+          globalDailyMicrodollars: 16000,
+        },
+      },
+      digest: "c".repeat(64),
+      env: searchEnv,
+    });
+
+    const [secondOp] = await f.query(
+      "SELECT id,kind,state,reserved_microdollars FROM byok_operation WHERE id=$1",
+      [secondOpId],
+    );
+    expect(secondOp.id).toBe(secondOpId);
+    expect(secondOp.kind).toBe("search");
+    expect(secondOp.state).toBe("reserved");
+    expect(secondOp.reserved_microdollars).toBe(8000);
+
+    // Query existing hold: held 8000 row/state/amount stays intact
+    const [heldAfter] = await f.query(
+      "SELECT id,kind,state,reserved_microdollars FROM byok_operation WHERE id=$1",
+      [opId],
+    );
+    expect(heldAfter.id).toBe(opId);
+    expect(heldAfter.kind).toBe("search");
+    expect(heldAfter.state).toBe("held");
+    expect(heldAfter.reserved_microdollars).toBe(8000);
+  });
   test("F12-C downloads reject corruption and reserve transfer before reading bytes", async () => {
     const f = current,
       first = await f.service.generate("alice", f.body(), signal());
@@ -853,15 +1081,18 @@ describe("F12-C migration runner", () => {
     await db.exec(
       "INSERT INTO \"user\"(id,name,email) VALUES ('owner','Owner','owner@example.invalid');INSERT INTO chat(id,user_id,title) VALUES ('origin','owner','Origin');INSERT INTO chat_message(id,chat_id,user_id,role,parts,attachments) VALUES ('answer','origin','owner','assistant','[]','[]');BEGIN;INSERT INTO artifact(id,user_id,chat_id,message_id,kind,head) VALUES ('kept','owner','origin','answer','table',1);INSERT INTO artifact_revision(artifact_id,user_id,version,title,content) VALUES ('kept','owner',1,'Kept','{}');COMMIT;",
     );
-    await applyVersionedMigrations(executor, migrations);
-    await applyVersionedMigrations(executor, migrations);
+    const absentIntermediate = migrations.filter(
+      (m) => m.version < "0011" || m.version.startsWith("0013"),
+    );
+    await applyVersionedMigrations(executor, absentIntermediate);
+    await applyVersionedMigrations(executor, absentIntermediate);
     expect(
       (
         await db.query<{ version: string }>(
           "SELECT version FROM schema_migrations ORDER BY version",
         )
       ).rows.map((r) => r.version),
-    ).toEqual(migrations.map((m) => m.version));
+    ).toEqual(absentIntermediate.map((m) => m.version));
     expect(
       (
         await db.query(
@@ -887,5 +1118,180 @@ describe("F12-C migration runner", () => {
         )
       ).rows[0].allowed,
     ).toBe(false);
+  });
+
+  test("F12-C populated 0011/0012 to 0013 upgrade preserves search operations across all states and supports subsequent SearchStore reservations", async () => {
+    const { applyVersionedMigrations } = await import("../lib/db/migrate");
+    const upgradeDb = await PGlite.create();
+    await upgradeDb.exec("CREATE ROLE anon; CREATE ROLE authenticated;");
+
+    const makeExecutor = (targetDb: PGlite) => ({
+      transaction: async (
+        run: Parameters<
+          typeof applyVersionedMigrations
+        >[0]["transaction"] extends (run: infer R) => unknown
+          ? R
+          : never,
+      ) =>
+        targetDb.transaction(async (tx) =>
+          run({
+            lock: async () => {
+              await tx.query("SELECT pg_advisory_xact_lock(41021401)");
+            },
+            ensureMigrationsTable: async () => {
+              await tx.exec(
+                "CREATE TABLE IF NOT EXISTS schema_migrations(version text PRIMARY KEY)",
+              );
+            },
+            appliedVersions: async () =>
+              (
+                await tx.query<{ version: string }>(
+                  "SELECT version FROM schema_migrations",
+                )
+              ).rows.map((row) => row.version),
+            applySql: async (text: string) => {
+              await tx.exec(text);
+            },
+            recordVersion: async (version: string) => {
+              await tx.query(
+                "INSERT INTO schema_migrations(version) VALUES($1)",
+                [version],
+              );
+            },
+          }),
+        ),
+    });
+
+    const files = readdirSync("drizzle")
+      .filter((n) => n.endsWith(".sql"))
+      .sort();
+    const migrations = files.map((file) => ({
+      version: file.replace(/\.sql$/, ""),
+      sql: readFileSync(`drizzle/${file}`, "utf8"),
+    }));
+
+    const executor = makeExecutor(upgradeDb);
+
+    try {
+      // 1. Apply through 0012 (inherited search tools and broker replay migrations)
+      await applyVersionedMigrations(
+        executor,
+        migrations.filter((m) => m.version.slice(0, 4) <= "0012"),
+      );
+
+      const preUpgradeVersions = (
+        await upgradeDb.query<{ version: string }>(
+          "SELECT version FROM schema_migrations",
+        )
+      ).rows.map((row) => row.version);
+      expect(preUpgradeVersions).toContain("0011_search_tools");
+      expect(preUpgradeVersions).toContain("0012_mcp_egress_replay");
+
+      // 2. Populate search and chat/test records across reserved, entered, held, complete, and released states
+      await upgradeDb.exec(
+        `INSERT INTO "user"(id,name,email) VALUES ('searcher','Searcher','searcher@example.invalid');
+         INSERT INTO chat(id,user_id,title) VALUES ('chat-search','searcher','Search Chat');
+         INSERT INTO chat_message(id,chat_id,user_id,role,parts,attachments) VALUES ('msg-search','chat-search','searcher','assistant','[]','[]');
+         INSERT INTO provider_credential(user_id,provider,revision,key_version,nonce,ciphertext,masked_key) VALUES ('searcher','openrouter','rev-byok-1','v1','nonce1','cipher1','••••1111');
+         INSERT INTO search_credential(user_id,provider,revision,key_version,nonce,ciphertext,masked_key) VALUES ('searcher','tavily','rev-search-1','v1','nonce2','cipher2','••••1234');
+         INSERT INTO tool_run(id,user_id,request,state,answer) VALUES ('run-s1','searcher','{}'::jsonb,'running','');
+         INSERT INTO tool_call(run_id,id,name,state) VALUES ('run-s1','call-s1','webSearch','running');
+         INSERT INTO byok_operation(id,actor_key,provider,credential_revision,kind,digest,state,resource_units) VALUES
+           ('op-chat','actor-key-1','openrouter','rev-byok-1','chat','digest-chat','complete',1),
+           ('op-test','actor-key-1','openrouter','rev-byok-1','test','digest-test','complete',1);
+         INSERT INTO byok_operation(id,actor_key,provider,credential_revision,kind,digest,state,resource_units,price_revision,reserved_microdollars,actual_microdollars,receipt_credits) VALUES
+           ('op-search-reserved','actor-key-1','tavily','rev-search-1','search','digest-sr','reserved',1,'tavily-basic-fixture',8000,NULL,NULL),
+           ('op-search-entered','actor-key-1','tavily','rev-search-1','search','digest-se','entered',1,'tavily-basic-fixture',8000,NULL,NULL),
+           ('op-search-held','actor-key-1','tavily','rev-search-1','search','digest-sh','held',1,'tavily-basic-fixture',8000,NULL,NULL),
+           ('op-search-settled','actor-key-1','tavily','rev-search-1','search','digest-sc','complete',1,'tavily-basic-fixture',8000,6000,1),
+           ('op-search-released','actor-key-1','tavily','rev-search-1','search','digest-srel','released',1,'tavily-basic-fixture',8000,0,NULL);`,
+      );
+
+      // 3. Apply 0013 upgrade over populated search state
+      await applyVersionedMigrations(executor, migrations);
+
+      // 4. Verify existing operations retained exact states, amounts, and actor keys
+      const existing = (
+        await upgradeDb.query<{
+          id: string;
+          kind: string;
+          state: string;
+          reserved_microdollars: number | null;
+          actual_microdollars: number | null;
+          receipt_credits: number | null;
+          actor_key: string;
+        }>(
+          "SELECT id,kind,state,reserved_microdollars,actual_microdollars,receipt_credits,actor_key FROM byok_operation ORDER BY id",
+        )
+      ).rows;
+
+      expect(existing).toEqual([
+        {
+          id: "op-chat",
+          kind: "chat",
+          state: "complete",
+          reserved_microdollars: null,
+          actual_microdollars: null,
+          receipt_credits: null,
+          actor_key: "actor-key-1",
+        },
+        {
+          id: "op-search-entered",
+          kind: "search",
+          state: "entered",
+          reserved_microdollars: 8000,
+          actual_microdollars: null,
+          receipt_credits: null,
+          actor_key: "actor-key-1",
+        },
+        {
+          id: "op-search-held",
+          kind: "search",
+          state: "held",
+          reserved_microdollars: 8000,
+          actual_microdollars: null,
+          receipt_credits: null,
+          actor_key: "actor-key-1",
+        },
+        {
+          id: "op-search-released",
+          kind: "search",
+          state: "released",
+          reserved_microdollars: 8000,
+          actual_microdollars: 0,
+          receipt_credits: null,
+          actor_key: "actor-key-1",
+        },
+        {
+          id: "op-search-reserved",
+          kind: "search",
+          state: "reserved",
+          reserved_microdollars: 8000,
+          actual_microdollars: null,
+          receipt_credits: null,
+          actor_key: "actor-key-1",
+        },
+        {
+          id: "op-search-settled",
+          kind: "search",
+          state: "complete",
+          reserved_microdollars: 8000,
+          actual_microdollars: 6000,
+          receipt_credits: 1,
+          actor_key: "actor-key-1",
+        },
+        {
+          id: "op-test",
+          kind: "test",
+          state: "complete",
+          reserved_microdollars: null,
+          actual_microdollars: null,
+          receipt_credits: null,
+          actor_key: "actor-key-1",
+        },
+      ]);
+    } finally {
+      await upgradeDb.close();
+    }
   });
 });
