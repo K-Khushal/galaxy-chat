@@ -76,6 +76,13 @@ export function SidebarActions({ onNewChat }: { onNewChat?: () => void } = {}) {
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton asChild className="min-h-11">
+              <Link href="/chat/jobs" onClick={() => setOpenMobile(false)}>
+                <span>Durable jobs</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
         </>
       )}
     </SidebarMenu>
