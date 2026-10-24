@@ -285,3 +285,4 @@ export * from "./mcp-execution-schema";
 export * from "./mcp-oauth-schema";
 export * from "./mcp-operation-schema";
 export * from "./platform-budget-schema";
+export * from "./sandbox-schema";

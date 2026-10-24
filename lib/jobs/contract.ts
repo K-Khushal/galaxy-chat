@@ -47,7 +47,7 @@ export type JobView = {
   state: JobState;
   source: { artifactId: string; version: number };
   checkpoint: string | null;
-  actionRevision: typeof JOB_ACTION_REVISION;
+  actionRevision: string;
   proposal: string | null;
   approvalExpiresAt: Date | null;
   resultArtifactId: string | null;

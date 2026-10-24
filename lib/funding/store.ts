@@ -186,6 +186,15 @@ export async function assertActivePlanInTx(
 
   // Verify no uncarried or increased legacy exposure from prior months against frozen carry rows
   await checkUncoveredLegacyExposure(tx, snapMonth);
+  await checkUncoveredSandboxExposure(tx, snapMonth);
+  const [sandboxPeriod] = await tx.execute(
+    sql`SELECT month FROM public.sandbox_period WHERE month=${snapMonth}`,
+  );
+  const [sandboxExposure] =
+    await tx.execute(sql`SELECT id FROM public.sandbox_operation
+    WHERE month<=${snapMonth} AND state<>'released' LIMIT 1`);
+  if (sandboxPeriod || sandboxExposure)
+    await assertSandboxEnvelopeInTx(tx, snapMonth, plan, 0);
 
   const [currentCredit] = await tx.execute<{ total: string }>(sql`
     SELECT coalesce(sum(charged_microdollars), 0)::bigint AS total
@@ -324,6 +333,105 @@ async function checkUncoveredLegacyExposure(
   }
 }
 
+/**
+ * Prior sandbox holds must be carried into every new month through the durable
+ * namespaced sandbox carry without shrinking any frozen amount. A missing or
+ * increased carry row blocks ALL funded admission (credits, MCP and sandbox).
+ */
+export async function checkUncoveredSandboxExposure(
+  tx: DatabaseTransaction,
+  month: string,
+): Promise<void> {
+  const [uncarried] = await tx.execute<{ count: number }>(sql`
+    SELECT count(*)::integer AS count
+    FROM public.sandbox_operation o
+    LEFT JOIN public.sandbox_operation_commitment c
+      ON c.month = ${month} AND c.source_id = o.id
+    WHERE o.month < ${month}
+      AND greatest(
+        CASE WHEN o.state='released' THEN 0 WHEN o.state='settled' THEN o.incurred_microdollars
+          ELSE greatest(o.reserved_microdollars,o.incurred_microdollars) END,
+        coalesce((SELECT max(h.amount_microdollars) FROM public.sandbox_operation_commitment h
+          WHERE h.source_id=o.id AND h.month<${month}),0)) > coalesce(c.amount_microdollars,0)
+  `);
+  if (uncarried && uncarried.count > 0) {
+    throw new AppError("uncovered_sandbox_exposure", 503);
+  }
+}
+
+/**
+ * Total sandbox financial exposure for a month: every non-released hold (uncertain
+ * orphans included) at its reserved/incurred maximum, never below any frozen carry.
+ */
+export async function sandboxCommittedInTx(
+  tx: DatabaseTransaction,
+  month: string,
+): Promise<number> {
+  const [row] = await tx.execute<{ amount: string }>(sql`
+    SELECT coalesce(sum(greatest(
+      CASE WHEN o.state = 'released' THEN 0
+           WHEN o.state = 'settled' THEN o.incurred_microdollars
+           ELSE greatest(o.reserved_microdollars, o.incurred_microdollars) END,
+      coalesce(c.amount, 0))), 0)::text AS amount
+    FROM public.sandbox_operation o
+    LEFT JOIN (
+      SELECT source_id, max(amount_microdollars) AS amount
+      FROM public.sandbox_operation_commitment
+      WHERE month <= ${month}
+      GROUP BY source_id
+    ) c ON c.source_id = o.id
+    WHERE o.month <= ${month}
+  `);
+  const amount = Number(row?.amount ?? 0);
+  if (!Number.isSafeInteger(amount)) {
+    throw new AppError("sandbox_exposure_overflow", 503);
+  }
+  return amount;
+}
+
+/**
+ * Separately reviewed sandbox envelope against the EXISTING plan's ordinary
+ * infrastructure bucket: ordinaryInfra + sandboxCommitted + incoming <= k_infra.
+ * Acredit and Amcp are never borrowed, the global arithmetic is untouched, and
+ * the reviewed ordinary infrastructure commitment must already be bootstrapped
+ * for the month. Zero ordinary infra is never assumed on behalf of the operator.
+ */
+export async function assertSandboxEnvelopeInTx(
+  tx: DatabaseTransaction,
+  month: string,
+  plan: Pick<
+    BudgetPlanRow,
+    "k_infra" | "month" | "revision" | "digest" | "capacity_digest"
+  >,
+  incoming: number,
+): Promise<void> {
+  if (!Number.isSafeInteger(incoming) || incoming < 0) {
+    throw new AppError("invalid_request", 400);
+  }
+  const [period] = await tx.execute<{
+    ordinary_infra_microdollars: number;
+  }>(
+    sql`SELECT ordinary_infra_microdollars::bigint AS ordinary_infra_microdollars FROM public.sandbox_period
+      WHERE month = ${month} AND plan_identity=${JSON.stringify({ month: plan.month, revision: plan.revision, digest: plan.digest, capacityDigest: plan.capacity_digest })}::jsonb`,
+  );
+  if (!period) {
+    throw new AppError("sandbox_period_unavailable", 503);
+  }
+  const committed = await sandboxCommittedInTx(tx, month);
+  // bigint columns arrive as strings through the driver; normalize before summing.
+  const ordinaryInfra = Number(period.ordinary_infra_microdollars);
+  if (
+    !Number.isSafeInteger(ordinaryInfra) ||
+    ordinaryInfra < 0 ||
+    ordinaryInfra > plan.k_infra
+  ) {
+    throw new AppError("sandbox_envelope_exhausted", 429);
+  }
+  if (ordinaryInfra + committed + incoming > plan.k_infra) {
+    throw new AppError("sandbox_envelope_exhausted", 429);
+  }
+}
+
 export class PlatformBudgetStore {
   constructor(private readonly db: Db = requireDb()) {}
 
@@ -399,6 +507,7 @@ export class PlatformBudgetStore {
 
           // Uncovered legacy exposure check against frozen persisted carry rows
           await checkUncoveredLegacyExposure(tx, existing.month);
+          await checkUncoveredSandboxExposure(tx, existing.month);
 
           // Re-evaluate fresh clock, control, config, capacity immediately before returning
           await verifyActiveEnvironmentAndClock(
