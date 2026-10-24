@@ -52,6 +52,14 @@ const digest = (value: string) =>
 function fail(id: string, status = 409): never {
   throw new AppError(id, status);
 }
+async function terminalize(tx: DatabaseTransaction, id: string, error: string) {
+  await tx.execute(
+    sql`UPDATE durable_job SET state='failed',error=${error},lease_expires_at=NULL,fence=fence+1 WHERE id=${id}`,
+  );
+  await tx.execute(
+    sql`UPDATE durable_job_attempt SET state='expired' WHERE job_id=${id} AND state='entered'`,
+  );
+}
 
 /** All operations share deletion's byok -> attachments -> owner lock order.
  * The jobs lock follows attachments and precedes owner rows. No remote work occurs.
@@ -303,16 +311,22 @@ export class JobStore {
   }
 
   private async terminal(tx: DatabaseTransaction, row: Row, error: string) {
-    await tx.execute(
-      sql`UPDATE durable_job SET state='failed',error=${error},lease_expires_at=NULL,fence=fence+1 WHERE id=${row.id}`,
-    );
-    await tx.execute(
-      sql`UPDATE durable_job_attempt SET state='expired' WHERE job_id=${row.id} AND state='entered'`,
-    );
+    await terminalize(tx, row.id, error);
   }
 
   async checkpoint(rawLease: JobLease) {
     const lease = { ...rawLease };
+    const handler = await this.transaction(async (tx) => {
+      await lock(tx, lease.ownerId);
+      const row = await fenced(tx, lease);
+      return actionHandlers.get(row.action_revision) ?? null;
+    });
+    if (handler) {
+      // Registered action handlers own their fencing: each of their transactions
+      // re-verifies lease, deadline and approval against authoritative SQL.
+      await handler(lease);
+      return;
+    }
     return this.transaction(async (tx) => {
       await lock(tx, lease.ownerId);
       const row = await fenced(tx, lease);
@@ -426,3 +440,29 @@ export class JobStore {
     ).map((row) => row.id);
   }
 }
+
+/** Minimal internal action/fence hook for durable sandbox runs. The registry maps an
+ * action revision to a checkpoint handler; the sandbox coordinator registers one and
+ * every handler must re-verify ownership, fences, deadlines and approvals itself.
+ * Nothing registers in production and the fixture action keeps its own exact path. */
+const actionHandlers = new Map<string, (lease: JobLease) => Promise<void>>();
+export function registerJobActionHandler(
+  actionRevision: string,
+  checkpoint: (lease: JobLease) => Promise<void>,
+) {
+  actionHandlers.set(actionRevision, checkpoint);
+}
+
+/** Internal locked helpers shared with the sandbox execution journal. Callers must
+ * keep the established byok -> attachments -> jobs -> owner lock order. */
+export const jobInternals = {
+  view,
+  fail,
+  lock,
+  source,
+  job,
+  fenced,
+  validLease,
+  terminalize,
+} as const;
+export type JobRow = Row;
