@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { createJobsClient, isAbortError } from "../lib/jobs/client";
 
 function hangingFetch() {
@@ -78,7 +78,7 @@ describe("jobs client request bounding", () => {
 test("a pre-aborted request never dispatches a cancellation", async () => {
   let calls = 0;
   const client = createJobsClient({
-    fetch: (async () => {
+    fetch: (async (_url: string, _init: RequestInit) => {
       calls += 1;
       return Response.json({ job: {} });
     }) as typeof fetch,
@@ -94,20 +94,18 @@ test("a pre-aborted request never dispatches a cancellation", async () => {
 
 test("settled requests remove their external abort listener", async () => {
   const controller = new AbortController();
-  const add = controller.signal.addEventListener.bind(controller.signal);
-  const remove = controller.signal.removeEventListener.bind(controller.signal);
-  const listeners = new Set<EventListenerOrEventListenerObject>();
-  controller.signal.addEventListener = (type, callback, options) => {
-    if (type === "abort" && callback) listeners.add(callback);
-    add(type, callback, options);
-  };
-  controller.signal.removeEventListener = (type, callback, options) => {
-    if (type === "abort" && callback) listeners.delete(callback);
-    remove(type, callback, options);
-  };
-  const client = createJobsClient({
-    fetch: (async () => Response.json({ jobs: [] })) as typeof fetch,
-  });
-  await client.list(controller.signal);
-  expect(listeners.size).toBe(0);
+  const added = spyOn(controller.signal, "addEventListener");
+  const removed = spyOn(controller.signal, "removeEventListener");
+  try {
+    const client = createJobsClient({
+      fetch: (async (_url: string, _init: RequestInit) =>
+        Response.json({ jobs: [] })) as typeof fetch,
+    });
+    await client.list(controller.signal);
+    expect(added).toHaveBeenCalledTimes(1);
+    expect(removed).toHaveBeenCalledWith("abort", added.mock.calls[0]?.[1]);
+  } finally {
+    added.mockRestore();
+    removed.mockRestore();
+  }
 });
