@@ -10,7 +10,8 @@ import {
   authenticate,
   decode64,
   openCredential,
-  parseEnvelope,
+  parseAnyEnvelope,
+  signTransportEvidence,
 } from "./protocol.js";
 import type { ReplayStore } from "./replay-store.js";
 
@@ -78,7 +79,7 @@ export function createBroker(
   ): Promise<EgressResult> => {
     if (signal.aborted) fail("cancelled");
     const now = Date.now();
-    const e = parseEnvelope(input, now);
+    const e = parseAnyEnvelope(input, now);
     authenticate(e, signature, config.hmacKey);
     const profile = config.profiles.find(
       (p) =>
@@ -87,6 +88,7 @@ export function createBroker(
         p.purpose === e.purpose,
     );
     if (!profile) fail("invalid_request");
+    if (profile.runtime && e.version !== 2) fail("authentication");
     if (signal.aborted) fail("cancelled");
     if (Date.now() >= e.deadline) fail("timeout");
     if (replayActive >= config.concurrency) fail("busy");
@@ -148,6 +150,52 @@ export function createBroker(
     if (!consumed) fail("replay");
     if (signal.aborted) fail("cancelled");
     if (Date.now() >= e.deadline) fail("timeout");
+    let notification = false;
+    if (e.version === 2) {
+      const r = profile.runtime;
+      if (
+        !r ||
+        !config.evidence ||
+        r.manifestDigest !== e.manifestDigest ||
+        r.profileDigest !== e.profileDigest ||
+        config.evidence.keyVersion !== e.keyVersion ||
+        profile.credential !== "none"
+      )
+        fail("authentication");
+      let body: Record<string, unknown>;
+      try {
+        body = JSON.parse(
+          new TextDecoder("utf-8", { fatal: true }).decode(
+            decode64(e.body, 65536),
+          ),
+        );
+      } catch {
+        fail("invalid_request");
+      }
+      if (!body || Array.isArray(body) || body.jsonrpc !== "2.0")
+        fail("invalid_request");
+      if (profile.purpose === "mcp.call") {
+        if (
+          body.method !== "tools/call" ||
+          !body.params ||
+          typeof body.params !== "object" ||
+          Reflect.get(body.params, "name") !== r.toolName ||
+          typeof body.id !== "string"
+        )
+          fail("invalid_request");
+      } else if (body.method === "notifications/initialized") {
+        notification = true;
+        if (Object.keys(body).sort().join(",") !== "jsonrpc,method")
+          fail("invalid_request");
+      } else if (
+        body.method !== "initialize" ||
+        typeof body.id !== "string" ||
+        !body.params ||
+        typeof body.params !== "object" ||
+        Reflect.get(body.params, "protocolVersion") !== r.protocolVersion
+      )
+        fail("invalid_request");
+    }
     const token = openCredential(e, profile, config.envelopeKey);
     if ((profile.credential === "none") !== (token === undefined))
       fail("authentication");
@@ -157,13 +205,25 @@ export function createBroker(
       token,
       config.secrets,
     );
-    return pinnedHttps(
+    const result = await pinnedHttps(
       profile,
       body,
       profile.credential === "bearer" ? `Bearer ${token}` : undefined,
       e.deadline,
       signal,
       dependencies,
+      notification,
     );
+    if (e.version === 2 && config.evidence)
+      return {
+        ...result,
+        attestation: signTransportEvidence(
+          e,
+          result,
+          config.evidence.keyVersion,
+          config.evidence.privateKey,
+        ),
+      };
+    return result;
   };
 }

@@ -13,6 +13,7 @@ import {
   McpOutcomeUnknownError,
   McpPreEntryError,
 } from "./contract";
+import { operationDigest } from "./operation-contract";
 
 export type McpBrokerClient = Readonly<{
   dispatch: (request: McpClientRequest) => Promise<McpEgressResult>;
@@ -564,4 +565,190 @@ export function createMcpBrokerClient(
       return result;
     },
   });
+}
+
+/** Version-2 bounded transport. Production authority/entry belongs to the SQL execution service. */
+export async function dispatchRuntimeFrame(
+  config: McpClientConfig,
+  frame: import("./execution-store").RuntimeFrame,
+  runtime: import("./runtime-config").RuntimeConfig,
+  signal?: AbortSignal,
+  expectedWireDigest?: string,
+) {
+  const { canonicalRuntimeEnvelope } = await import("./contract");
+  const { canonicalJson } = await import("@/lib/funding/config");
+  const { runtimeBodyHash, verifyBrokerEvidence } = await import(
+    "./broker-evidence"
+  );
+  const { resolveRuntimeConfig, runtimeWireDigest } = await import(
+    "./runtime-config"
+  );
+  const body = Buffer.from(canonicalJson(frame.body)),
+    p =
+      runtime.manifest.profiles[frame.kind === "call" ? "call" : "initialize"],
+    now = Date.now(),
+    deadline = Math.min(
+      new Date(frame.intent.deadline).getTime(),
+      now + p.timeoutMs,
+    );
+  const fail = (): never => {
+    throw new McpOutcomeUnknownError("mcp_runtime_dispatch_unknown", 502);
+  };
+  if (
+    signal?.aborted ||
+    deadline <= now ||
+    body.length > p.maxRequestBytes ||
+    config.endpoint !== runtime.manifest.brokerEndpoint
+  )
+    fail();
+  const envelope: import("./contract").McpRuntimeEnvelope = {
+    version: 2,
+    requestId: randomUUID(),
+    operationId: frame.operation_id,
+    issuedAt: now,
+    deadline,
+    profileId: p.profileId,
+    revision: p.revision,
+    purpose: p.purpose,
+    bodyHash: runtimeBodyHash(body),
+    body: body.toString("base64"),
+    frameId: frame.id,
+    manifestDigest: runtime.digest,
+    profileDigest: operationDigest(p),
+    keyVersion: runtime.manifest.evidenceKeyVersion,
+  };
+  const payload = canonicalRuntimeEnvelope(envelope),
+    signature = config.signEnvelope(envelope);
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let response: Response | undefined;
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let rejectAbort: (() => void) | undefined;
+  const abort = () => {
+    controller.abort();
+    if (reader) void reader.cancel().catch(() => {});
+    else if (response?.body) void response.body.cancel().catch(() => {});
+    rejectAbort?.();
+  };
+  const aborted = new Promise<never>((_, reject) => {
+    rejectAbort = () =>
+      reject(new McpOutcomeUnknownError("mcp_runtime_dispatch_unknown", 502));
+  });
+  signal?.addEventListener("abort", abort, { once: true });
+  timer = setTimeout(abort, Math.max(0, deadline - Date.now()));
+  const work = async () => {
+    if (
+      resolveRuntimeConfig(process.env, new Date()).digest !== runtime.digest ||
+      (expectedWireDigest !== undefined &&
+        runtimeWireDigest() !== expectedWireDigest) ||
+      signal?.aborted ||
+      Date.now() >= deadline
+    )
+      fail();
+    config.getProfile(p.profileId, p.revision, p.purpose, Date.now());
+    response = await config.binding.fetch(config.endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-MCP-Signature": signature,
+      },
+      body: payload,
+      redirect: "manual",
+      signal: controller.signal,
+    });
+    if (controller.signal.aborted || Date.now() >= deadline) {
+      cancelResponseBody(response);
+      fail();
+    }
+    if (response.status !== 200) fail();
+    const streamReader = response.body?.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    if (!streamReader) return fail();
+    reader = streamReader;
+    while (true) {
+      const next = await streamReader.read();
+      if (controller.signal.aborted || Date.now() >= deadline) fail();
+      if (next.done) break;
+      total += next.value.byteLength;
+      if (total > 16384) fail();
+      chunks.push(next.value);
+    }
+    const parsed: unknown = JSON.parse(
+      new TextDecoder("utf-8", { fatal: true }).decode(
+        Buffer.concat(chunks, total),
+      ),
+    );
+    const { z } = await import("zod");
+    const root = z
+      .object({
+        status: z.number().int().min(200).max(299),
+        body: z.string().max(6000),
+        headers: z.record(z.string(), z.string().max(128)),
+        destination: z
+          .object({
+            profileId: z.string(),
+            revision: z.string(),
+            purpose: z.string(),
+            address: z.string(),
+          })
+          .strict(),
+        attestation: z.unknown(),
+      })
+      .strict()
+      .parse(parsed);
+    if (
+      root.destination.profileId !== p.profileId ||
+      root.destination.revision !== p.revision ||
+      root.destination.purpose !== p.purpose ||
+      !isValidIpAddress(root.destination.address) ||
+      Object.keys(root.headers).some(
+        (h) => !["content-type", "mcp-protocol-version"].includes(h),
+      ) ||
+      (root.headers["mcp-protocol-version"] &&
+        root.headers["mcp-protocol-version"] !== p.protocolVersion) ||
+      (frame.kind !== "initialized" &&
+        root.headers["content-type"] !== "application/json")
+    )
+      fail();
+    const decoded = Buffer.from(root.body, "base64");
+    if (
+      decoded.toString("base64") !== root.body ||
+      decoded.byteLength > p.maxResponseBytes
+    )
+      fail();
+    const signed = verifyBrokerEvidence(
+      root.attestation,
+      {
+        operationId: frame.operation_id,
+        frameId: frame.id,
+        requestId: envelope.requestId,
+        manifestDigest: runtime.digest,
+        profileDigest: envelope.profileDigest,
+        bodyHash: envelope.bodyHash,
+        purpose: p.purpose,
+        status: root.status,
+        responseHash: runtimeBodyHash(decoded),
+        keyVersion: runtime.manifest.evidenceKeyVersion,
+      },
+      runtime.manifest.evidencePublicKey,
+      Date.now(),
+    );
+    if (controller.signal.aborted || Date.now() >= deadline) fail();
+    return {
+      body: decoded,
+      status: root.status,
+      signed,
+      requestId: envelope.requestId,
+    };
+  };
+  try {
+    return await Promise.race([work(), aborted]);
+  } catch {
+    abort();
+    return fail();
+  } finally {
+    if (timer) clearTimeout(timer);
+    signal?.removeEventListener("abort", abort);
+  }
 }

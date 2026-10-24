@@ -20,7 +20,12 @@ import {
   resolvePlatformBudgetConfig,
 } from "@/lib/funding/config";
 import { assertActivePlanInTx, lockFunding } from "@/lib/funding/store";
+import { consumeToolApprovalInTx } from "@/lib/tools/store";
 import { parseProfilesJson, profileKey } from "./config";
+import {
+  runtimeActorInTx,
+  verifyRuntimeOperationInTx,
+} from "./execution-store";
 import { type McpFeeSnapshot, parseMcpFeeSnapshot } from "./fee-config";
 import {
   identifierSchema,
@@ -36,6 +41,7 @@ import {
   computeProfileDigest,
   MCP_REGISTRY_PURPOSES,
 } from "./registry-contract";
+import { type FrameKind, resolveRuntimeConfig } from "./runtime-config";
 
 type Tx = DatabaseTransaction;
 const runtimeSchema = z
@@ -139,10 +145,15 @@ class McpOperationStore {
     private readonly runtime: () => unknown,
     private readonly env: () => EnvSource,
     fixture: boolean,
+    private readonly production = false,
   ) {
     this.#fixture = fixture;
   }
   private requireAuthority() {
+    if (this.production) {
+      resolveRuntimeConfig(this.env(), new Date());
+      return;
+    }
     if (!this.#fixture) unavailable();
     fixtureGate();
   }
@@ -155,6 +166,9 @@ class McpOperationStore {
       },
       { isolationLevel: "read committed" },
     );
+  }
+  private within<T>(tx: Tx | undefined, run: (tx: Tx) => Promise<T>) {
+    return tx ? run(tx) : this.transaction(run);
   }
   private async owned(tx: Tx, userId: string, id: string): Promise<Row> {
     const [row] = await tx.execute<Row>(
@@ -174,6 +188,7 @@ class McpOperationStore {
     return new Date(row.now);
   }
   private async actor(tx: Tx, userId: string, runtime: Runtime) {
+    if (this.production) return runtimeActorInTx(tx, userId, runtime);
     const versions = await tx.execute<{ version: string; fingerprint: string }>(
       sql`SELECT * FROM mcp_actor_key_version`,
     );
@@ -211,6 +226,24 @@ class McpOperationStore {
     entered: boolean,
   ) {
     this.requireAuthority();
+    if (this.production) {
+      const verified = await verifyRuntimeOperationInTx(
+        tx,
+        userId,
+        intent,
+        entered,
+      );
+      const runtime = runtimeSnapshot(this.runtime(), verified.context.now);
+      ensureEqual(expected, runtime);
+      ensureEqual(runtime.fee, verified.fee);
+      if (
+        intent.requestBytes > runtime.fee.capacity.requestBytes ||
+        new Date(intent.deadline) <= verified.context.now ||
+        intent.plan.month !== verified.context.now.toISOString().slice(0, 7)
+      )
+        throw new AppError("mcp_operation_expired", 409);
+      return { now: verified.context.now, runtime };
+    }
     const [row] = await tx.execute<{
       now: Date;
       stopped: boolean;
@@ -361,10 +394,14 @@ class McpOperationStore {
       throw new AppError("mcp_exposure_overflow", 503);
     return amount;
   }
-  async reserve(userId: string, raw: unknown): Promise<OperationView> {
+  async reserve(
+    userId: string,
+    raw: unknown,
+    existingTx?: Tx,
+  ): Promise<OperationView> {
     this.requireAuthority();
     const intent = parseOperationIntent(raw);
-    return this.transaction(async (tx) => {
+    return this.within(existingTx, async (tx) => {
       const [replay] = await tx.execute<Row>(
         sql`SELECT o.* FROM mcp_operation o JOIN mcp_operation_owner m ON m.operation_id=o.id WHERE m.user_id=${userId} AND o.idempotency_key=${intent.idempotencyKey}`,
       );
@@ -458,9 +495,10 @@ class McpOperationStore {
     userId: string,
     id: string,
     expectedRevision: number,
+    existingTx?: Tx,
   ): Promise<OperationView> {
     this.requireAuthority();
-    return this.transaction(async (tx) => {
+    return this.within(existingTx, async (tx) => {
       const row = await this.owned(tx, userId, id);
       this.cas(row, expectedRevision);
       if (row.state !== "reserved" || row.attempts !== 0)
@@ -494,10 +532,30 @@ class McpOperationStore {
         );
         if (used) throw new AppError("mcp_approval_consumed", 409);
       }
-      const [grant] = await tx.execute<{ id: string }>(
-        sql`UPDATE mcp_fixture_authority SET consumed_by=${id} WHERE id=${intent.authority.id} AND user_id=${userId} AND consumed_by IS NULL RETURNING id`,
-      );
-      if (!grant) throw new AppError("mcp_approval_consumed", 409);
+      if (this.production) {
+        const verified = await verifyRuntimeOperationInTx(
+          tx,
+          userId,
+          intent,
+          false,
+        );
+        await consumeToolApprovalInTx(
+          tx,
+          userId,
+          verified.frame.approval_id,
+          verified.frame.binding,
+        );
+        const changed = await tx.execute(
+          sql`UPDATE mcp_runtime_frame SET state='entered',revision=revision+1 WHERE id=${verified.frame.id} AND user_id=${userId} AND state='prepared' RETURNING id`,
+        );
+        if (!changed.length)
+          throw new AppError("mcp_operation_already_entered", 409);
+      } else {
+        const [grant] = await tx.execute<{ id: string }>(
+          sql`UPDATE mcp_fixture_authority SET consumed_by=${id} WHERE id=${intent.authority.id} AND user_id=${userId} AND consumed_by IS NULL RETURNING id`,
+        );
+        if (!grant) throw new AppError("mcp_approval_consumed", 409);
+      }
       const [entered] = await tx.execute<Row>(
         sql`UPDATE mcp_operation SET state='entered',attempts=1,revision=revision+1 WHERE id=${id} AND state='reserved' AND revision=${expectedRevision} RETURNING *`,
       );
@@ -551,9 +609,16 @@ class McpOperationStore {
       return view(updated);
     });
   }
-  /** Internal operator procedure. No endpoint; production authority is unavailable. */
+  /** Internal operator procedure; production derives durable sources, fixture APIs keep their gates. */
   async bootstrapPeriod(rawPlan: unknown, rawSources: unknown) {
     this.requireAuthority();
+    if (this.production && rawSources === undefined) {
+      const parsedPlan = planIdentitySchema.safeParse(rawPlan);
+      if (!parsedPlan.success) throw new AppError("invalid_mcp_period", 400);
+      rawSources = await this.transaction((tx) =>
+        this.sources(tx, parsedPlan.data.month),
+      );
+    }
     const parsed = planIdentitySchema.safeParse(rawPlan);
     const sources = z
       .array(
@@ -708,4 +773,40 @@ export function createMcpOperationStore(options: Pick<Options, "db"> = {}) {
 export function createFixtureMcpOperationStore(options: Required<Options>) {
   fixtureGate();
   return new McpOperationStore(options.db, options.runtime, options.env, true);
+}
+
+/** Concrete production adapters: all authority is re-read from owned execution rows in the same TX. */
+export function createProductionMcpOperationStore(
+  db: Database,
+  kind: FrameKind,
+) {
+  const store = new McpOperationStore(
+    db,
+    () => {
+      const c = resolveRuntimeConfig(process.env, new Date());
+      return {
+        fee: c.manifest.fees[kind],
+        activeKeyVersion: c.activeActorKey,
+        actorKeys: c.actorKeys,
+      };
+    },
+    () => process.env,
+    false,
+    true,
+  );
+  return {
+    reserveMcpOperationInTx: (tx: Tx, userId: string, intent: unknown) =>
+      store.reserve(userId, intent, tx),
+    enterMcpExecutionInTx: (
+      tx: Tx,
+      userId: string,
+      id: string,
+      revision: number,
+    ) => store.enter(userId, id, revision, tx),
+    bootstrapMcpPeriod: (plan: unknown) =>
+      store.bootstrapPeriod(plan, undefined),
+    cancelReserved: store.cancelReserved.bind(store),
+    retainUnknown: store.retainUnknown.bind(store),
+    status: store.status.bind(store),
+  };
 }

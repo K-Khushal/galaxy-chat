@@ -7,6 +7,8 @@ import { type DatabaseTransaction, requireDb } from "@/lib/db/client";
 import { AppError } from "@/lib/errors";
 import type { McpActionBinding } from "@/lib/mcp/catalog-contract";
 import { verifyMcpActionInTx } from "@/lib/mcp/catalog-store";
+import type { RuntimeAction } from "@/lib/mcp/execution-contract";
+import { verifyRuntimeActionInTx } from "@/lib/mcp/execution-store";
 import {
   type SearchRunState,
   searchEvidenceSchema,
@@ -41,6 +43,7 @@ export type ActionBinding = {
   target: string;
   costMicrodollars: number;
   mcp?: McpActionBinding;
+  runtime?: RuntimeAction;
 };
 /** Canonical JSON is bounded and lossless; unknown/non-JSON values are rejected. */
 export function canonical(value: unknown): string {
@@ -110,12 +113,16 @@ export async function decideToolApprovalInTx(
     sql`SELECT binding FROM tool_approval WHERE id=${id} AND user_id=${userId}`,
   );
   if (!approval) throw new AppError("tool_approval_denied", 409);
+  if (approval.binding.runtime && decision === "approve")
+    await verifyRuntimeActionInTx(tx, userId, id, approval.binding, "decision");
   if (approval.binding.mcp)
     await verifyMcpActionInTx(tx, userId, id, approval.binding, "decision");
   const rows = await tx.execute(
     sql`UPDATE tool_approval SET state=${decision === "approve" ? "approved" : decision === "deny" ? "denied" : "revoked"} WHERE id=${id} AND user_id=${userId} AND expires_at>clock_timestamp() AND (state='pending' OR (${decision}='revoke' AND state='approved')) RETURNING id`,
   );
   if (!rows.length) throw new AppError("tool_approval_denied", 409);
+  if (approval.binding.runtime && decision === "approve")
+    await verifyRuntimeActionInTx(tx, userId, id, approval.binding, "approved");
   if (approval.binding.mcp)
     await verifyMcpActionInTx(
       tx,
@@ -133,11 +140,14 @@ export async function consumeToolApprovalInTx(
   input: ActionBinding,
 ) {
   const binding: ActionBinding = JSON.parse(canonical(input));
+  if (binding.runtime) await verifyRuntimeActionInTx(tx, userId, id, binding);
   if (binding.mcp) await verifyMcpActionInTx(tx, userId, id, binding);
   const rows = await tx.execute(
     sql`UPDATE tool_approval SET state='consumed' WHERE id=${id} AND user_id=${userId} AND run_id=${binding.runId} AND binding=${canonical(binding)}::jsonb AND state='approved' AND expires_at>clock_timestamp() RETURNING id`,
   );
   if (!rows.length) throw new AppError("tool_approval_denied", 403);
+  if (binding.runtime)
+    await verifyRuntimeActionInTx(tx, userId, id, binding, "consumed");
   if (binding.mcp)
     await verifyMcpActionInTx(tx, userId, id, binding, "consumed");
 }
@@ -262,11 +272,18 @@ export class ToolStore {
     };
   }
   async finish(userId: string, id: string, state: string, answer = "") {
-    await this.db.execute(
-      sql`UPDATE tool_run SET state=${state},answer=${answer} WHERE id=${id} AND user_id=${userId}`,
-    );
-    await this.db.execute(
-      sql`UPDATE tool_call SET state='failed' WHERE run_id=${id} AND state IN ('queued','running') AND EXISTS(SELECT 1 FROM tool_run r WHERE r.id=${id} AND r.user_id=${userId})`,
+    await this.db.transaction(
+      async (tx) => {
+        // Completion must serialize with runtime approval/entry, like step/event/remove.
+        await lockByokResources(tx);
+        await tx.execute(
+          sql`UPDATE tool_run SET state=${state},answer=${answer} WHERE id=${id} AND user_id=${userId}`,
+        );
+        await tx.execute(
+          sql`UPDATE tool_call SET state='failed' WHERE run_id=${id} AND state IN ('queued','running') AND EXISTS(SELECT 1 FROM tool_run r WHERE r.id=${id} AND r.user_id=${userId})`,
+        );
+      },
+      { isolationLevel: "read committed" },
     );
   }
   async view(userId: string, id: string): Promise<ToolRunView> {
@@ -326,7 +343,7 @@ export class ToolStore {
   }
   /** Internal issuance only: no client endpoint can invent an action or turn a boolean into authority. */
   async issueApproval(userId: string, binding: ActionBinding, expiresAt: Date) {
-    if (binding.mcp)
+    if (binding.mcp || binding.runtime)
       throw new AppError("mcp_catalog_authority_unavailable", 503);
     return this.db.transaction(
       async (tx) => {

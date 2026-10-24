@@ -8,6 +8,7 @@ import {
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import {
   canonicalEnvelope,
+  canonicalRuntimeEnvelope,
   MCP_CLIENT_LIMITS,
   MCP_PURPOSES,
   type McpCredentialEnvelope,
@@ -15,6 +16,7 @@ import {
   type McpMtlsFetcher,
   McpPreEntryError,
   type McpPurpose,
+  type McpRuntimeEnvelope,
 } from "./contract";
 
 export type McpReviewedProfile = Readonly<{
@@ -35,7 +37,7 @@ export type McpClientConfig = Readonly<{
   endpoint: string;
   profiles: ReadonlyMap<string, McpReviewedProfile>;
   binding: McpMtlsFetcher;
-  signEnvelope: (envelope: McpEnvelope) => string;
+  signEnvelope: (envelope: McpEnvelope | McpRuntimeEnvelope) => string;
   sealToken: (
     envelope: McpEnvelope,
     profile: McpReviewedProfile,
@@ -358,10 +360,14 @@ export function resolveMcpClientConfig(
       },
     });
 
-  const signEnvelope = (envelope: McpEnvelope): string => {
+  const signEnvelope = (envelope: McpEnvelope | McpRuntimeEnvelope): string => {
     return createHmac("sha256", Buffer.from(hmacKeyBytes))
-      .update("galaxy-mcp-egress-v1\n")
-      .update(canonicalEnvelope(envelope))
+      .update(`galaxy-mcp-egress-v${envelope.version}\n`)
+      .update(
+        envelope.version === 2
+          ? canonicalRuntimeEnvelope(envelope)
+          : canonicalEnvelope(envelope),
+      )
       .digest("hex");
   };
 

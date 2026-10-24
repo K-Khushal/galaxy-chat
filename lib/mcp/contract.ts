@@ -154,3 +154,29 @@ export function canonicalEnvelope(e: McpEnvelope): string {
       : {}),
   });
 }
+
+export type McpRuntimeEnvelope = Omit<McpEnvelope, "version" | "credential"> & {
+  version: 2;
+  frameId: string;
+  manifestDigest: string;
+  profileDigest: string;
+  keyVersion: string;
+};
+export function canonicalRuntimeEnvelope(e: McpRuntimeEnvelope) {
+  return JSON.stringify({
+    version: 2,
+    requestId: e.requestId,
+    operationId: e.operationId,
+    issuedAt: e.issuedAt,
+    deadline: e.deadline,
+    profileId: e.profileId,
+    revision: e.revision,
+    purpose: e.purpose,
+    bodyHash: e.bodyHash,
+    body: e.body,
+    frameId: e.frameId,
+    manifestDigest: e.manifestDigest,
+    profileDigest: e.profileDigest,
+    keyVersion: e.keyVersion,
+  });
+}
