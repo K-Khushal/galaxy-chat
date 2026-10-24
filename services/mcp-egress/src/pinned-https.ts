@@ -19,6 +19,7 @@ export type TransportDependencies = Readonly<{
   connect?: (options: ConnectionOptions) => TLSSocket;
 }>;
 export type EgressResult = Readonly<{
+  attestation?: unknown;
   status: number;
   body: string;
   headers: Readonly<Record<string, string>>;
@@ -53,6 +54,7 @@ export async function pinnedHttps(
   deadline: number,
   signal: AbortSignal,
   dependencies: TransportDependencies = {},
+  notification = false,
 ): Promise<EgressResult> {
   if (signal.aborted) fail("cancelled");
   if (
@@ -139,6 +141,9 @@ export async function pinnedHttps(
             "Content-Type": profile.contentType,
             "Content-Length": String(body.length),
             Connection: "close",
+            ...(profile.runtime
+              ? { "MCP-Protocol-Version": profile.runtime.protocolVersion }
+              : {}),
             ...(authorization ? { Authorization: authorization } : {}),
           },
         });
@@ -190,10 +195,16 @@ export async function pinnedHttps(
             response.destroy();
             return;
           }
-          const contentType = response.headers["content-type"]
-            ?.split(";")[0]
-            ?.trim()
-            .toLowerCase();
+          if (notification && ![202, 204].includes(status)) {
+            finish(new BrokerError("response"));
+            response.destroy();
+            return;
+          }
+          const contentType =
+            response.headers["content-type"]
+              ?.split(";")[0]
+              ?.trim()
+              .toLowerCase() ?? (notification ? "application/json" : undefined);
           if (!contentType || !profile.responseTypes.includes(contentType)) {
             finish(new BrokerError("response"));
             response.destroy();
@@ -220,7 +231,7 @@ export async function pinnedHttps(
           response.on("error", () => finish(new BrokerError("response")));
           response.on("aborted", () => finish(new BrokerError("response")));
           response.on("end", () => {
-            if (!response.complete) {
+            if (!response.complete || (notification && total !== 0)) {
               finish(new BrokerError("response"));
               return;
             }

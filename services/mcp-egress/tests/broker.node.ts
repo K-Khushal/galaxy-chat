@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { generateKeyPairSync, verify as verifySignature } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
 import { request as tlsRequest } from "node:https";
@@ -14,10 +15,14 @@ import postgres from "postgres";
 import { createBroker } from "../src/broker.js";
 import { loadConfig } from "../src/config.js";
 import type { TransportDependencies } from "../src/pinned-https.js";
+import { runtimeProfileDigest } from "../src/profile.js";
 import {
   canonical,
+  canonicalEvidence,
   openCredential,
+  parseAnyEnvelope,
   parseEnvelope,
+  type RuntimeEnvelope,
   sealCredential,
   sign,
 } from "../src/protocol.js";
@@ -1002,5 +1007,98 @@ test("incomplete ingress sockets count toward the connection cap and oversized h
   } finally {
     first.destroy();
     await app.close();
+  }
+});
+
+test("v2 strict runtime policy authenticates Ed25519 terminal evidence and empty notifications while retaining v1", async () => {
+  const keys = generateKeyPairSync("ed25519");
+  const legacy = profile({ purpose: "mcp.initialize", maxResponseBytes: 4096 });
+  const r = {
+    manifestDigest: "a".repeat(64),
+    profileDigest: "0".repeat(64),
+    protocolVersion: "2025-11-25" as const,
+    toolName: "reviewed_tool",
+  };
+  const p = profile({
+    purpose: "mcp.initialize",
+    maxResponseBytes: 4096,
+    runtime: {
+      ...r,
+      profileDigest: runtimeProfileDigest({ ...legacy, runtime: r }),
+    },
+  });
+  let sends = 0;
+  const fixture = await upstream(cert, (req, res) => {
+    sends++;
+    assert.equal(req.headers["mcp-protocol-version"], "2025-11-25");
+    req.resume();
+    req.on("end", () => {
+      res.writeHead(204);
+      res.end();
+    });
+  });
+  const c = {
+      ...config([p]),
+      evidence: {
+        keyVersion: "v1",
+        privateKey: keys.privateKey
+          .export({ format: "pem", type: "pkcs8" })
+          .toString(),
+      },
+    },
+    dial = offlineDial(fixture.port, cert.ca),
+    broker = createBroker(c, new MemoryReplayStore(), dial.dependencies);
+  const base = envelope(
+      p,
+      Buffer.from(
+        JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
+      ),
+    ),
+    { credential: _credential, ...withoutCredential } = base,
+    e: RuntimeEnvelope = {
+      ...withoutCredential,
+      version: 2,
+      frameId: crypto.randomUUID(),
+      manifestDigest: r.manifestDigest,
+      profileDigest: p.runtime?.profileDigest ?? "",
+      keyVersion: "v1",
+    };
+  try {
+    await assert.rejects(
+      broker(base, sign(base, c.hmacKey), signal()),
+      /authentication/,
+    );
+    assert.equal(sends, 0);
+    assert.equal(parseAnyEnvelope(e, Date.now()).version, 2);
+    assert.throws(() => parseEnvelope(e, Date.now()));
+    const result = await broker(e, sign(e, c.hmacKey), signal());
+    assert.equal(result.status, 204);
+    assert.equal(result.body, "");
+    const attestation = result.attestation as {
+      evidence: { operationId: string; bodyHash: string };
+      signature: string;
+    };
+    assert.equal(attestation.evidence.operationId, e.operationId);
+    assert.equal(attestation.evidence.bodyHash, e.bodyHash);
+    assert.equal(
+      verifySignature(
+        null,
+        Buffer.from(
+          `galaxy-mcp-transport-evidence-v2\n${canonicalEvidence(attestation.evidence)}`,
+        ),
+        keys.publicKey,
+        Buffer.from(attestation.signature, "base64"),
+      ),
+      true,
+    );
+    assert.equal(sends, 1);
+    await assert.rejects(broker(e, sign(e, c.hmacKey), signal()), /replay/);
+    assert.equal(sends, 1);
+    assert.throws(() =>
+      parseAnyEnvelope({ ...e, credential: { unexpected: true } }, Date.now()),
+    );
+    assert.throws(() => parseAnyEnvelope({ ...e, version: 3 }, Date.now()));
+  } finally {
+    await fixture.close();
   }
 });

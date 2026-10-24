@@ -21,6 +21,7 @@
     "build:workers": "opennextjs-cloudflare build"
   },
   "dependencies": {
+    "@ai-sdk/mcp": "2.0.78",
     "@ai-sdk/openai": "4.0.96",
     "@ai-sdk/react": "4.0.147",
     "@better-auth/drizzle-adapter": "1.7.10",

@@ -1,4 +1,4 @@
-import { timingSafeEqual } from "node:crypto";
+import { createPrivateKey, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fail, integer } from "./errors.js";
 import { type Profile, parseProfiles } from "./profile.js";
@@ -14,6 +14,7 @@ export type BrokerConfig = Readonly<{
   secrets: Readonly<Record<string, string>>;
   concurrency: number;
   maxConnections: number;
+  evidence?: Readonly<{ keyVersion: string; privateKey: string }>;
   tls?: Readonly<{ key: Buffer; cert: Buffer; ca: Buffer }>;
   databaseUrl?: string;
 }>;
@@ -31,7 +32,16 @@ export function validateConfig(config: BrokerConfig): void {
   integer(config.concurrency, 1, 32);
   integer(config.maxConnections, config.concurrency, 128);
   if (!loopback(config.bind) && !config.tls) fail("configuration");
+  if (config.evidence) {
+    if (
+      !/^[a-zA-Z0-9_-]{1,80}$/.test(config.evidence.keyVersion) ||
+      createPrivateKey(config.evidence.privateKey).asymmetricKeyType !==
+        "ed25519"
+    )
+      fail("configuration");
+  }
   for (const p of config.profiles) {
+    if (p.runtime && !config.evidence) fail("configuration");
     if (
       p.clientSecretRef &&
       !/^[\x21-\x7e]{1,4000}$/.test(config.secrets[p.clientSecretRef] ?? "")
@@ -45,6 +55,8 @@ export function loadConfig(
   if (env.MCP_EGRESS_BROKER_ENABLED !== "1") return undefined;
   try {
     const allowed = new Set([
+      "MCP_EGRESS_EVIDENCE_KEY_FILE",
+      "MCP_EGRESS_EVIDENCE_KEY_VERSION",
       "MCP_EGRESS_BROKER_ENABLED",
       "MCP_EGRESS_BIND",
       "MCP_EGRESS_PORT",
@@ -118,6 +130,14 @@ export function loadConfig(
       production: env.NODE_ENV !== "development" && env.NODE_ENV !== "test",
       hmacKey,
       envelopeKey,
+      ...(env.MCP_EGRESS_EVIDENCE_KEY_FILE
+        ? {
+            evidence: Object.freeze({
+              keyVersion: env.MCP_EGRESS_EVIDENCE_KEY_VERSION ?? "",
+              privateKey: read("MCP_EGRESS_EVIDENCE_KEY_FILE").toString("utf8"),
+            }),
+          }
+        : {}),
       profiles,
       secrets: Object.freeze(secrets),
       concurrency: integer(Number(env.MCP_EGRESS_CONCURRENCY ?? 4), 1, 32),
