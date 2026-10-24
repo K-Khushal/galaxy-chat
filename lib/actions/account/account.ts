@@ -24,6 +24,7 @@ import { AppError } from "@/lib/errors";
 import { ImageStore } from "@/lib/images/store";
 import { JobStore } from "@/lib/jobs/store";
 import { createMcpCatalogStore } from "@/lib/mcp/catalog-store";
+import { createMcpExecutionStore } from "@/lib/mcp/execution-store";
 import { createMcpOAuthStore } from "@/lib/mcp/oauth-store";
 import { createMcpOperationStore } from "@/lib/mcp/operation-store";
 import { McpRegistryStore } from "@/lib/mcp/registry-store";
@@ -56,6 +57,9 @@ export type AccountExport = {
   mcpConnections: Awaited<ReturnType<McpRegistryStore["export"]>>;
   mcpCatalogs: Awaited<
     ReturnType<ReturnType<typeof createMcpCatalogStore>["export"]>
+  >;
+  mcpRuntime: Awaited<
+    ReturnType<ReturnType<typeof createMcpExecutionStore>["exportMetadata"]>
   >;
   mcpOperations: Awaited<
     ReturnType<ReturnType<typeof createMcpOperationStore>["export"]>
@@ -189,6 +193,9 @@ export async function exportOwnedAccount(
   const mcpCatalogs = await createMcpCatalogStore({ db }).export(userId);
   const mcpOAuthGrants = await createMcpOAuthStore({ db }).metadata(userId);
   const mcpOperations = await createMcpOperationStore({ db }).export(userId);
+  const mcpRuntime = await createMcpExecutionStore({ db }).exportMetadata(
+    userId,
+  );
   let actor: string | undefined;
   try {
     actor = resourceActor(userId, process.env);
@@ -241,6 +248,7 @@ export async function exportOwnedAccount(
     mcpCatalogs,
     mcpOAuthGrants,
     mcpOperations,
+    mcpRuntime,
     byokOperations,
   };
 }
