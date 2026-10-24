@@ -46,7 +46,12 @@ test("production runtime requires three exact approvals and funds three real bro
     sql`SELECT (SELECT count(*)::integer FROM tool_approval) AS approvals,(SELECT count(*)::integer FROM tool_approval WHERE state='consumed') AS consumed,(SELECT count(*)::integer FROM tool_call) AS calls,(SELECT count(*)::integer FROM mcp_runtime_evidence) AS evidence`,
   );
   expect(counts).toEqual({ approvals: 3, consumed: 3, calls: 3, evidence: 3 });
-  await f.runtime.executeRuntime("alice", execution.id);
+  const replay = await f.runtime.executeRuntime("alice", execution.id);
+  expect(replay).toEqual({
+    executionId: execution.id,
+    state: "completed_unreconciled",
+    result: null,
+  });
   expect(f.requests).toBe(3);
 });
 test("missing configuration fails production admission with no transport or rows", async () => {
@@ -714,4 +719,161 @@ test("rotating the retained principal secret cannot reset runtime admission coun
     await f.db.execute(sql`SELECT * FROM mcp_catalog_admission ORDER BY id`),
   ).toEqual(before);
   expect(f.requests).toBe(0);
+});
+
+for (const terminal of ["completed", "failed"]) {
+  test(`a ${terminal} run at the final DB authority barrier cannot commit runtime entry or dispatch`, async () => {
+    const f = get(),
+      e = await approved(f);
+    let enteredWrite = false,
+      afterEntryApprovalReads = 0,
+      changed = false;
+    f.afterQuery(async (statement, _result, tx) => {
+      if (statement.includes("UPDATE mcp_operation SET state='entered'"))
+        enteredWrite = true;
+      if (
+        !enteredWrite ||
+        changed ||
+        !statement.includes("SELECT a.state,a.expires_at,a.binding,k.state")
+      )
+        return;
+      if (++afterEntryApprovalReads !== 2) return;
+      changed = true;
+      await tx.execute(
+        sql`UPDATE tool_run SET state=${terminal} WHERE id=(SELECT run_id FROM mcp_runtime_execution WHERE id=${e.id})`,
+      );
+      await tx.execute(
+        sql`UPDATE tool_call SET state='failed' WHERE run_id=(SELECT run_id FROM mcp_runtime_execution WHERE id=${e.id}) AND state IN('queued','running')`,
+      );
+    });
+    expect(
+      await rejectionOf(f.runtime.executeRuntime("alice", e.id)),
+    ).toBeDefined();
+    f.afterQuery(undefined);
+    expect(changed).toBe(true);
+    const [r] = await f.db.execute<{
+      operations: number;
+      consumed: number;
+      entered: number;
+    }>(
+      sql`SELECT (SELECT count(*)::integer FROM mcp_operation) AS operations,(SELECT count(*)::integer FROM tool_approval WHERE state='consumed') AS consumed,(SELECT count(*)::integer FROM mcp_runtime_frame WHERE state IN('entered','held','completed')) AS entered`,
+    );
+    expect(r).toEqual({ operations: 0, consumed: 0, entered: 0 });
+    expect(f.requests).toBe(0);
+  });
+}
+
+test("a valid five-second reviewed transport admits all three production frames immediately within immutable bounds", async () => {
+  const f = get();
+  const e = await approved(f);
+  expect((await f.runtime.executeRuntime("alice", e.id)).state).toBe(
+    "completed_unreconciled",
+  );
+  expect(f.requests).toBe(3);
+  const [r] = await f.db.execute<{
+    bounded: boolean;
+    approvals: number;
+    commitment: string;
+  }>(
+    sql`SELECT bool_and(o.deadline<=e.created_at+interval '5 seconds' AND o.deadline<=r.created_at+interval '20 seconds') AS bounded,(SELECT count(*)::integer FROM tool_approval WHERE state='consumed') AS approvals,(SELECT sum(amount_microdollars)::text FROM mcp_operation_commitment) AS commitment FROM mcp_operation o JOIN mcp_runtime_frame f ON f.operation_id=o.id JOIN mcp_runtime_execution e ON e.id=f.execution_id JOIN tool_run r ON r.id=e.run_id`,
+  );
+  expect(r).toEqual({ bounded: true, approvals: 3, commitment: "3000" });
+});
+
+for (const terminal of ["completed", "failed"]) {
+  test(`ToolStore.finish commits ${terminal} authority before a later runtime attempt and denies all dispatch`, async () => {
+    const f = get(),
+      e = await approved(f);
+    const [row] = await f.db.execute<{ run_id: string }>(
+      sql`SELECT run_id FROM mcp_runtime_execution WHERE id=${e.id}`,
+    );
+    await f.tools.finish("alice", row.run_id, terminal);
+    expect(
+      await rejectionOf(f.runtime.executeRuntime("alice", e.id)),
+    ).toMatchObject({ id: "mcp_tool_run_unavailable" });
+    const [r] = await f.db.execute<{
+      state: string;
+      failed: number;
+      operations: number;
+      consumed: number;
+    }>(
+      sql`SELECT r.state,(SELECT count(*)::integer FROM tool_call WHERE run_id=r.id AND state='failed') AS failed,(SELECT count(*)::integer FROM mcp_operation) AS operations,(SELECT count(*)::integer FROM tool_approval WHERE state='consumed') AS consumed FROM tool_run r WHERE r.id=${row.run_id}`,
+    );
+    expect(r).toEqual({
+      state: terminal,
+      failed: 3,
+      operations: 0,
+      consumed: 0,
+    });
+    expect(f.requests).toBe(0);
+  });
+}
+
+test("ToolStore.finish rolls back run and call authority together when its transaction fails", async () => {
+  const f = get(),
+    e = await approved(f);
+  const [row] = await f.db.execute<{ run_id: string }>(
+    sql`SELECT run_id FROM mcp_runtime_execution WHERE id=${e.id}`,
+  );
+  f.afterQuery((statement) => {
+    if (statement.includes("UPDATE tool_run SET state="))
+      throw new Error("synthetic finish rollback");
+  });
+  expect(
+    await rejectionOf(f.tools.finish("alice", row.run_id, "failed")),
+  ).toBeDefined();
+  f.afterQuery(undefined);
+  const [r] = await f.db.execute<{ state: string; queued: number }>(
+    sql`SELECT r.state,(SELECT count(*)::integer FROM tool_call WHERE run_id=r.id AND state='queued') AS queued FROM tool_run r WHERE r.id=${row.run_id}`,
+  );
+  expect(r).toEqual({ state: "running", queued: 3 });
+  expect(f.requests).toBe(0);
+});
+
+test("a tighter reviewed fee expiry bounds every immutable frame and cannot be renewed at dispatch", async () => {
+  const f = get(),
+    expiry = new Date(Date.now() + 1500);
+  f.expireFeesAt(expiry.toISOString());
+  const e = await approved(f);
+  expect(
+    e.frames.every((frame) => frame.expiresAt === expiry.toISOString()),
+  ).toBe(true);
+  await new Promise((resolve) =>
+    setTimeout(resolve, Math.max(0, expiry.getTime() - Date.now()) + 20),
+  );
+  expect(
+    await rejectionOf(f.runtime.executeRuntime("alice", e.id)),
+  ).toMatchObject({ id: "mcp_runtime_unconfigured" });
+  const [r] = await f.db.execute<{ operations: number; consumed: number }>(
+    sql`SELECT (SELECT count(*)::integer FROM mcp_operation) AS operations,(SELECT count(*)::integer FROM tool_approval WHERE state='consumed') AS consumed`,
+  );
+  expect(r).toEqual({ operations: 0, consumed: 0 });
+  expect(f.requests).toBe(0);
+});
+
+test("a late-prepared run keeps its original twenty-second ceiling instead of gaining a fresh profile window", async () => {
+  const f = get(),
+    adoption = await f.adopt(),
+    run = await f.run();
+  await f.db.execute(
+    sql`UPDATE tool_run SET created_at=clock_timestamp()-interval '18 seconds' WHERE id=${run.id}`,
+  );
+  const e = await f.runtime.prepareRuntimeExecution("alice", {
+    id: crypto.randomUUID(),
+    runId: run.id,
+    toolCallId: run.callId,
+    adoptionId: adoption.id,
+    arguments: { message: "synthetic" },
+  });
+  await f.runtime.bootstrapMcpPeriod(f.planIdentity);
+  for (const frame of e.frames)
+    await f.runtime.decideRuntimeApproval("alice", frame.approvalId, "approve");
+  expect((await f.runtime.executeRuntime("alice", e.id)).state).toBe(
+    "completed_unreconciled",
+  );
+  const [r] = await f.db.execute<{ bounded: boolean; tight: boolean }>(
+    sql`SELECT bool_and(o.deadline<=r.created_at+interval '20 seconds') AS bounded,bool_and(o.deadline<e.created_at+interval '5 seconds') AS tight FROM mcp_operation o JOIN mcp_runtime_frame f ON f.operation_id=o.id JOIN mcp_runtime_execution e ON e.id=f.execution_id JOIN tool_run r ON r.id=e.run_id`,
+  );
+  expect(r).toEqual({ bounded: true, tight: true });
+  expect(f.requests).toBe(3);
 });

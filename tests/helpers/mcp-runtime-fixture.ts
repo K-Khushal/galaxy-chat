@@ -55,7 +55,7 @@ export async function mcpRuntimeFixture() {
     responseTypes: ["application/json"] as ["application/json"],
     maxRequestBytes: 4096,
     maxResponseBytes: 4096,
-    timeoutMs: 20000,
+    timeoutMs: 5000,
     connectMs: 1000,
     firstByteMs: 1000,
     resource: "https://resource.example/mcp",
@@ -130,7 +130,7 @@ export async function mcpRuntimeFixture() {
     requestBytes: 4096,
     responseBytes: 4096,
     cpuMs: 1000,
-    wallMs: 20000,
+    wallMs: 5000,
     attempts: 1 as const,
     sharedCapacityDigest: configured.capacityDigest,
   };
@@ -190,11 +190,11 @@ export async function mcpRuntimeFixture() {
     MCP_RUNTIME_ENABLED: "1",
     MCP_RUNTIME_CONFIG_JSON: JSON.stringify(rawConfig),
   });
-  const config = resolveRuntimeConfig(process.env, new Date()),
-    connections = {
-      initialize: { id: crypto.randomUUID(), revision: crypto.randomUUID() },
-      call: { id: crypto.randomUUID(), revision: crypto.randomUUID() },
-    };
+  let config = resolveRuntimeConfig(process.env, new Date());
+  const connections = {
+    initialize: { id: crypto.randomUUID(), revision: crypto.randomUUID() },
+    call: { id: crypto.randomUUID(), revision: crypto.randomUUID() },
+  };
   await f.db.execute(
     sql`INSERT INTO account(id,user_id,provider_id,account_id)VALUES(${crypto.randomUUID()},'alice','github','10001'),(${crypto.randomUUID()},'bob','github','10002')`,
   );
@@ -263,41 +263,43 @@ export async function mcpRuntimeFixture() {
     });
   });
   const dial = offlineDial(up.port, cert.ca);
-  const broker = createBroker(
-    {
-      bind: "127.0.0.1",
-      port: 0,
-      production: false,
-      hmacKey: Buffer.alloc(32, 1),
-      envelopeKey: Buffer.alloc(32, 2),
-      profiles: parseProfiles(
-        Object.values(profiles)
-          .map((p) => ({
-            ...p,
-            protocolVersion: undefined,
-            toolName: undefined,
-            runtime: {
-              manifestDigest: config.digest,
-              profileDigest: operationDigest(p),
-              protocolVersion: p.protocolVersion,
-              toolName: p.toolName,
-            },
-          }))
-          .map(({ protocolVersion: _a, toolName: _b, ...p }) => p),
-      ),
-      secrets: {},
-      concurrency: 2,
-      maxConnections: 8,
-      evidence: {
-        keyVersion: "v1",
-        privateKey: keys.privateKey
-          .export({ format: "pem", type: "pkcs8" })
-          .toString(),
+  const makeBroker = () =>
+    createBroker(
+      {
+        bind: "127.0.0.1",
+        port: 0,
+        production: false,
+        hmacKey: Buffer.alloc(32, 1),
+        envelopeKey: Buffer.alloc(32, 2),
+        profiles: parseProfiles(
+          Object.values(profiles)
+            .map((p) => ({
+              ...p,
+              protocolVersion: undefined,
+              toolName: undefined,
+              runtime: {
+                manifestDigest: config.digest,
+                profileDigest: operationDigest(p),
+                protocolVersion: p.protocolVersion,
+                toolName: p.toolName,
+              },
+            }))
+            .map(({ protocolVersion: _a, toolName: _b, ...p }) => p),
+        ),
+        secrets: {},
+        concurrency: 2,
+        maxConnections: 8,
+        evidence: {
+          keyVersion: "v1",
+          privateKey: keys.privateKey
+            .export({ format: "pem", type: "pkcs8" })
+            .toString(),
+        },
       },
-    },
-    new MemoryReplayStore(),
-    dial.dependencies,
-  );
+      new MemoryReplayStore(),
+      dial.dependencies,
+    );
+  let broker = makeBroker();
   let requests = 0;
   let onSend: (() => void) | undefined;
   const binding = {
@@ -440,7 +442,9 @@ export async function mcpRuntimeFixture() {
     runtime,
     tools,
     rawConfig,
-    config,
+    get config() {
+      return config;
+    },
     manifest,
     planIdentity,
     connections,
@@ -456,6 +460,13 @@ export async function mcpRuntimeFixture() {
       return requests;
     },
     messages,
+    expireFeesAt(expiration: string) {
+      for (const fee of Object.values(manifest.fees))
+        fee.expiresAt = expiration;
+      process.env.MCP_RUNTIME_CONFIG_JSON = JSON.stringify(rawConfig);
+      config = resolveRuntimeConfig(process.env, new Date());
+      broker = makeBroker();
+    },
     beforeBroker(fn: () => void) {
       onSend = fn;
     },

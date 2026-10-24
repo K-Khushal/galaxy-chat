@@ -73,9 +73,32 @@ export function executionStorageError(error: unknown): never {
   if (error instanceof AppError) throw error;
   throw new AppError("mcp_execution_storage_unavailable", 503);
 }
-export async function runtimeContextInTx(tx: Tx, userId: string, id: string) {
+type LiveRuntimeAuthority = {
+  request: unknown;
+  created_at: string;
+  state: string;
+  actor_key: string;
+  digest: string;
+  approval_state: string;
+  expires_at: string;
+  binding: unknown;
+  call_state: string;
+  call_name: string;
+};
+export async function runtimeContextInTx(
+  tx: Tx,
+  userId: string,
+  id: string,
+  authority?: { runId: string; toolCallId: string; approvalId: string },
+) {
+  // One final statement observes mutable run/credential/approval/call authority
+  // together with adoption, profiles, invitation, control and the current DB clock.
+  const snapshot = authority
+    ? sql`(SELECT jsonb_build_object('request',tr.request,'created_at',tr.created_at,'state',tr.state,'actor_key',bo.actor_key,'digest',bo.digest,'approval_state',ta.state,'expires_at',ta.expires_at,'binding',ta.binding,'call_state',tc.state,'call_name',tc.name) FROM tool_run tr JOIN byok_operation bo ON bo.id=tr.id AND bo.state='entered' AND bo.kind='chat' AND bo.resource_units=3 AND bo.provider=tr.request->>'funding' JOIN provider_credential pc ON pc.user_id=tr.user_id AND pc.provider=bo.provider AND pc.revision=bo.credential_revision AND pc.test_state<>'invalid' JOIN tool_approval ta ON ta.run_id=tr.id AND ta.user_id=tr.user_id JOIN tool_call tc ON tc.run_id=tr.id AND tc.id=${authority.toolCallId} WHERE tr.id=${authority.runId} AND tr.user_id=${userId} AND ta.id=${authority.approvalId})`
+    : sql`NULL::jsonb`;
   const [r] = await tx.execute<{
     now: Date;
+    live_authority: LiveRuntimeAuthority | null;
     stopped: boolean;
     github_login: string | null;
     manifest_digest: string;
@@ -105,7 +128,7 @@ export async function runtimeContextInTx(tx: Tx, userId: string, id: string) {
     c_profile_digest: string;
     c_purpose: string;
   }>(
-    sql`SELECT clock_timestamp() AS now,f.stopped,u.github_login,a.manifest_digest,a.binding,a.catalog_id,m.definition,v.definition AS catalog_definition,v.digest AS catalog_digest,k.definition AS action_definition,k.digest AS action_digest,k.schema_digest,k.output_schema_digest,a.state,i.state AS i_state,i.revision AS i_revision,i.profile_id AS i_profile_id,i.profile_revision AS i_profile_revision,i.profile_digest AS i_profile_digest,i.purpose AS i_purpose,c.state AS c_state,c.revision AS c_revision,c.profile_id AS c_profile_id,c.profile_revision AS c_profile_revision,c.profile_digest AS c_profile_digest,c.purpose AS c_purpose FROM mcp_runtime_adoption a JOIN funding_control f ON f.id='platform' JOIN "user" u ON u.id=a.user_id JOIN mcp_runtime_manifest m ON m.digest=a.manifest_digest JOIN mcp_connection i ON i.id=a.initialize_connection AND i.user_id=u.id JOIN mcp_connection c ON c.id=a.call_connection AND c.user_id=u.id JOIN mcp_catalog_head h ON h.connection_id=c.id AND h.catalog_id=a.catalog_id AND h.state='active' JOIN mcp_catalog_revision v ON v.id=h.catalog_id AND v.connection_id=c.id AND v.user_id=u.id JOIN mcp_catalog_action k ON k.catalog_id=v.id AND k.name=v.definition->'tools'->0->>'name' WHERE a.id=${id} AND a.user_id=${userId}`,
+    sql`SELECT clock_timestamp() AS now,${snapshot} AS live_authority,f.stopped,u.github_login,a.manifest_digest,a.binding,a.catalog_id,m.definition,v.definition AS catalog_definition,v.digest AS catalog_digest,k.definition AS action_definition,k.digest AS action_digest,k.schema_digest,k.output_schema_digest,a.state,i.state AS i_state,i.revision AS i_revision,i.profile_id AS i_profile_id,i.profile_revision AS i_profile_revision,i.profile_digest AS i_profile_digest,i.purpose AS i_purpose,c.state AS c_state,c.revision AS c_revision,c.profile_id AS c_profile_id,c.profile_revision AS c_profile_revision,c.profile_digest AS c_profile_digest,c.purpose AS c_purpose FROM mcp_runtime_adoption a JOIN funding_control f ON f.id='platform' JOIN "user" u ON u.id=a.user_id JOIN mcp_runtime_manifest m ON m.digest=a.manifest_digest JOIN mcp_connection i ON i.id=a.initialize_connection AND i.user_id=u.id JOIN mcp_connection c ON c.id=a.call_connection AND c.user_id=u.id JOIN mcp_catalog_head h ON h.connection_id=c.id AND h.catalog_id=a.catalog_id AND h.state='active' JOIN mcp_catalog_revision v ON v.id=h.catalog_id AND v.connection_id=c.id AND v.user_id=u.id JOIN mcp_catalog_action k ON k.catalog_id=v.id AND k.name=v.definition->'tools'->0->>'name' WHERE a.id=${id} AND a.user_id=${userId}`,
   );
   if (!r) fail("not_found", 404);
   if (r.stopped) fail("funded_inference_disabled", 503);
@@ -185,7 +208,7 @@ async function runInTx(tx: Tx, userId: string, runId: string) {
     actor_key: string;
     digest: string;
   }>(
-    sql`SELECT r.request,r.created_at,r.state,o.actor_key,o.digest FROM tool_run r JOIN byok_operation o ON o.id=r.id AND o.state='entered' AND o.kind='chat' AND o.resource_units=3 AND o.provider=r.request->>'funding' JOIN provider_credential c ON c.user_id=r.user_id AND c.provider=o.provider AND c.revision=o.credential_revision AND c.test_state<>'invalid' WHERE r.id=${runId} AND r.user_id=${userId}`,
+    sql`SELECT r.request,r.created_at,r.state,o.actor_key,o.digest FROM tool_run r JOIN byok_operation o ON o.id=r.id AND o.state='entered' AND o.kind='chat' AND o.resource_units=3 AND o.provider=r.request->>'funding' JOIN provider_credential c ON c.user_id=r.user_id AND c.provider=o.provider AND c.revision=o.credential_revision AND c.test_state<>'invalid' WHERE r.id=${runId} AND r.user_id=${userId} FOR UPDATE OF r,o,c`,
   );
   if (!r) fail("not_found", 404);
   return r;
@@ -209,6 +232,22 @@ function checkRun(
   )
     fail("mcp_tool_run_unavailable");
   return operationDigest({ request, model: selected });
+}
+/** Immutable frame validity is bounded from preparation, never renewed by approval or dispatch. */
+function runtimeFrameDeadline(
+  runCreatedAt: Date,
+  preparedAt: Date,
+  manifestExpiry: string,
+  fee: { expiresAt: string; capacity: { wallMs: number } },
+) {
+  return new Date(
+    Math.min(
+      new Date(runCreatedAt).getTime() + TOOL_LIMITS.timeoutMs,
+      new Date(preparedAt).getTime() + fee.capacity.wallMs,
+      new Date(manifestExpiry).getTime(),
+      new Date(fee.expiresAt).getTime(),
+    ),
+  );
 }
 /** The first runtime admission pins the retained principal secret; rotation never resets counters. */
 async function runtimeCounterKeyInTx(tx: Tx) {
@@ -282,28 +321,51 @@ export async function verifyRuntimeActionInTx(
   const [e] = await tx.execute<{
     adoption_id: string;
     run_id: string;
+    created_at: Date;
     definition: {
       requestDigest: string;
       arguments: Record<string, unknown>;
       toolCallId: string;
     };
   }>(
-    sql`SELECT adoption_id,run_id,definition FROM mcp_runtime_execution WHERE id=${f.execution_id} AND user_id=${userId}`,
+    sql`SELECT adoption_id,run_id,created_at,definition FROM mcp_runtime_execution WHERE id=${f.execution_id} AND user_id=${userId}`,
   );
   if (!e) fail("not_found", 404);
-  const run = await runInTx(tx, userId, e.run_id);
-  const [a] = await tx.execute<{
+  // Lock mutable rows in run→approval/call order through transaction commit.
+  // ToolStore.finish uses the same BYOK synchronization as every other writer.
+  await runInTx(tx, userId, e.run_id);
+  const [lockedApproval] = await tx.execute<{
     state: string;
     expires_at: Date;
     binding: unknown;
     call_state: string;
     call_name: string;
   }>(
-    sql`SELECT a.state,a.expires_at,a.binding,k.state AS call_state,k.name AS call_name FROM tool_approval a JOIN tool_call k ON k.run_id=a.run_id AND k.id=${f.tool_call_id} WHERE a.id=${approvalId} AND a.user_id=${userId} AND a.run_id=${e.run_id}`,
+    sql`SELECT a.state,a.expires_at,a.binding,k.state AS call_state,k.name AS call_name FROM tool_approval a JOIN tool_call k ON k.run_id=a.run_id AND k.id=${f.tool_call_id} WHERE a.id=${approvalId} AND a.user_id=${userId} AND a.run_id=${e.run_id} FOR UPDATE OF a,k`,
   );
-  if (!a) fail("not_found", 404);
+  if (!lockedApproval) fail("not_found", 404);
+  const c = await runtimeContextInTx(tx, userId, e.adoption_id, {
+    runId: e.run_id,
+    toolCallId: f.tool_call_id,
+    approvalId,
+  });
+  const live = c.row.live_authority;
+  if (!live) fail("not_found", 404);
+  const run = {
+      request: live.request,
+      created_at: new Date(live.created_at),
+      state: live.state,
+      actor_key: live.actor_key,
+      digest: live.digest,
+    },
+    a = {
+      state: live.approval_state,
+      expires_at: new Date(live.expires_at),
+      binding: live.binding,
+      call_state: live.call_state,
+      call_name: live.call_name,
+    };
   equal(a.binding, input);
-  const c = await runtimeContextInTx(tx, userId, e.adoption_id);
   const requestDigest = checkRun(run, userId, c.now);
   if (
     requestDigest !== e.definition.requestDigest ||
@@ -412,12 +474,11 @@ export async function verifyRuntimeActionInTx(
       plan: f.intent.plan,
       feeDigest: operationDigest(fee),
       authority: { id: f.id, revision: "1", digest },
-      deadline: new Date(
-        Math.min(
-          new Date(run.created_at).getTime() + 20000,
-          new Date(m.expiresAt).getTime(),
-          new Date(fee.expiresAt).getTime(),
-        ),
+      deadline: runtimeFrameDeadline(
+        run.created_at,
+        e.created_at,
+        m.expiresAt,
+        fee,
       ).toISOString(),
       maxAttempts: 1,
     }),
@@ -585,8 +646,8 @@ export function createMcpExecutionStore(options: { db?: Database } = {}) {
           capacityDigest: plan.capacityDigest,
         };
         await countAdmission(tx, userId, "proposal", 3);
-        await tx.execute(
-          sql`INSERT INTO mcp_runtime_execution(id,user_id,run_id,adoption_id,definition) VALUES(${input.id},${userId},${input.runId},${input.adoptionId},${canonicalJson({ ...input, arguments: args, requestDigest })}::jsonb)`,
+        const [execution] = await tx.execute<{ created_at: Date }>(
+          sql`INSERT INTO mcp_runtime_execution(id,user_id,run_id,adoption_id,definition) VALUES(${input.id},${userId},${input.runId},${input.adoptionId},${canonicalJson({ ...input, arguments: args, requestDigest })}::jsonb) RETURNING created_at`,
         );
         const bodies = runtimeFrames(m.tool.name, args, {
             initialize: randomUUID(),
@@ -637,12 +698,11 @@ export function createMcpExecutionStore(options: { db?: Database } = {}) {
             costMicrodollars: fee.upperBoundMicrodollars,
             runtime: { frameId: id, digest },
           };
-          const deadline = new Date(
-            Math.min(
-              new Date(run.created_at).getTime() + 20000,
-              new Date(m.expiresAt).getTime(),
-              new Date(fee.expiresAt).getTime(),
-            ),
+          const deadline = runtimeFrameDeadline(
+            run.created_at,
+            execution.created_at,
+            m.expiresAt,
+            fee,
           );
           const approvalId = await issueToolApprovalInTx(
             tx,

@@ -272,11 +272,18 @@ export class ToolStore {
     };
   }
   async finish(userId: string, id: string, state: string, answer = "") {
-    await this.db.execute(
-      sql`UPDATE tool_run SET state=${state},answer=${answer} WHERE id=${id} AND user_id=${userId}`,
-    );
-    await this.db.execute(
-      sql`UPDATE tool_call SET state='failed' WHERE run_id=${id} AND state IN ('queued','running') AND EXISTS(SELECT 1 FROM tool_run r WHERE r.id=${id} AND r.user_id=${userId})`,
+    await this.db.transaction(
+      async (tx) => {
+        // Completion must serialize with runtime approval/entry, like step/event/remove.
+        await lockByokResources(tx);
+        await tx.execute(
+          sql`UPDATE tool_run SET state=${state},answer=${answer} WHERE id=${id} AND user_id=${userId}`,
+        );
+        await tx.execute(
+          sql`UPDATE tool_call SET state='failed' WHERE run_id=${id} AND state IN ('queued','running') AND EXISTS(SELECT 1 FROM tool_run r WHERE r.id=${id} AND r.user_id=${userId})`,
+        );
+      },
+      { isolationLevel: "read committed" },
     );
   }
   async view(userId: string, id: string): Promise<ToolRunView> {
