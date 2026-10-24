@@ -213,7 +213,8 @@ export function JobsWorkbench({
   );
 
   useEffect(() => {
-    void load();
+    // Effect replay must supersede its aborted initial read, not skip it.
+    void load({ force: true });
   }, [load]);
 
   const hasActive = !!jobs?.some((job) => ACTIVE_STATES.has(job.state));

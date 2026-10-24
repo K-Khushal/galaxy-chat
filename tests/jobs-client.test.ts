@@ -74,3 +74,40 @@ describe("jobs client request bounding", () => {
     expect(controller.signal.aborted).toBe(false);
   });
 });
+
+test("a pre-aborted request never dispatches a cancellation", async () => {
+  let calls = 0;
+  const client = createJobsClient({
+    fetch: (async () => {
+      calls += 1;
+      return Response.json({ job: {} });
+    }) as typeof fetch,
+  });
+  const controller = new AbortController();
+  controller.abort();
+  const error = await client
+    .cancel(crypto.randomUUID(), controller.signal)
+    .catch((error) => error);
+  expect(isAbortError(error)).toBe(true);
+  expect(calls).toBe(0);
+});
+
+test("settled requests remove their external abort listener", async () => {
+  const controller = new AbortController();
+  const add = controller.signal.addEventListener.bind(controller.signal);
+  const remove = controller.signal.removeEventListener.bind(controller.signal);
+  const listeners = new Set<EventListenerOrEventListenerObject>();
+  controller.signal.addEventListener = (type, callback, options) => {
+    if (type === "abort" && callback) listeners.add(callback);
+    add(type, callback, options);
+  };
+  controller.signal.removeEventListener = (type, callback, options) => {
+    if (type === "abort" && callback) listeners.delete(callback);
+    remove(type, callback, options);
+  };
+  const client = createJobsClient({
+    fetch: (async () => Response.json({ jobs: [] })) as typeof fetch,
+  });
+  await client.list(controller.signal);
+  expect(listeners.size).toBe(0);
+});

@@ -48,7 +48,9 @@ export function createJobsClient(options?: {
     external: AbortSignal | undefined,
     timeoutMs: number,
   ): Promise<T> {
+    if (external?.aborted) throw abortError();
     const controller = new AbortController();
+    let onAbort: (() => void) | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const racers: Promise<T>[] = [];
     const work = (async () => {
@@ -73,9 +75,11 @@ export function createJobsClient(options?: {
             reject(abortError());
             return;
           }
-          external.addEventListener("abort", () => reject(abortError()), {
-            once: true,
-          });
+          onAbort = () => {
+            controller.abort();
+            reject(abortError());
+          };
+          external.addEventListener("abort", onAbort, { once: true });
         }),
       );
     }
@@ -83,6 +87,7 @@ export function createJobsClient(options?: {
       return await Promise.race(racers);
     } finally {
       if (timer) clearTimeout(timer);
+      if (onAbort) external?.removeEventListener("abort", onAbort);
       controller.abort();
     }
   }

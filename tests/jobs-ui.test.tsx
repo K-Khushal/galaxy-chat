@@ -1,6 +1,12 @@
 import { afterAll, expect, mock, test } from "bun:test";
 import { Window } from "happy-dom";
-import { act, createElement, type ReactNode, useLayoutEffect } from "react";
+import {
+  act,
+  createElement,
+  type ReactNode,
+  StrictMode,
+  useLayoutEffect,
+} from "react";
 import type { JobRecord, JobsClient } from "../lib/jobs/client";
 
 mock.module("server-only", () => ({}));
@@ -587,6 +593,23 @@ test("background polling runs only while a non-terminal job exists", async () =>
     await ui.render(<JobsWorkbench client={active.client} pollMs={40} />);
     await ui.settle(160);
     expect(active.listCalls).toBeGreaterThan(1);
+  } finally {
+    await ui.close();
+  }
+});
+
+test("Strict Mode effect replay completes the initial load instead of leaving loading stuck", async () => {
+  const ui = await dom();
+  try {
+    const tracked = fakeClient({ list: async () => [] });
+    await ui.render(
+      <StrictMode>
+        <JobsWorkbench client={tracked.client} pollMs={60_000} />
+      </StrictMode>,
+    );
+    await ui.settle(10);
+    expect(ui.text()).toContain("No durable jobs");
+    expect(ui.text()).not.toContain("Loading durable jobs");
   } finally {
     await ui.close();
   }
