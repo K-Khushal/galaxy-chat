@@ -7,6 +7,7 @@
 export type SandboxScript = {
   create: "ok" | "reject" | "timeout" | "oversized" | "malformed";
   status: "running" | "completed" | "failed" | "oversized" | "malformed";
+  lookup: "ok" | "mismatch";
   logs: string;
   result: string;
 };
@@ -14,10 +15,15 @@ export type SandboxScript = {
 export type SandboxGatewayFixture = {
   url: string;
   key: string;
-  counters: { create: number; status: number; terminate: number };
+  counters: {
+    create: number;
+    status: number;
+    terminate: number;
+    lookup: number;
+  };
   tombstones: () => string[];
   script: SandboxScript;
-  hooks: { created?: () => Promise<void> };
+  hooks: { created?: () => Promise<void>; lookup?: () => Promise<void> };
   close: () => Promise<void>;
 };
 
@@ -27,10 +33,12 @@ export function createSandboxGatewayFixture(
   const key = "sandbox-fixture-gateway-key-0123456789abcdef";
   const tombstones = new Map<string, string>();
   const handles = new Map<string, string>();
-  const counters = { create: 0, status: 0, terminate: 0 };
+  const counters = { create: 0, status: 0, terminate: 0, lookup: 0 };
+  const bindings = new Map<string, string>();
   const script: SandboxScript = {
     create: "ok",
     status: "completed",
+    lookup: "ok",
     logs: "fixture logs: no code was executed\n",
     result: "print('fixture result')\n",
     ...overrides,
@@ -48,9 +56,12 @@ export function createSandboxGatewayFixture(
       }
       if (request.method === "POST" && url.pathname === "/v1/sandboxes") {
         counters.create += 1;
-        let body: { idempotencyKey?: string } = {};
+        let body: { idempotencyKey?: string; bindingDigest?: string } = {};
         try {
-          body = (await request.json()) as { idempotencyKey?: string };
+          body = (await request.json()) as {
+            idempotencyKey?: string;
+            bindingDigest?: string;
+          };
         } catch {
           return Response.json({ error: "invalid" }, { status: 400 });
         }
@@ -58,6 +69,9 @@ export function createSandboxGatewayFixture(
         if (!/^[0-9a-f-]{36}$/.test(idempotencyKey)) {
           return Response.json({ error: "invalid" }, { status: 400 });
         }
+        if (!body.bindingDigest || !/^[a-f0-9]{64}$/.test(body.bindingDigest))
+          return Response.json({ error: "invalid_binding" }, { status: 400 });
+        bindings.set(idempotencyKey, body.bindingDigest);
         // Durable creation tombstone: the same idempotency key always resolves
         // to the same handle and never provisions a second resource.
         const existing = tombstones.get(idempotencyKey);
@@ -104,6 +118,27 @@ export function createSandboxGatewayFixture(
             });
           }
         }
+      }
+      const lookupMatch = /^\/v1\/operations\/([0-9a-f-]{36})$/.exec(
+        url.pathname,
+      );
+      if (request.method === "POST" && lookupMatch) {
+        counters.lookup += 1;
+        const body = (await request.json()) as { bindingDigest?: string };
+        const operationId = lookupMatch[1];
+        const bindingDigest = bindings.get(operationId);
+        if (!bindingDigest || body.bindingDigest !== bindingDigest)
+          return Response.json({ error: "binding_mismatch" }, { status: 409 });
+        const handle = tombstones.get(operationId);
+        await hooks.lookup?.();
+        return Response.json({
+          protocol: "sandbox-gateway-v1",
+          operationId:
+            script.lookup === "mismatch" ? crypto.randomUUID() : operationId,
+          bindingDigest,
+          found: !!handle,
+          ...(handle ? { handle } : {}),
+        });
       }
       const statusMatch = /^\/v1\/sandboxes\/([A-Za-z0-9_-]+)\/status$/.exec(
         url.pathname,

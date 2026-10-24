@@ -1309,3 +1309,54 @@ test("review: failed commands retain resource capacity and request exact-handle 
   );
   expect(control.stopped).toBe(true);
 });
+
+test("review: lost-handle lookup remains bound to one intent across owner and configuration loss", async () => {
+  const f = get();
+  f.gatewayFixture.script.create = "oversized";
+  f.gatewayFixture.hooks.lookup = async () => {
+    await f.db.execute(sql`DELETE FROM "user" WHERE id='alice'`);
+    f.runtime.gateway.key = "disabled-after-entry-0123456789abcdef";
+  };
+  const w = await runToApproval();
+  await w.store.approve("alice", w.approval);
+  await worker(w).deliver(w.id);
+  const op = (await operations(w))[0];
+  expect(op.state).toBe("held");
+  expect(op.provider_handle).toBeTruthy();
+  expect(Number(op.reserved_microdollars)).toBe(500_000);
+  expect(w.gatewayFixture.counters.create).toBe(1);
+  expect(w.gatewayFixture.counters.lookup).toBe(1);
+  expect(w.gatewayFixture.counters.terminate).toBe(1);
+  const { SandboxStore } = await import("../lib/sandbox/store");
+  await new SandboxStore(w.db).recoverOperation(op.id, w.gateway);
+  expect(w.gatewayFixture.counters.create).toBe(1);
+  expect(w.gatewayFixture.counters.lookup).toBe(1);
+  expect(w.gatewayFixture.counters.terminate).toBe(2);
+});
+
+test("review: mismatched lookup cannot adopt or terminate another operation's handle", async () => {
+  const f = get();
+  f.gatewayFixture.script.create = "oversized";
+  f.gatewayFixture.script.lookup = "mismatch";
+  const w = await runToApproval();
+  await w.store.approve("alice", w.approval);
+  await worker(w).deliver(w.id);
+  const op = (await operations(w))[0];
+  expect(op.state).toBe("held");
+  expect(op.provider_handle).toBeNull();
+  expect(w.gatewayFixture.counters.create).toBe(1);
+  expect(w.gatewayFixture.counters.lookup).toBe(1);
+  expect(w.gatewayFixture.counters.terminate).toBe(0);
+});
+
+test("review: caller-shaped gateway objects cannot authorize a create", async () => {
+  const w = await runToApproval();
+  await w.store.approve("alice", w.approval);
+  const lease = await w.jobs.claim(w.id);
+  if (!lease) throw new Error("missing_lease");
+  expect(
+    (await rejectionOf(w.store.dispatch(lease, { ...w.gateway }))).id,
+  ).toBe("sandbox_gateway_changed");
+  expect(w.gatewayFixture.counters.create).toBe(0);
+  expect(await operations(w)).toHaveLength(0);
+});

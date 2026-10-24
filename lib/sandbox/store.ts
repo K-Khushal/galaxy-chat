@@ -46,7 +46,10 @@ import type {
   SandboxGatewayClient,
   SandboxWireOutcome,
 } from "./gateway-client";
-import { assertSandboxGateway } from "./gateway-client";
+import {
+  assertSandboxGateway,
+  assertSandboxOperationGateway,
+} from "./gateway-client";
 
 type Tx = DatabaseTransaction;
 type Row = {
@@ -834,6 +837,43 @@ export class SandboxStore {
     return this.retainOperation(operationId, "operator_retention");
   }
 
+  /** Status/terminate only, including lost handles. Configuration and ownership
+   * are intentionally not prerequisites to keeping and cleaning a financial orphan. */
+  async recoverOperation(
+    operationId: string,
+    gateway: SandboxGatewayClient,
+  ): Promise<SandboxOperationView> {
+    await this.retainUncertainOperation(operationId);
+    let op = await this.transaction((tx) => operation(tx, operationId));
+    if (op.attempts !== 1) return view(op);
+    const identity = sandboxBindingSchema.safeParse(op.identity);
+    if (!identity.success) fail("sandbox_binding_unavailable", 503);
+    assertSandboxOperationGateway(gateway, identity.data.gateway);
+    if (!op.provider_handle) {
+      const outcome = await gateway.lookup(op.id, op.binding_digest);
+      if (outcome.kind !== "ok" || !outcome.value.found) return view(op);
+      const handle = outcome.value.handle;
+      op = await this.transaction(async (tx) => {
+        const fresh = await operation(tx, operationId);
+        if (fresh.provider_handle) return fresh;
+        await evidence(tx, operationId, 8, {
+          kind: "orphan_handle",
+          handle,
+          bindingDigest: fresh.binding_digest,
+        });
+        const [updated] =
+          await tx.execute<Row>(sql`UPDATE sandbox_operation SET provider_handle=${handle},revision=revision+1
+          WHERE id=${operationId} AND state='held' AND provider_handle IS NULL RETURNING *`);
+        if (!updated) fail("sandbox_conflict");
+        await audit(tx, updated);
+        return updated;
+      });
+    }
+    if (op.provider_handle)
+      await this.terminateHandle(gateway, op.provider_handle, op.id);
+    return view(op);
+  }
+
   private async retainUnknown(
     _lease: SandboxLease,
     operationId: string,
@@ -1060,7 +1100,10 @@ export class SandboxStore {
         reserved.operationId,
         outcome,
       );
-      if (recorded.kind !== "created") return;
+      if (recorded.kind !== "created") {
+        await this.recoverOperation(reserved.operationId, gateway);
+        return;
+      }
       if (options?.stopAfterCreate) return;
       const op = await this.transaction(async (tx) =>
         operation(tx, reserved.operationId),
@@ -1138,7 +1181,7 @@ export class SandboxStore {
     }
     if (!op.provider_handle) {
       // Tombstone set, no handle: the create outcome is unknown.
-      await this.retainUnknown(lease, op.id, "create_outcome_unknown");
+      await this.recoverOperation(op.id, gateway);
       return;
     }
     try {

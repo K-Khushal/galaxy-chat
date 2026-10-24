@@ -126,7 +126,7 @@ BEGIN
  IF OLD.create_requested_at IS NOT NULL AND NEW.create_requested_at IS DISTINCT FROM OLD.create_requested_at THEN RAISE EXCEPTION 'sandbox creation tombstone is immutable'; END IF;
  IF OLD.provider_handle IS NOT NULL AND NEW.provider_handle IS DISTINCT FROM OLD.provider_handle THEN RAISE EXCEPTION 'sandbox provider handle is immutable'; END IF;
  IF NEW.attempts<OLD.attempts OR NEW.incurred_microdollars<OLD.incurred_microdollars OR NEW.revision<>OLD.revision+1 THEN RAISE EXCEPTION 'sandbox incurred minimum or revision is immutable'; END IF;
- IF NOT((OLD.state='reserved' AND NEW.state IN('entered','released'))OR(OLD.state='entered' AND NEW.state IN('entered','held','completed_unreconciled'))OR(OLD.state='completed_unreconciled' AND NEW.state='held')) THEN RAISE EXCEPTION 'invalid sandbox operation state transition'; END IF;
+ IF NOT((OLD.state='reserved' AND NEW.state IN('entered','released'))OR(OLD.state='entered' AND NEW.state IN('entered','held','completed_unreconciled'))OR(OLD.state IN('held','completed_unreconciled') AND NEW.state='held')) THEN RAISE EXCEPTION 'invalid sandbox operation state transition'; END IF;
  IF NEW.state='held' AND NOT EXISTS(SELECT 1 FROM sandbox_operation_evidence e WHERE e.operation_id=NEW.id) THEN RAISE EXCEPTION 'sandbox terminal transport evidence required'; END IF;
  IF NEW.state='completed_unreconciled' AND NOT EXISTS(SELECT 1 FROM sandbox_operation_evidence e WHERE e.operation_id=NEW.id) THEN RAISE EXCEPTION 'sandbox terminal transport evidence required'; END IF;
  RETURN NEW;

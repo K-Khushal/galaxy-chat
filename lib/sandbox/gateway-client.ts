@@ -5,10 +5,12 @@ import {
   SANDBOX_LIMITS,
   type SandboxWireCreateRequest,
   type SandboxWireCreateResponse,
+  type SandboxWireLookupResponse,
   type SandboxWireStatusResponse,
   type SandboxWireTerminateResponse,
   sandboxWireCreateRequestSchema,
   sandboxWireCreateResponseSchema,
+  sandboxWireLookupResponseSchema,
   sandboxWireStatusResponseSchema,
   sandboxWireTerminateResponseSchema,
 } from "./contract";
@@ -31,6 +33,10 @@ export type SandboxGatewayClient = Readonly<{
     request: SandboxWireCreateRequest,
     deadline?: number,
   ): Promise<SandboxWireOutcome<SandboxWireCreateResponse>>;
+  lookup(
+    operationId: string,
+    bindingDigest: string,
+  ): Promise<SandboxWireOutcome<SandboxWireLookupResponse>>;
   status(
     handle: string,
     deadline?: number,
@@ -68,6 +74,21 @@ export function assertSandboxGateway(
     client.identity.baseUrl !== expected.baseUrl ||
     client.identity.keyIdentity !== expected.keyIdentity ||
     issued.keyDigest !== createHash("sha256").update(expected.key).digest("hex")
+  )
+    throw new AppError("sandbox_gateway_changed", 503);
+}
+export function assertSandboxOperationGateway(
+  client: SandboxGatewayClient,
+  expected: SandboxGatewayClient["identity"],
+) {
+  offlineOnly();
+  const issued = clients.get(client);
+  if (
+    !issued ||
+    expected.protocol !== "sandbox-gateway-v1" ||
+    expected.baseUrl !== client.identity.baseUrl ||
+    expected.keyIdentity !== client.identity.keyIdentity ||
+    issued.keyDigest !== expected.keyIdentity
   )
     throw new AppError("sandbox_gateway_changed", 503);
 }
@@ -202,6 +223,28 @@ export function createSandboxGatewayClient(
       ) {
         return { kind: "ambiguous", reason: "wire_response_malformed" };
       }
+      return outcome;
+    },
+    async lookup(operationId, bindingDigest) {
+      offlineOnly();
+      if (
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
+          operationId,
+        ) ||
+        !/^[a-f0-9]{64}$/.test(bindingDigest)
+      )
+        return { kind: "ambiguous", reason: "wire_lookup_invalid" };
+      const outcome = await request(
+        `/v1/operations/${operationId}`,
+        sandboxWireLookupResponseSchema.parse,
+        { bindingDigest },
+      );
+      if (
+        outcome.kind === "ok" &&
+        (outcome.value.operationId !== operationId ||
+          outcome.value.bindingDigest !== bindingDigest)
+      )
+        return { kind: "ambiguous", reason: "wire_lookup_mismatch" };
       return outcome;
     },
     async status(handle, deadline) {

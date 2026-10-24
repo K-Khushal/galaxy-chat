@@ -258,3 +258,28 @@ export const sandboxReceiptSchema = z
   })
   .strict();
 export type SandboxReceipt = z.infer<typeof sandboxReceiptSchema>;
+
+/** Retention-only lookup binds a lost handle to the original creation intent.
+ * A negative lookup is never evidence of zero cost or resource absence. */
+export const sandboxWireLookupResponseSchema = z.discriminatedUnion("found", [
+  z
+    .object({
+      protocol: z.literal("sandbox-gateway-v1"),
+      operationId: z.uuid(),
+      bindingDigest: digestSchema,
+      found: z.literal(true),
+      handle: handleSchema,
+    })
+    .strict(),
+  z
+    .object({
+      protocol: z.literal("sandbox-gateway-v1"),
+      operationId: z.uuid(),
+      bindingDigest: digestSchema,
+      found: z.literal(false),
+    })
+    .strict(),
+]);
+export type SandboxWireLookupResponse = z.infer<
+  typeof sandboxWireLookupResponseSchema
+>;
