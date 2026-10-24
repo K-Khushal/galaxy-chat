@@ -14,7 +14,12 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { type JobRecord, type JobsClient, jobsClient } from "@/lib/jobs/client";
+import {
+  isAbortError,
+  type JobRecord,
+  type JobsClient,
+  jobsClient,
+} from "@/lib/jobs/client";
 import { JOB_LIMITS } from "@/lib/jobs/contract";
 
 const ACTIVE_STATES = new Set(["queued", "running", "awaiting_approval"]);
@@ -68,15 +73,12 @@ function JobDetails({ job }: { job: JobRecord }) {
         <dt className="font-medium">Job id</dt>
         <dd className="min-w-0 break-all font-mono text-xs">{job.id}</dd>
       </div>
+      {/* Identity only: the artifacts API serves current head content, so no
+      revision-pinned download is offered here. */}
       <div className="flex flex-wrap gap-2">
-        <dt className="font-medium">Source revision</dt>
-        <dd className="min-w-0 break-all">
-          <a
-            className="font-mono text-xs underline underline-offset-4"
-            href={`/api/artifacts?id=${encodeURIComponent(job.source.artifactId)}&version=${job.source.version}&download=source`}
-          >
-            {job.source.artifactId} · version {job.source.version}
-          </a>
+        <dt className="font-medium">Source</dt>
+        <dd className="min-w-0 break-all font-mono text-xs">
+          {job.source.artifactId} · version {job.source.version}
         </dd>
       </div>
       <div className="flex flex-wrap gap-2">
@@ -140,35 +142,75 @@ export function JobsWorkbench({
   const [expanded, setExpanded] = useState<string | null>(null);
   const [cancelTarget, setCancelTarget] = useState<JobRecord | null>(null);
   const [cancelling, setCancelling] = useState(false);
-  const busy = useRef(false);
+  const [cancelError, setCancelError] = useState("");
 
-  const load = useCallback(async () => {
-    if (busy.current) return;
-    busy.current = true;
-    setLoadFailed(false);
-    try {
-      setJobs(await client.list());
-    } catch {
-      setLoadFailed(true);
-    } finally {
-      busy.current = false;
-    }
-  }, [client]);
+  // Cancellation bumps this sequence; every list/detail read captures it at
+  // start and discards its result if a cancel began after, so an older
+  // authoritative response can never revert a cancellation in the UI.
+  const cancelSeq = useRef(0);
+  // One controller for in-flight list/detail reads; superseded reads, hidden
+  // tabs and unmount abort it.
+  const readsAbort = useRef<AbortController | null>(null);
+  const cancelAbort = useRef<AbortController | null>(null);
+  const listActive = useRef(0);
+  const cancelBusy = useRef(false);
+  // The opener and the job it targeted drive focus return (F04 dialog
+  // contract), including when the Cancel button unmounts after success.
+  const cancelTargetRef = useRef<JobRecord | null>(null);
+  const cancelTriggerRefs = useRef(new Map<string, HTMLButtonElement>());
 
-  const refresh = useCallback(async () => {
-    if (busy.current) return;
-    busy.current = true;
-    setRefreshing(true);
-    try {
-      setJobs(await client.list());
-      setNotice("");
-    } catch {
-      setNotice("Could not refresh. Showing the last known status.");
-    } finally {
-      busy.current = false;
-      setRefreshing(false);
-    }
-  }, [client]);
+  const beginRead = useCallback(() => {
+    readsAbort.current?.abort();
+    const controller = new AbortController();
+    readsAbort.current = controller;
+    return controller;
+  }, []);
+
+  const load = useCallback(
+    async (options?: { force?: boolean }) => {
+      if (!options?.force && listActive.current > 0) return;
+      listActive.current += 1;
+      setLoadFailed(false);
+      const seqAtStart = cancelSeq.current;
+      const controller = beginRead();
+      try {
+        const next = await client.list(controller.signal);
+        if (cancelSeq.current !== seqAtStart || controller.signal.aborted)
+          return;
+        setJobs(next);
+      } catch (error) {
+        if (!isAbortError(error) && !controller.signal.aborted)
+          setLoadFailed(true);
+      } finally {
+        listActive.current -= 1;
+      }
+    },
+    [beginRead, client],
+  );
+
+  const refresh = useCallback(
+    async (options?: { force?: boolean }) => {
+      if (!options?.force && listActive.current > 0) return;
+      listActive.current += 1;
+      setRefreshing(true);
+      const seqAtStart = cancelSeq.current;
+      const controller = beginRead();
+      try {
+        const next = await client.list(controller.signal);
+        if (cancelSeq.current !== seqAtStart || controller.signal.aborted)
+          return;
+        setJobs(next);
+        setNotice("");
+      } catch (error) {
+        if (!isAbortError(error) && !controller.signal.aborted)
+          setNotice("Could not refresh. Showing the last known status.");
+      } finally {
+        listActive.current -= 1;
+        if (listActive.current === 0) setRefreshing(false);
+      }
+    },
+    [beginRead, client],
+  );
 
   useEffect(() => {
     void load();
@@ -184,38 +226,88 @@ export function JobsWorkbench({
     return () => clearInterval(timer);
   }, [hasActive, pollMs, refresh]);
 
+  // In-flight reads stop when the page is hidden or left entirely; intentional
+  // aborts are never shown as failures by the catch paths above.
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState !== "visible") readsAbort.current?.abort();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      readsAbort.current?.abort();
+      cancelAbort.current?.abort();
+    };
+  }, []);
+
+  const restoreCancelFocus = useCallback(() => {
+    const jobId = cancelTargetRef.current?.id;
+    if (!jobId) return;
+    const trigger = cancelTriggerRefs.current.get(jobId);
+    if (trigger?.isConnected) {
+      trigger.focus();
+      return;
+    }
+    // The row's Cancel button unmounts once the job is terminal; the Details
+    // button is the stable fallback in that row.
+    document
+      .querySelector<HTMLButtonElement>(`[data-job-details="${jobId}"]`)
+      ?.focus();
+  }, []);
+
+  const openCancelDialog = useCallback((job: JobRecord) => {
+    cancelTargetRef.current = job;
+    setCancelError("");
+    setCancelTarget(job);
+  }, []);
+
   const cancelJob = useCallback(async () => {
-    if (!cancelTarget || busy.current) return;
-    busy.current = true;
+    const target = cancelTargetRef.current;
+    if (!target || cancelBusy.current) return;
+    cancelBusy.current = true;
+    cancelSeq.current += 1;
+    readsAbort.current?.abort();
+    const controller = new AbortController();
+    cancelAbort.current = controller;
     setCancelling(true);
+    setCancelError("");
     try {
-      const updated = await client.cancel(cancelTarget.id);
+      const updated = await client.cancel(target.id, controller.signal);
+      // The cancel's own result always applies; older list/detail reads were
+      // invalidated above and discard themselves.
       setJobs(
         (previous) =>
           previous?.map((job) => (job.id === updated.id ? updated : job)) ??
           previous,
       );
+      setExpanded((previous) => (previous === target.id ? null : previous));
       setCancelTarget(null);
-      // Storage is authoritative: reconcile with a fresh read after cancel.
-      void refresh();
-    } catch {
-      setNotice(
-        "The cancellation did not complete. Refresh to see the current status and try again.",
-      );
+      // Storage is authoritative: await a fresh list that supersedes any
+      // pre-cancel request still in flight.
+      await refresh({ force: true });
+    } catch (error) {
+      if (!isAbortError(error) && !controller.signal.aborted)
+        setCancelError(
+          "The cancellation did not complete. Try again, or keep the job and refresh to see its current status.",
+        );
     } finally {
-      busy.current = false;
+      cancelBusy.current = false;
       setCancelling(false);
+      if (cancelAbort.current === controller) cancelAbort.current = null;
     }
-  }, [cancelTarget, client, refresh]);
+  }, [client, refresh]);
 
   const toggleDetails = useCallback(
     async (job: JobRecord) => {
       const next = expanded === job.id ? null : job.id;
       setExpanded(next);
-      if (next !== job.id || busy.current) return;
-      // Authoritative per-job read when details open.
+      if (next !== job.id) return;
+      const seqAtStart = cancelSeq.current;
+      const controller = beginRead();
       try {
-        const current = await client.read(job.id);
+        const current = await client.read(job.id, controller.signal);
+        if (cancelSeq.current !== seqAtStart || controller.signal.aborted)
+          return;
         setJobs(
           (previous) =>
             previous?.map((entry) =>
@@ -223,10 +315,11 @@ export function JobsWorkbench({
             ) ?? previous,
         );
       } catch {
-        // The list stays usable if a single detail read fails.
+        // The list stays usable if a single detail read fails or is aborted;
+        // intentional aborts must never surface as errors.
       }
     },
-    [client, expanded],
+    [beginRead, client, expanded],
   );
 
   return (
@@ -264,7 +357,7 @@ export function JobsWorkbench({
           variant="outline"
           size="sm"
           aria-busy={refreshing}
-          onClick={() => void refresh()}
+          onClick={() => void refresh({ force: true })}
         >
           <RefreshCw
             aria-hidden="true"
@@ -284,8 +377,7 @@ export function JobsWorkbench({
           <Button
             variant="outline"
             className="mt-3"
-            aria-busy={busy.current}
-            onClick={() => void load()}
+            onClick={() => void load({ force: true })}
           >
             Try again
           </Button>
@@ -327,6 +419,7 @@ export function JobsWorkbench({
                     variant="ghost"
                     size="sm"
                     aria-expanded={expanded === job.id}
+                    data-job-details={job.id}
                     onClick={() => void toggleDetails(job)}
                   >
                     {expanded === job.id ? "Hide details" : "Details"}
@@ -335,7 +428,12 @@ export function JobsWorkbench({
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => setCancelTarget(job)}
+                      ref={(element) => {
+                        if (element)
+                          cancelTriggerRefs.current.set(job.id, element);
+                        else cancelTriggerRefs.current.delete(job.id);
+                      }}
+                      onClick={() => openCancelDialog(job)}
                     >
                       Cancel
                     </Button>
@@ -370,7 +468,12 @@ export function JobsWorkbench({
           if (!open) setCancelTarget(null);
         }}
       >
-        <AlertDialogContent>
+        <AlertDialogContent
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            restoreCancelFocus();
+          }}
+        >
           <AlertDialogHeader>
             <AlertDialogTitle>Cancel this durable job?</AlertDialogTitle>
             <AlertDialogDescription>
@@ -379,6 +482,11 @@ export function JobsWorkbench({
               does not issue any refund.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <div role="alert" aria-live="assertive">
+            {cancelError && (
+              <p className="text-sm text-destructive">{cancelError}</p>
+            )}
+          </div>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={cancelling}>
               Keep job
@@ -391,13 +499,13 @@ export function JobsWorkbench({
                 void cancelJob();
               }}
             >
-              {cancelling && (
+              {cancelling ? (
                 <Loader2
                   aria-hidden="true"
                   className="size-4 animate-spin motion-reduce:animate-none"
                 />
-              )}
-              Cancel job
+              ) : null}
+              {cancelling ? "Cancelling…" : "Cancel job"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

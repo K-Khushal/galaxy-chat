@@ -1,7 +1,7 @@
 import { afterAll, expect, mock, test } from "bun:test";
 import { Window } from "happy-dom";
 import { act, createElement, type ReactNode, useLayoutEffect } from "react";
-import type { JobRecord } from "../lib/jobs/client";
+import type { JobRecord, JobsClient } from "../lib/jobs/client";
 
 mock.module("server-only", () => ({}));
 mock.module("next/link", () => ({
@@ -21,6 +21,7 @@ const globals = {
   window,
   document: window.document,
   Event: window.Event,
+  KeyboardEvent: window.KeyboardEvent,
   navigator: window.navigator,
   HTMLElement: window.HTMLElement,
   MutationObserver: window.MutationObserver,
@@ -44,7 +45,6 @@ const savedGlobals = Object.entries(globals).map(([name, value]) => {
 
 const { JobsWorkbench } = await import("../components/jobs/jobs-workbench");
 const { JOB_LIMITS } = await import("../lib/jobs/contract");
-const { jobsClient } = await import("../lib/jobs/client");
 
 afterAll(async () => {
   for (const { name, descriptor } of savedGlobals.reverse()) {
@@ -75,10 +75,12 @@ function job(overrides: Partial<JobRecord> = {}): JobRecord {
 
 function deferred<T>() {
   let resolve: (value: T) => void = () => {};
-  const promise = new Promise<T>((yes) => {
+  let reject: (reason: Error) => void = () => {};
+  const promise = new Promise<T>((yes, no) => {
     resolve = yes;
+    reject = no;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 async function dom() {
@@ -91,8 +93,8 @@ async function dom() {
     render: async (node: ReactNode) => {
       await act(async () => root.render(node));
     },
-    click: async (node: HTMLElement) => {
-      await act(async () => node.click());
+    click: async (node: Element) => {
+      await act(async () => (node as HTMLElement).click());
     },
     settle: async (ms: number) => {
       await act(async () => {
@@ -104,6 +106,12 @@ async function dom() {
       Array.from(document.body.querySelectorAll("button")).find(
         (button) => button.textContent?.trim() === label,
       ),
+    queryInDialog: (label: string) =>
+      Array.from(
+        document.body.querySelectorAll('[role="alertdialog"] button'),
+      ).find((button) => button.textContent?.trim() === label),
+    activeElement: () =>
+      (document.activeElement as HTMLElement | null)?.textContent?.trim() ?? "",
     close: async () => {
       await act(async () => root.unmount());
       container.remove();
@@ -111,32 +119,53 @@ async function dom() {
   };
 }
 
+type TrackedClient = {
+  listCalls: number;
+  listSignals: AbortSignal[];
+  readSignals: AbortSignal[];
+  cancelSignals: AbortSignal[];
+  cancelIds: string[];
+  readIds: string[];
+  client: JobsClient;
+};
+
+/** Client whose list/read/cancel handlers come from a mutable behavior map,
+ * so tests can reorder promise resolution across cancel boundaries. */
 function fakeClient(behavior: {
-  list: () => Promise<JobRecord[]>;
-  read?: (id: string) => Promise<JobRecord>;
-  cancel?: (id: string) => Promise<JobRecord>;
-}) {
-  const fixture = {
+  list?: (signal?: AbortSignal) => Promise<JobRecord[]>;
+  read?: (id: string, signal?: AbortSignal) => Promise<JobRecord>;
+  cancel?: (id: string, signal?: AbortSignal) => Promise<JobRecord>;
+}): TrackedClient {
+  const fixture: TrackedClient = {
     listCalls: 0,
-    readIds: [] as string[],
-    cancelIds: [] as string[],
+    listSignals: [],
+    readSignals: [],
+    cancelSignals: [],
+    cancelIds: [],
+    readIds: [],
     client: {
-      list: async () => {
+      list: async (signal?: AbortSignal) => {
         fixture.listCalls += 1;
-        return behavior.list();
+        fixture.listSignals.push(signal ?? new AbortController().signal);
+        return behavior.list
+          ? behavior.list(signal)
+          : Promise.reject(new Error("list_unconfigured"));
       },
-      read: async (id: string) => {
+      read: async (id: string, signal?: AbortSignal) => {
         fixture.readIds.push(id);
+        fixture.readSignals.push(signal ?? new AbortController().signal);
         return behavior.read
-          ? behavior.read(id)
-          : Promise.reject(new Error("read_failed"));
+          ? behavior.read(id, signal)
+          : Promise.reject(new Error("read_unconfigured"));
       },
-      cancel: async (id: string) => {
+      cancel: async (id: string, signal?: AbortSignal) => {
         fixture.cancelIds.push(id);
-        if (!behavior.cancel) throw new Error("cancel_failed");
-        return behavior.cancel(id);
+        fixture.cancelSignals.push(signal ?? new AbortController().signal);
+        return behavior.cancel
+          ? behavior.cancel(id, signal)
+          : Promise.reject(new Error("cancel_unconfigured"));
       },
-    } as typeof jobsClient,
+    },
   };
   return fixture;
 }
@@ -226,6 +255,37 @@ test("jobs page renders all six states with attempts and honest limits", async (
   }
 });
 
+test("source artifact identity is plain text with no misleading revision download", async () => {
+  const ui = await dom();
+  try {
+    const sample = job();
+    const fixture = fakeClient({ list: async () => [sample] });
+    await ui.render(<JobsWorkbench client={fixture.client} pollMs={60_000} />);
+    // Collapsed rows show the exact source identity without a link.
+    expect(ui.text()).toContain(`Source revision ${sample.source.version} of`);
+    expect(ui.text()).toContain(sample.source.artifactId);
+    const sourceLinks = Array.from(document.body.querySelectorAll("a")).filter(
+      (anchor) =>
+        (anchor.getAttribute("href") ?? "").includes(sample.source.artifactId),
+    );
+    expect(sourceLinks).toHaveLength(0);
+    const details = ui.queryButton("Details");
+    if (!details) throw new Error("missing_details_button");
+    await ui.click(details);
+    expect(ui.text()).toContain(
+      `${sample.source.artifactId} · version ${sample.source.version}`,
+    );
+    const detailsSourceLinks = Array.from(
+      document.body.querySelectorAll("a"),
+    ).filter((anchor) =>
+      (anchor.getAttribute("href") ?? "").includes(sample.source.artifactId),
+    );
+    expect(detailsSourceLinks).toHaveLength(0);
+  } finally {
+    await ui.close();
+  }
+});
+
 test("details expand reads authoritative state and renders proposal as plain text with result link", async () => {
   const ui = await dom();
   try {
@@ -275,19 +335,22 @@ test("details expand reads authoritative state and renders proposal as plain tex
   }
 });
 
-test("cancellation requires confirmation, states its limits, and reconciles with storage", async () => {
+test("cancellation requires confirmation, awaits an authoritative list, and reconciles", async () => {
   const ui = await dom();
   try {
     const active = job({ state: "queued" });
     const cancelled = { ...active, state: "cancelled" as const };
+    // Storage reflects the cancellation once it lands; later list reads
+    // return the cancelled record.
     const fixture = fakeClient({
-      list: async () => [active],
+      list: async () => (fixture.cancelIds.length > 0 ? [cancelled] : [active]),
       cancel: async (id) => {
         expect(id).toBe(active.id);
         return cancelled;
       },
     });
     await ui.render(<JobsWorkbench client={fixture.client} pollMs={60_000} />);
+    expect(fixture.listCalls).toBe(1);
     const cancelButton = ui.queryButton("Cancel");
     if (!cancelButton) throw new Error("missing_cancel_button");
     await ui.click(cancelButton);
@@ -301,6 +364,8 @@ test("cancellation requires confirmation, states its limits, and reconciles with
     if (!confirm) throw new Error("missing_confirm_button");
     await ui.click(confirm);
     expect(fixture.cancelIds).toEqual([active.id]);
+    // Storage is authoritative: an additional awaited list request runs.
+    expect(fixture.listCalls).toBe(2);
     expect(ui.text()).toContain("Cancelled");
     expect(ui.text()).not.toContain("Cancel this durable job?");
   } finally {
@@ -308,14 +373,17 @@ test("cancellation requires confirmation, states its limits, and reconciles with
   }
 });
 
-test("failed cancellations surface an announced error and keep the list usable", async () => {
+test("cancellation failure is announced inside the dialog and can be retried", async () => {
   const ui = await dom();
   try {
     const active = job({ state: "queued" });
+    const cancelled = { ...active, state: "cancelled" as const };
+    let fail = true;
     const fixture = fakeClient({
-      list: async () => [active],
+      list: async () => (fixture.cancelIds.length > 0 ? [cancelled] : [active]),
       cancel: async () => {
-        throw new Error("jobs_request_failed");
+        if (fail) throw new Error("jobs_request_failed");
+        return cancelled;
       },
     });
     await ui.render(<JobsWorkbench client={fixture.client} pollMs={60_000} />);
@@ -325,12 +393,179 @@ test("failed cancellations surface an announced error and keep the list usable",
     const confirm = ui.queryButton("Cancel job");
     if (!confirm) throw new Error("missing_confirm_button");
     await ui.click(confirm);
-    expect(ui.text()).toContain(
-      "The cancellation did not complete. Refresh to see the current status and try again.",
-    );
-    expect(
-      document.body.querySelector('[role="alert"]')?.textContent,
-    ).toContain("did not complete");
+    expect(fixture.cancelIds).toHaveLength(1);
+    // The dialog stays open with the error and controls inside its subtree.
+    const dialog = document.body.querySelector('[role="alertdialog"]');
+    if (!dialog) throw new Error("dialog_closed");
+    expect(dialog.textContent).toContain("did not complete");
+    const announced = dialog.querySelector('[role="alert"]');
+    expect(announced?.textContent).toContain("did not complete");
+    expect(ui.queryInDialog("Keep job")).toBeTruthy();
+    expect(ui.queryInDialog("Cancel job")).toBeTruthy();
+    // Focus is preserved inside the dialog for a keyboard retry.
+    const retry = ui.queryInDialog("Cancel job");
+    if (!retry) throw new Error("missing_retry");
+    fail = false;
+    await ui.click(retry);
+    expect(fixture.cancelIds).toHaveLength(2);
+    await ui.settle(20);
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull();
+    expect(ui.text()).toContain("Cancelled");
+  } finally {
+    await ui.close();
+  }
+});
+
+test("a detail read that resolves after cancellation cannot revert the cancelled row", async () => {
+  const ui = await dom();
+  try {
+    const active = job({ state: "queued" });
+    const cancelled = { ...active, state: "cancelled" as const };
+    const pendingRead = deferred<JobRecord>();
+    const fixture = fakeClient({
+      list: async () => (fixture.cancelIds.length > 0 ? [cancelled] : [active]),
+      read: async () => pendingRead.promise,
+      cancel: async () => cancelled,
+    });
+    await ui.render(<JobsWorkbench client={fixture.client} pollMs={60_000} />);
+    const detailsButton = ui.queryButton("Details");
+    if (!detailsButton) throw new Error("missing_details_button");
+    await ui.click(detailsButton);
+    expect(fixture.readIds).toContain(active.id);
+    // Cancel while the detail read is still pending.
+    const cancelButton = ui.queryButton("Cancel");
+    if (!cancelButton) throw new Error("missing_cancel_button");
+    await ui.click(cancelButton);
+    const confirm = ui.queryButton("Cancel job");
+    if (!confirm) throw new Error("missing_confirm_button");
+    await ui.click(confirm);
+    await ui.settle(20);
+    expect(ui.text()).toContain("Cancelled");
+    // Now the older detail response lands with the pre-cancel state.
+    pendingRead.resolve(active);
+    await ui.settle(20);
+    expect(ui.text()).toContain("Cancelled");
+    expect(ui.text()).not.toContain("Queued");
+  } finally {
+    await ui.close();
+  }
+});
+
+test("a list response that resolves after cancellation cannot revert the cancelled row", async () => {
+  const ui = await dom();
+  try {
+    const active = job({ state: "queued" });
+    const cancelled = { ...active, state: "cancelled" as const };
+    const staleList = deferred<JobRecord[]>();
+    let listIndex = 0;
+    const fixture = fakeClient({
+      list: async () => {
+        listIndex += 1;
+        // Second list request starts before cancel and is left pending; the
+        // post-cancel reconciliation is the third and resolves immediately.
+        if (listIndex === 2) return staleList.promise;
+        return fixture.cancelIds.length > 0 ? [cancelled] : [active];
+      },
+      cancel: async () => cancelled,
+    });
+    await ui.render(<JobsWorkbench client={fixture.client} pollMs={60_000} />);
+    // Start a refresh that will resolve only after the cancel completes.
+    const refreshButton = ui.queryButton("Refresh");
+    if (!refreshButton) throw new Error("missing_refresh_button");
+    await ui.click(refreshButton);
+    expect(fixture.listCalls).toBe(2);
+    const cancelButton = ui.queryButton("Cancel");
+    if (!cancelButton) throw new Error("missing_cancel_button");
+    await ui.click(cancelButton);
+    const confirm = ui.queryButton("Cancel job");
+    if (!confirm) throw new Error("missing_confirm_button");
+    await ui.click(confirm);
+    await ui.settle(20);
+    expect(fixture.listCalls).toBe(3);
+    expect(ui.text()).toContain("Cancelled");
+    // The stale pre-cancel list lands last and must not win.
+    staleList.resolve([active]);
+    await ui.settle(20);
+    expect(ui.text()).toContain("Cancelled");
+    expect(ui.text()).not.toContain("Queued");
+  } finally {
+    await ui.close();
+  }
+});
+
+test("in-flight reads are aborted on unmount and supersession without surfacing errors", async () => {
+  const ui = await dom();
+  let supersededSignal: AbortSignal | undefined;
+  try {
+    const pending = deferred<JobRecord[]>();
+    const fixture = fakeClient({ list: () => pending.promise });
+    await ui.render(<JobsWorkbench client={fixture.client} pollMs={60_000} />);
+    const initialSignal = fixture.listSignals.at(-1);
+    if (!initialSignal) throw new Error("missing_signal");
+    expect(initialSignal.aborted).toBe(false);
+    // A forced refresh supersedes the initial read: it is aborted, and the
+    // page neither shows a failure nor loses its loading state.
+    const refreshButton = ui.queryButton("Refresh");
+    if (!refreshButton) throw new Error("missing_refresh_button");
+    await ui.click(refreshButton);
+    expect(initialSignal.aborted).toBe(true);
+    supersededSignal = fixture.listSignals.at(-1);
+    if (!supersededSignal) throw new Error("missing_superseded_signal");
+    expect(supersededSignal.aborted).toBe(false);
+    expect(ui.text()).not.toContain("could not be loaded");
+  } finally {
+    // Unmount aborts the remaining read as well.
+    await ui.close();
+    expect(supersededSignal?.aborted).toBe(true);
+  }
+});
+
+test("focus returns to the cancel trigger after Keep and Escape, and to the row after success", async () => {
+  const ui = await dom();
+  try {
+    const active = job({ state: "queued" });
+    const cancelled = { ...active, state: "cancelled" as const };
+    const fixture = fakeClient({
+      list: async () => (fixture.cancelIds.length > 0 ? [cancelled] : [active]),
+      cancel: async () => cancelled,
+    });
+    await ui.render(<JobsWorkbench client={fixture.client} pollMs={60_000} />);
+    // Keyboard path: focus the row's Cancel button and activate it.
+    const cancelButton = ui.queryButton("Cancel");
+    if (!cancelButton) throw new Error("missing_cancel_button");
+    cancelButton.focus();
+    expect(ui.activeElement()).toBe("Cancel");
+    await ui.click(cancelButton);
+    expect(ui.text()).toContain("Cancel this durable job?");
+
+    // Escape dismisses and returns focus to the same row's Cancel button.
+    await act(async () => {
+      document.body.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+    });
+    await ui.settle(20);
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull();
+    expect(ui.activeElement()).toBe("Cancel");
+
+    // Keep job also returns focus to the trigger.
+    await ui.click(cancelButton);
+    const keep = ui.queryInDialog("Keep job");
+    if (!keep) throw new Error("missing_keep_button");
+    await ui.click(keep);
+    await ui.settle(20);
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull();
+    expect(ui.activeElement()).toBe("Cancel");
+
+    // Successful cancellation: the Cancel button disappears; focus lands on
+    // the same row's stable Details control.
+    await ui.click(cancelButton);
+    const confirm = ui.queryInDialog("Cancel job");
+    if (!confirm) throw new Error("missing_confirm_button");
+    await ui.click(confirm);
+    await ui.settle(40);
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull();
+    expect(ui.activeElement()).toBe("Details");
   } finally {
     await ui.close();
   }
