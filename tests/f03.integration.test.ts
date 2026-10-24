@@ -158,6 +158,7 @@ beforeAll(async () => {
     "0016_credit_reservation_plan_binding",
     "0017_durable_jobs",
     "0018_mcp_operations",
+    "0019_mcp_catalog_actions",
     "0020_mcp_oauth_state",
   ]);
 

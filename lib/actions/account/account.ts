@@ -23,6 +23,7 @@ import {
 import { AppError } from "@/lib/errors";
 import { ImageStore } from "@/lib/images/store";
 import { JobStore } from "@/lib/jobs/store";
+import { createMcpCatalogStore } from "@/lib/mcp/catalog-store";
 import { createMcpOAuthStore } from "@/lib/mcp/oauth-store";
 import { createMcpOperationStore } from "@/lib/mcp/operation-store";
 import { McpRegistryStore } from "@/lib/mcp/registry-store";
@@ -53,6 +54,9 @@ export type AccountExport = {
     ReturnType<ReturnType<typeof createMcpOAuthStore>["metadata"]>
   >;
   mcpConnections: Awaited<ReturnType<McpRegistryStore["export"]>>;
+  mcpCatalogs: Awaited<
+    ReturnType<ReturnType<typeof createMcpCatalogStore>["export"]>
+  >;
   mcpOperations: Awaited<
     ReturnType<ReturnType<typeof createMcpOperationStore>["export"]>
   >;
@@ -182,6 +186,7 @@ export async function exportOwnedAccount(
   const providerCredentials = await new ByokStore(db).credentials(userId);
   const searchCredentials = await new SearchStore(db).credentials(userId);
   const mcpConnections = await new McpRegistryStore(db).export(userId);
+  const mcpCatalogs = await createMcpCatalogStore({ db }).export(userId);
   const mcpOAuthGrants = await createMcpOAuthStore({ db }).metadata(userId);
   const mcpOperations = await createMcpOperationStore({ db }).export(userId);
   let actor: string | undefined;
@@ -233,6 +238,7 @@ export async function exportOwnedAccount(
     providerCredentials,
     searchCredentials,
     mcpConnections,
+    mcpCatalogs,
     mcpOAuthGrants,
     mcpOperations,
     byokOperations,

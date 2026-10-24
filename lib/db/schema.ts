@@ -280,6 +280,7 @@ export const mcpConnection = pgTable("mcp_connection", {
 });
 
 export * from "./job-schema";
+export * from "./mcp-catalog-schema";
 export * from "./mcp-oauth-schema";
 export * from "./mcp-operation-schema";
 export * from "./platform-budget-schema";
