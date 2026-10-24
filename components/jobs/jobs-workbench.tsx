@@ -232,6 +232,7 @@ export function JobsWorkbench({
   useEffect(() => {
     const onVisibility = () => {
       if (document.visibilityState !== "visible") readsAbort.current?.abort();
+      else void load({ force: true });
     };
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
@@ -239,7 +240,7 @@ export function JobsWorkbench({
       readsAbort.current?.abort();
       cancelAbort.current?.abort();
     };
-  }, []);
+  }, [load]);
 
   const restoreCancelFocus = useCallback(() => {
     const jobId = cancelTargetRef.current?.id;

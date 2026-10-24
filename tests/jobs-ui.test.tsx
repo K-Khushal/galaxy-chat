@@ -614,3 +614,50 @@ test("Strict Mode effect replay completes the initial load instead of leaving lo
     await ui.close();
   }
 });
+
+test("returning to a visible tab recovers an aborted initial load", async () => {
+  const ui = await dom();
+  const original = Object.getOwnPropertyDescriptor(document, "visibilityState");
+  let visibility: DocumentVisibilityState = "visible";
+  Object.defineProperty(document, "visibilityState", {
+    configurable: true,
+    get: () => visibility,
+  });
+  let calls = 0;
+  const fixture = fakeClient({
+    list: async (signal) => {
+      if (++calls > 1) return [];
+      return new Promise<JobRecord[]>((_, reject) => {
+        signal?.addEventListener(
+          "abort",
+          () => {
+            const error = new Error("aborted");
+            error.name = "AbortError";
+            reject(error);
+          },
+          { once: true },
+        );
+      });
+    },
+  });
+  try {
+    await ui.render(<JobsWorkbench client={fixture.client} pollMs={60_000} />);
+    await act(async () => {
+      visibility = "hidden";
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    expect(fixture.listSignals[0]?.aborted).toBe(true);
+    await act(async () => {
+      visibility = "visible";
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await ui.settle(10);
+    expect(calls).toBe(2);
+    expect(ui.text()).toContain("No durable jobs");
+    expect(ui.text()).not.toContain("could not be loaded");
+  } finally {
+    await ui.close();
+    if (original) Object.defineProperty(document, "visibilityState", original);
+    else Reflect.deleteProperty(document, "visibilityState");
+  }
+});

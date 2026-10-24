@@ -6,7 +6,7 @@ Reviewed Zcode head `6a849a5`, then root correction `5ba54d9` integrated with ma
 
 The six original findings are addressed: source identity has no misleading pinned download; cancellation awaits a fresh list; stale reads cannot restore active state; reads have timeouts and lifecycle cancellation; cancellation failures remain announced inside the dialog; focus returns to its opener or stable row fallback.
 
-Root reproduced and fixed three additional lifecycle regressions: pre-aborted cancellation dispatched a fetch, settled requests retained an external abort listener, and React Strict Mode replay left initial loading stuck. New behavior tests cover all three. Focused client/UI/owned HTTP tests: 21 pass, 127 assertions, 6.89 seconds before main integration. Final integrated results are recorded in the PR.
+Root reproduced and fixed four additional lifecycle regressions: pre-aborted cancellation dispatched a fetch, settled requests retained an external abort listener, React Strict Mode replay left initial loading stuck, and returning from a hidden tab did not restart its aborted initial load. New behavior tests cover all four. Focused client/UI/owned HTTP tests: 21 pass, 127 assertions, 6.89 seconds before main integration. Final integrated results are recorded in the PR.
 
 ## Fresh browser evidence
 
