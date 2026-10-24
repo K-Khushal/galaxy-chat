@@ -113,7 +113,13 @@ export function parseOperationReceipt(
 }
 export type OperationView = Readonly<{
   id: string;
-  state: "reserved" | "entered" | "held" | "settled" | "released";
+  state:
+    | "reserved"
+    | "entered"
+    | "held"
+    | "completed_unreconciled"
+    | "settled"
+    | "released";
   revision: number;
   reservedMicrodollars: number;
   incurredMicrodollars: number;
