@@ -23,7 +23,7 @@ type Row = {
   user_id: string;
   source_artifact_id: string;
   source_version: number;
-  action_revision: typeof JOB_ACTION_REVISION;
+  action_revision: string;
   state: JobState;
   checkpoint: number;
   checkpoint_digest: string | null;
@@ -319,7 +319,11 @@ export class JobStore {
     const handler = await this.transaction(async (tx) => {
       await lock(tx, lease.ownerId);
       const row = await fenced(tx, lease);
-      return actionHandlers.get(row.action_revision) ?? null;
+      if (row.action_revision === JOB_ACTION_REVISION) return null;
+      if (process.env.NODE_ENV !== "test") fail("job_action_unavailable", 503);
+      const handler = actionHandlers.get(row.action_revision);
+      if (!handler) fail("job_action_unavailable", 503);
+      return handler;
     });
     if (handler) {
       // Registered action handlers own their fencing: each of their transactions
@@ -450,6 +454,11 @@ export function registerJobActionHandler(
   actionRevision: string,
   checkpoint: (lease: JobLease) => Promise<void>,
 ) {
+  if (
+    process.env.NODE_ENV !== "test" ||
+    actionRevision !== "sandbox-python-run-v1"
+  )
+    fail("job_action_unavailable", 503);
   actionHandlers.set(actionRevision, checkpoint);
 }
 

@@ -75,7 +75,6 @@ export async function assertActivePlanInTx(
   env: RuntimeEnvironment = () => process.env,
   clockProvider?: Date | (() => Date),
   incoming = 0,
-  options?: { skipSandboxCarryCheck?: boolean },
 ): Promise<BudgetPlanRow> {
   if (!expected || typeof expected !== "object") {
     throw new AppError("invalid_request", 400);
@@ -187,9 +186,15 @@ export async function assertActivePlanInTx(
 
   // Verify no uncarried or increased legacy exposure from prior months against frozen carry rows
   await checkUncoveredLegacyExposure(tx, snapMonth);
-  if (!options?.skipSandboxCarryCheck) {
-    await checkUncoveredSandboxExposure(tx, snapMonth);
-  }
+  await checkUncoveredSandboxExposure(tx, snapMonth);
+  const [sandboxPeriod] = await tx.execute(
+    sql`SELECT month FROM public.sandbox_period WHERE month=${snapMonth}`,
+  );
+  const [sandboxExposure] =
+    await tx.execute(sql`SELECT id FROM public.sandbox_operation
+    WHERE month<=${snapMonth} AND state<>'released' LIMIT 1`);
+  if (sandboxPeriod || sandboxExposure)
+    await assertSandboxEnvelopeInTx(tx, snapMonth, plan, 0);
 
   const [currentCredit] = await tx.execute<{ total: string }>(sql`
     SELECT coalesce(sum(charged_microdollars), 0)::bigint AS total
@@ -343,8 +348,11 @@ export async function checkUncoveredSandboxExposure(
     LEFT JOIN public.sandbox_operation_commitment c
       ON c.month = ${month} AND c.source_id = o.id
     WHERE o.month < ${month}
-      AND o.state IN ('reserved', 'entered', 'held', 'completed_unreconciled')
-      AND (c.source_id IS NULL OR greatest(o.reserved_microdollars, o.incurred_microdollars) > c.amount_microdollars)
+      AND greatest(
+        CASE WHEN o.state='released' THEN 0 WHEN o.state='settled' THEN o.incurred_microdollars
+          ELSE greatest(o.reserved_microdollars,o.incurred_microdollars) END,
+        coalesce((SELECT max(h.amount_microdollars) FROM public.sandbox_operation_commitment h
+          WHERE h.source_id=o.id AND h.month<${month}),0)) > coalesce(c.amount_microdollars,0)
   `);
   if (uncarried && uncarried.count > 0) {
     throw new AppError("uncovered_sandbox_exposure", 503);
@@ -391,7 +399,10 @@ export async function sandboxCommittedInTx(
 export async function assertSandboxEnvelopeInTx(
   tx: DatabaseTransaction,
   month: string,
-  plan: { k_infra: number },
+  plan: Pick<
+    BudgetPlanRow,
+    "k_infra" | "month" | "revision" | "digest" | "capacity_digest"
+  >,
   incoming: number,
 ): Promise<void> {
   if (!Number.isSafeInteger(incoming) || incoming < 0) {
@@ -400,7 +411,8 @@ export async function assertSandboxEnvelopeInTx(
   const [period] = await tx.execute<{
     ordinary_infra_microdollars: number;
   }>(
-    sql`SELECT ordinary_infra_microdollars::bigint AS ordinary_infra_microdollars FROM public.sandbox_period WHERE month = ${month}`,
+    sql`SELECT ordinary_infra_microdollars::bigint AS ordinary_infra_microdollars FROM public.sandbox_period
+      WHERE month = ${month} AND plan_identity=${JSON.stringify({ month: plan.month, revision: plan.revision, digest: plan.digest, capacityDigest: plan.capacity_digest })}::jsonb`,
   );
   if (!period) {
     throw new AppError("sandbox_period_unavailable", 503);

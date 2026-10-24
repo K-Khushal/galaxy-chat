@@ -37,16 +37,16 @@ import {
   type SandboxLease,
   type SandboxOperationView,
   type SandboxPolicy,
-  type SandboxReceipt,
   type SandboxRequest,
   sandboxApprovalSchema,
-  sandboxReceiptSchema,
+  sandboxBindingSchema,
   sandboxRequestSchema,
 } from "./contract";
 import type {
   SandboxGatewayClient,
   SandboxWireOutcome,
 } from "./gateway-client";
+import { assertSandboxGateway } from "./gateway-client";
 
 type Tx = DatabaseTransaction;
 type Row = {
@@ -147,7 +147,7 @@ async function evidence(
 
 async function operation(tx: Tx, id: string): Promise<Row> {
   const [row] = await tx.execute<Row>(
-    sql`SELECT o.* FROM sandbox_operation o JOIN sandbox_operation_owner m ON m.operation_id=o.id WHERE o.id=${id}`,
+    sql`SELECT o.* FROM sandbox_operation o WHERE o.id=${id}`,
   );
   if (!row) fail("not_found", 404);
   return row;
@@ -184,13 +184,18 @@ export class SandboxStore {
   private transaction<T>(run: (tx: Tx) => Promise<T>) {
     // Funding lock first, then the established byok -> attachments -> jobs ->
     // owner order; every post-lock statement sees a fresh committed snapshot.
-    return this.db.transaction(
-      async (tx) => {
-        await lockFunding(tx);
-        return run(tx);
-      },
-      { isolationLevel: "read committed" },
-    );
+    return this.db
+      .transaction(
+        async (tx) => {
+          await lockFunding(tx);
+          return run(tx);
+        },
+        { isolationLevel: "read committed" },
+      )
+      .catch((error: unknown) => {
+        if (error instanceof AppError) throw error;
+        throw new AppError("sandbox_storage_unavailable", 503);
+      });
   }
 
   private async lockAll(
@@ -214,6 +219,84 @@ export class SandboxStore {
       )
     )
       fail("sandbox_invite_required", 403);
+  }
+
+  private gatewayAuthority(
+    gateway: SandboxGatewayClient,
+    runtime = this.authority(new Date()),
+  ) {
+    assertSandboxGateway(gateway, {
+      ...runtime.gateway,
+      key: runtime.gatewayKey,
+    });
+  }
+
+  /** Last awaited statement before entry/publication returns one coherent fresh
+   * SQL snapshot. Locks already serialize owner, source, job and funding writes. */
+  private async finalAuthority(
+    tx: Tx,
+    lease: SandboxLease,
+    op: Row,
+    completed = false,
+  ) {
+    await assertActivePlanInTx(tx, op.identity.plan, this.env);
+    const [fresh] = await tx.execute<{
+      content: string;
+      now: Date;
+      github_login: string | null;
+      plan_identity: unknown;
+      sources_digest: string;
+      ordinary_infra_microdollars: string;
+    }>(sql`
+      SELECT r.content,clock_timestamp() AS now,u.github_login,p.plan_identity,p.sources_digest,p.ordinary_infra_microdollars
+      FROM durable_job j JOIN "user" u ON u.id=j.user_id
+      JOIN artifact a ON a.id=j.source_artifact_id AND a.user_id=j.user_id
+      JOIN artifact_revision r ON r.artifact_id=a.id AND r.user_id=a.user_id AND r.version=j.source_version
+      JOIN sandbox_operation o ON o.id=${op.id}
+      JOIN sandbox_period p ON p.month=${op.identity.plan.month}
+      WHERE j.id=${lease.id} AND j.user_id=${lease.ownerId} AND j.fence=${lease.fence}
+      AND j.attempts=${lease.attempt} AND j.checkpoint=${completed ? 2 : 1}
+      AND j.state=${completed ? "completed" : "running"}
+      AND (${completed} OR j.lease_expires_at>clock_timestamp())
+      AND j.started_at+${JOB_LIMITS.wallMs} * interval '1 millisecond'>clock_timestamp()
+      AND j.approved_digest=j.checkpoint_digest AND j.checkpoint_digest=${op.identity.approval.checkpoint}
+      AND j.approval_expires_at>clock_timestamp() AND o.deadline>clock_timestamp()
+      AND j.source_artifact_id=${op.identity.source.artifactId} AND j.source_version=${op.identity.source.version}`);
+    if (!fresh) fail("job_stale_lease");
+    const now = new Date(fresh.now);
+    const runtime = this.authority(now);
+    const plan = resolvePlatformBudgetConfig(this.env(), now);
+    if (
+      !isInvitedLogin(
+        fresh.github_login,
+        parseInviteLogins(this.env().GITHUB_INVITE_LOGINS),
+      )
+    )
+      fail("sandbox_invite_required", 403);
+    const binding = this.bindingCore(
+      {
+        id: lease.id,
+        source_artifact_id: op.identity.source.artifactId,
+        source_version: op.identity.source.version,
+      },
+      fresh.content,
+      runtime,
+      plan,
+      op.identity.approvalExpiresAt,
+      sha256(
+        canonicalJson({
+          planIdentity: fresh.plan_identity,
+          sourcesDigest: fresh.sources_digest,
+          ordinaryInfraMicrodollars: Number(fresh.ordinary_infra_microdollars),
+        }),
+      ),
+    );
+    if (
+      sha256(canonicalJson({ ...binding, approval: op.identity.approval })) !==
+      op.binding_digest
+    )
+      fail("sandbox_binding_changed");
+    return runtime;
   }
 
   /** Retained financial actor: the canonical numeric GitHub account identity under
@@ -278,6 +361,7 @@ export class SandboxStore {
     runtime: SandboxRuntime,
     plan: ReturnType<typeof resolvePlatformBudgetConfig>,
     approvalExpiresAt: string,
+    envelopeDigest: string,
   ): SandboxBindingCore {
     const gateway: SandboxGatewayIdentity = {
       protocol: "sandbox-gateway-v1",
@@ -317,6 +401,7 @@ export class SandboxStore {
         region: runtime.providerRegion,
       },
       feeDigest: sha256(canonicalJson(runtime.fee)),
+      envelopeDigest,
       plan: {
         month: plan.plan.month,
         revision: plan.plan.revision,
@@ -326,6 +411,24 @@ export class SandboxStore {
       approvalExpiresAt,
     };
     return binding;
+  }
+
+  private async envelopeDigest(tx: Tx, month: string) {
+    const [period] = await tx.execute<{
+      plan_identity: unknown;
+      sources_digest: string;
+      ordinary_infra_microdollars: string;
+    }>(
+      sql`SELECT plan_identity,sources_digest,ordinary_infra_microdollars FROM sandbox_period WHERE month=${month}`,
+    );
+    if (!period) fail("sandbox_period_unavailable", 503);
+    return sha256(
+      canonicalJson({
+        planIdentity: period.plan_identity,
+        sourcesDigest: period.sources_digest,
+        ordinaryInfraMicrodollars: Number(period.ordinary_infra_microdollars),
+      }),
+    );
   }
 
   private requireBindingCoreChecks(binding: SandboxBindingCore) {
@@ -409,9 +512,15 @@ export class SandboxStore {
   /** Sanitized owner export: no provider handles, gateway identities or fee snapshots. */
   async exportOperations(ownerId: string) {
     return (
-      await this.db.execute<Row>(
-        sql`SELECT o.* FROM sandbox_operation o JOIN sandbox_operation_owner m ON m.operation_id=o.id WHERE m.user_id=${ownerId} ORDER BY o.created_at,o.id LIMIT 100`,
-      )
+      await this.db
+        .execute<Row>(
+          sql`SELECT o.id,o.state,o.revision,o.reserved_microdollars,o.incurred_microdollars,o.created_at
+        FROM sandbox_operation o JOIN sandbox_operation_owner m ON m.operation_id=o.id
+        WHERE m.user_id=${ownerId} ORDER BY o.created_at,o.id LIMIT ${SANDBOX_LIMITS.operationsPerOwner}`,
+        )
+        .catch(() => {
+          throw new AppError("sandbox_storage_unavailable", 503);
+        })
     ).map(view);
   }
 
@@ -427,6 +536,7 @@ export class SandboxStore {
     const parsed = sandboxApprovalSchema.safeParse(raw);
     if (!parsed.success) fail("invalid_sandbox_approval", 400);
     const input = parsed.data;
+    this.authority(new Date());
     return this.transaction(async (tx) => {
       await this.lockAll(tx, ownerId);
       const row = await this.job(tx, ownerId, input.id);
@@ -451,6 +561,8 @@ export class SandboxStore {
         AND approval_expires_at>clock_timestamp() AND started_at+${JOB_LIMITS.wallMs} * interval '1 millisecond'>clock_timestamp() RETURNING *`,
       );
       if (!updated) fail("sandbox_approval_expired");
+      await this.invite(tx, ownerId);
+      this.authority(await this.clock(tx));
       return jobView(updated);
     });
   }
@@ -489,6 +601,7 @@ export class SandboxStore {
         runtime,
         plan,
         new Date(now.getTime() + SANDBOX_LIMITS.approvalMs).toISOString(),
+        await this.envelopeDigest(tx, plan.plan.month),
       );
       this.requireBindingCoreChecks(binding);
       const checkpointDigest = sha256(canonicalJson(binding));
@@ -555,6 +668,7 @@ export class SandboxStore {
         runtime,
         plan,
         new Date(row.approval_expires_at).toISOString(),
+        await this.envelopeDigest(tx, plan.plan.month),
       );
       this.requireBindingCoreChecks(binding);
       const checkpointDigest = sha256(canonicalJson(binding));
@@ -563,7 +677,10 @@ export class SandboxStore {
         await jobInternals.terminalize(tx, row.id, "sandbox_binding_changed");
         return null;
       }
-      const full = { ...binding, approval: { checkpoint: checkpointDigest } };
+      const full = sandboxBindingSchema.parse({
+        ...binding,
+        approval: { checkpoint: checkpointDigest },
+      });
       const bindingDigest = sha256(canonicalJson(full));
       const [consumed] = await tx.execute<{ id: string }>(
         sql`SELECT id FROM sandbox_operation WHERE identity->'approval'->>'checkpoint'=${checkpointDigest} AND attempts=1 LIMIT 1`,
@@ -582,19 +699,41 @@ export class SandboxStore {
         runtime.fee.upperBoundMicrodollars,
       );
       const actor = await this.actor(tx, lease.ownerId, runtime);
-      const [counts] = await tx.execute<{ owner: number; total: number }>(
+      const [counts] = await tx.execute<{
+        owner: number;
+        total: number;
+        owner_records: number;
+        total_records: number;
+      }>(
         sql`SELECT
-        count(*) FILTER(WHERE actor_key=${actor.key} AND state IN ('reserved','entered','held'))::integer AS owner,
-        count(*) FILTER(WHERE state IN ('reserved','entered','held'))::integer AS total
+        count(*) FILTER(WHERE actor_key=${actor.key} AND state<>'released')::integer AS owner,
+        count(*) FILTER(WHERE state<>'released')::integer AS total,
+        count(*) FILTER(WHERE actor_key=${actor.key})::integer AS owner_records,
+        count(*)::integer AS total_records
         FROM sandbox_operation`,
       );
       if (
         counts.owner >= runtime.fee.capacity.ownerActive ||
-        counts.total >= runtime.fee.capacity.globalActive
+        counts.total >= runtime.fee.capacity.globalActive ||
+        counts.owner_records >=
+          Math.min(
+            SANDBOX_LIMITS.operationsPerOwner,
+            runtime.fee.capacity.ownerRecords,
+          ) ||
+        counts.total_records >=
+          Math.min(
+            SANDBOX_LIMITS.operationsGlobal,
+            runtime.fee.capacity.globalRecords,
+          )
       )
         fail("sandbox_capacity_exhausted", 429);
       const id = crypto.randomUUID();
-      const deadline = new Date(now.getTime() + SANDBOX_LIMITS.leaseMs);
+      const [limits] = await tx.execute<{ deadline: Date }>(sql`SELECT least(
+        lease_expires_at, started_at+${JOB_LIMITS.wallMs} * interval '1 millisecond',
+        approval_expires_at, ${runtime.fee.expiresAt}::timestamptz,
+        clock_timestamp()+${SANDBOX_LIMITS.commandMs} * interval '1 millisecond') AS deadline
+        FROM durable_job WHERE id=${row.id}`);
+      const deadline = new Date(limits.deadline);
       const [op] = await tx.execute<Row>(
         sql`INSERT INTO sandbox_operation(id,actor_key,actor_version,idempotency_key,binding_digest,identity,fee_snapshot,month,day,state,reserved_microdollars,deadline)
         VALUES(${id},${actor.key},${actor.version},${id},${bindingDigest},${JSON.stringify(full)}::jsonb,${JSON.stringify(runtime.fee)}::jsonb,${binding.plan.month},${now.toISOString().slice(0, 10)},'reserved',${runtime.fee.upperBoundMicrodollars},${deadline.toISOString()}) RETURNING *`,
@@ -609,14 +748,16 @@ export class SandboxStore {
       );
       await audit(tx, op);
       // Final authoritative checks after all writes, before the durable entry.
-      await assertActivePlanInTx(tx, binding.plan, this.env, now);
+      await assertActivePlanInTx(tx, binding.plan, this.env);
       const [entered] = await tx.execute<Row>(
         sql`UPDATE sandbox_operation SET state='entered',attempts=1,revision=revision+1,create_requested_at=clock_timestamp()
         WHERE id=${id} AND state='reserved' RETURNING *`,
       );
       if (!entered) fail("sandbox_conflict");
       await audit(tx, entered);
+      await this.finalAuthority(tx, lease, entered);
       return {
+        deadline: deadline.getTime(),
         operationId: id,
         binding: full,
         bindingDigest,
@@ -652,26 +793,12 @@ export class SandboxStore {
           digest,
         } as const;
       }
-      if (outcome.kind === "rejected") {
-        const digest = await evidence(tx, operationId, 0, {
-          kind: "create_rejected",
-          status: outcome.status,
-          bindingDigest: op.binding_digest,
-        });
-        // Terminal transport evidence that the endpoint definitively refused
-        // creation: no remote resource exists, so the hold is released at zero.
-        const [updated] = await tx.execute<Row>(
-          sql`UPDATE sandbox_operation SET state='released',revision=revision+1
-          WHERE id=${operationId} AND state='entered' AND create_requested_at IS NOT NULL AND provider_handle IS NULL RETURNING *`,
-        );
-        if (!updated) fail("sandbox_conflict");
-        await audit(tx, updated);
-        await jobInternals.terminalize(tx, row.id, "sandbox_create_rejected");
-        return { kind: "rejected", digest } as const;
-      }
       const digest = await evidence(tx, operationId, 0, {
         kind: "create_ambiguous",
-        reason: outcome.reason,
+        reason:
+          outcome.kind === "rejected"
+            ? `http_${outcome.status}`
+            : outcome.reason,
         bindingDigest: op.binding_digest,
       });
       // Ambiguous create: remote existence unknown. Full liability is retained
@@ -694,46 +821,47 @@ export class SandboxStore {
     lease: SandboxLease,
     operationId: string,
     kind: string,
-    detail: Record<string, unknown>,
+    _detail: Record<string, unknown>,
   ) {
-    return this.transaction(async (tx) => {
-      await this.lockAll(tx, lease.ownerId);
-      await jobInternals.fenced(tx, lease);
-      await evidence(tx, operationId, 5, { kind, ...detail });
-      const [updated] = await tx.execute<Row>(
-        sql`UPDATE sandbox_operation SET state='completed_unreconciled',revision=revision+1
-        WHERE id=${operationId} AND state='entered' RETURNING *`,
-      );
-      if (updated) await audit(tx, updated);
-      await jobInternals.terminalize(tx, lease.id, `sandbox_${kind}`);
-    });
+    await this.retainUnknown(lease, operationId, kind);
+  }
+
+  /** Anonymous, retention-only operator recovery. No configuration, owner, invite,
+   * current lease or attempt is required; this API can never create or forgive. */
+  async retainUncertainOperation(
+    operationId: string,
+  ): Promise<SandboxOperationView> {
+    return this.retainOperation(operationId, "operator_retention");
   }
 
   private async retainUnknown(
-    lease: SandboxLease,
+    _lease: SandboxLease,
     operationId: string,
     reason: string,
   ) {
+    return this.retainOperation(operationId, reason);
+  }
+
+  private async retainOperation(operationId: string, reason: string) {
+    if (!z.uuid().safeParse(operationId).success)
+      fail("invalid_sandbox_operation", 400);
     return this.transaction(async (tx) => {
-      await this.lockAll(tx, lease.ownerId);
-      await jobInternals.fenced(tx, lease);
-      const op = await operation(tx, operationId);
-      if (op.state === "held") return;
-      await evidence(tx, operationId, 6, { kind: "unresolved", reason });
-      const [updated] = await tx.execute<Row>(
-        sql`UPDATE sandbox_operation SET state='held',revision=revision+1
-        WHERE id=${operationId} AND state='entered' RETURNING *`,
-      );
-      if (!updated) fail("sandbox_conflict");
-      await audit(tx, updated);
-      await tx.execute(
-        sql`UPDATE funding_control SET stopped=true WHERE id='platform'`,
-      );
-      await jobInternals.terminalize(
-        tx,
-        lease.id,
-        "sandbox_execution_unresolved",
-      );
+      let op = await operation(tx, operationId);
+      if (["entered", "completed_unreconciled"].includes(op.state)) {
+        await evidence(tx, operationId, 6, { kind: "unresolved", reason });
+        const [updated] = await tx.execute<Row>(sql`UPDATE sandbox_operation
+          SET state='held',revision=revision+1 WHERE id=${operationId}
+          AND state IN ('entered','completed_unreconciled') RETURNING *`);
+        if (updated) {
+          await audit(tx, updated);
+          op = updated;
+        }
+      }
+      if (op.attempts === 1)
+        await tx.execute(
+          sql`UPDATE funding_control SET stopped=true WHERE id='platform'`,
+        );
+      return view(op);
     });
   }
 
@@ -769,7 +897,15 @@ export class SandboxStore {
         Buffer.byteLength(result.logs) > SANDBOX_LIMITS.logsBytes
       )
         fail("sandbox_output_oversized");
-      const report = `# Sandbox execution report\n\nBounded output of the approved sandbox run, treated as untrusted data. No code from it was interpreted.\n\nBinding digest: ${op.binding_digest}\nResult SHA-256: ${resultDigest}\nLogs SHA-256: ${logsDigest}\n\n## Result\n\n\`\`\`\n${result.result}\n\`\`\`\n\n## Logs\n\n\`\`\`\n${result.logs}\n\`\`\`\n`;
+      const fence = "`".repeat(
+        Math.max(
+          3,
+          ...[...`${result.result}${result.logs}`.matchAll(/`+/g)].map(
+            (m) => m[0].length + 1,
+          ),
+        ),
+      );
+      const report = `# Sandbox execution report\n\nBounded output of the approved sandbox run, treated as untrusted data. No code from it was interpreted.\n\nBinding digest: ${op.binding_digest}\nResult SHA-256: ${resultDigest}\nLogs SHA-256: ${logsDigest}\n\n## Result\n\n${fence}\n${result.result}\n${fence}\n\n## Logs\n\n${fence}\n${result.logs}\n${fence}\n`;
       if (Buffer.byteLength(report) > SANDBOX_LIMITS.finalArtifactBytes)
         fail("sandbox_output_oversized");
       await this.invite(tx, lease.ownerId);
@@ -793,8 +929,6 @@ export class SandboxStore {
         kind: "result",
         resultDigest,
         logsDigest,
-        result: result.result,
-        logs: result.logs,
       });
       const [updated] = await tx.execute(
         sql`UPDATE durable_job SET state='completed',checkpoint=2,result_artifact_id=${artifact.id},lease_expires_at=NULL
@@ -812,6 +946,7 @@ export class SandboxStore {
       await tx.execute(
         sql`UPDATE durable_job_attempt SET state='checkpointed' WHERE job_id=${row.id} AND fence=${lease.fence}`,
       );
+      await this.finalAuthority(tx, lease, fresh, true);
       return { artifactId: artifact.id, resultDigest, logsDigest };
     });
   }
@@ -838,9 +973,11 @@ export class SandboxStore {
   /** Best-effort terminate of the exact same operation's handle only. A terminate
    * response is never treated as remote stop or refund proof; liability stays
    * until an authentic receipt reconciles the operation. */
-  private async terminateHandle(handle: string, operationId: string) {
-    const gateway = this.gateway;
-    if (!gateway) return;
+  private async terminateHandle(
+    gateway: SandboxGatewayClient,
+    handle: string,
+    operationId: string,
+  ) {
     try {
       const outcome = await gateway.terminate(handle);
       const payload = {
@@ -857,14 +994,6 @@ export class SandboxStore {
     } catch {
       // Termination evidence is best-effort; uncertainty is already durable.
     }
-  }
-
-  private gateway: SandboxGatewayClient | null = null;
-
-  /** Registered by the test-only coordinator. The gateway client never exists in
-   * production and every privileged call re-runs the environment authority. */
-  attachGateway(gateway: SandboxGatewayClient) {
-    this.gateway = gateway;
   }
 
   /** Checkpoint dispatcher for the durable jobs registry. The stopAfterCreate
@@ -895,47 +1024,84 @@ export class SandboxStore {
     gateway: SandboxGatewayClient,
     options?: { stopAfterCreate?: boolean },
   ) {
-    this.gateway = gateway;
+    this.gatewayAuthority(gateway);
     this.authority(new Date());
     const existing = await this.transaction(async (tx) => {
       await this.lockAll(tx, lease.ownerId);
       const row = await jobInternals.fenced(tx, lease);
       return jobOperation(tx, row.id);
     });
-    if (existing && existing.state !== "released") {
+    if (existing) {
       // Recovery: further attempts reconcile/status/terminate only the same
       // operation and never create again.
-      return this.recover(lease, existing);
+      return this.recover(lease, existing, gateway);
     }
     const reserved = await this.reserveForExecution(lease);
     if (!reserved) return;
-    const outcome = await gateway.create({
-      protocol: "sandbox-gateway-v1",
-      idempotencyKey: reserved.operationId,
-      bindingDigest: reserved.bindingDigest,
-      policy: reserved.binding.policy,
-      input: {
-        contentSha256: reserved.binding.source.contentSha256,
-        selectedInputDigests: [],
-      },
-    });
-    const recorded = await this.recordCreateOutcome(
-      lease,
-      reserved.operationId,
-      outcome,
-    );
-    if (recorded.kind !== "created") return;
-    if (options?.stopAfterCreate) return;
-    const op = await this.transaction(async (tx) =>
-      operation(tx, reserved.operationId),
-    );
-    await this.pollAndPublish(lease, op);
+    let observedHandle: string | null = null;
+    try {
+      this.gatewayAuthority(gateway, reserved.runtime);
+      const outcome = await gateway.create(
+        {
+          protocol: "sandbox-gateway-v1",
+          idempotencyKey: reserved.operationId,
+          bindingDigest: reserved.bindingDigest,
+          policy: reserved.binding.policy,
+          input: {
+            contentSha256: reserved.binding.source.contentSha256,
+            selectedInputDigests: [],
+          },
+        },
+        reserved.deadline,
+      );
+      if (outcome.kind === "ok") observedHandle = outcome.value.handle;
+      const recorded = await this.recordCreateOutcome(
+        lease,
+        reserved.operationId,
+        outcome,
+      );
+      if (recorded.kind !== "created") return;
+      if (options?.stopAfterCreate) return;
+      const op = await this.transaction(async (tx) =>
+        operation(tx, reserved.operationId),
+      );
+      await this.pollAndPublish(lease, op, gateway);
+    } catch (error) {
+      await this.retainUnknown(
+        lease,
+        reserved.operationId,
+        "post_entry_failure",
+      );
+      // A lost response has no handle; never invent or recreate one.
+      const op = await this.transaction((tx) =>
+        operation(tx, reserved.operationId),
+      );
+      const handle = op.provider_handle ?? observedHandle;
+      if (handle) await this.terminateHandle(gateway, handle, op.id);
+      throw error;
+    }
   }
 
   /** Recovery after a crash, response loss or lease expiry. The durable creation
    * tombstone guarantees no second create: only status/terminate are ever issued. */
-  async recover(lease: SandboxLease, op: Row) {
-    if (op.state === "held" || op.state === "settled") {
+  private async recover(
+    lease: SandboxLease,
+    candidate: Row,
+    gateway: SandboxGatewayClient,
+  ) {
+    this.gatewayAuthority(gateway);
+    const op = await this.transaction(async (tx) => {
+      await this.lockAll(tx, lease.ownerId);
+      await jobInternals.fenced(tx, lease);
+      const owned = await jobOperation(tx, lease.id);
+      if (!owned || owned.id !== candidate.id) fail("sandbox_conflict");
+      return owned;
+    });
+    if (
+      ["held", "settled", "released", "completed_unreconciled"].includes(
+        op.state,
+      )
+    ) {
       await this.transaction(async (tx) => {
         await this.lockAll(tx, lease.ownerId);
         await jobInternals.fenced(tx, lease);
@@ -975,27 +1141,38 @@ export class SandboxStore {
       await this.retainUnknown(lease, op.id, "create_outcome_unknown");
       return;
     }
-    await this.pollAndPublish(lease, op);
+    try {
+      await this.pollAndPublish(lease, op, gateway);
+    } catch (error) {
+      await this.retainUnknown(lease, op.id, "recovery_failure");
+      if (op.provider_handle)
+        await this.terminateHandle(gateway, op.provider_handle, op.id);
+      throw error;
+    }
   }
 
   /** Bounded status polling within the original lease; no timer renews any deadline. */
-  private async pollAndPublish(lease: SandboxLease, op: Row) {
+  private async pollAndPublish(
+    lease: SandboxLease,
+    op: Row,
+    gateway: SandboxGatewayClient,
+  ) {
     const handle = op.provider_handle;
     if (!handle) {
       await this.retainUnknown(lease, op.id, "create_outcome_unknown");
       return;
     }
-    const commandDeadline = Date.now() + SANDBOX_LIMITS.commandMs;
-    const gateway = this.gateway;
-    if (!gateway) fail("sandbox_gateway_unconfigured", 503);
+    const commandDeadline = new Date(op.deadline).getTime();
+    this.gatewayAuthority(gateway);
     let terminal: { logs: string; result: string } | null = null;
     while (Date.now() < commandDeadline) {
-      const outcome = await gateway.status(handle);
+      const outcome = await gateway.status(handle, commandDeadline);
       if (outcome.kind === "ok") {
         if (outcome.value.handle !== handle) {
           await this.recordTerminalFailure(lease, op.id, "status_mismatch", {
             handle,
           });
+          await this.terminateHandle(gateway, handle, op.id);
           return;
         }
         if (outcome.value.state === "completed") {
@@ -1009,6 +1186,7 @@ export class SandboxStore {
           await this.recordTerminalFailure(lease, op.id, "execution_failed", {
             state: outcome.value.state,
           });
+          await this.terminateHandle(gateway, handle, op.id);
           return;
         }
       }
@@ -1018,10 +1196,11 @@ export class SandboxStore {
       // Deadline reached without terminal transport evidence: uncertainty is
       // retained without new admissions, config or owner attempts.
       await this.retainUnknown(lease, op.id, "status_deadline");
+      await this.terminateHandle(gateway, handle, op.id);
       return;
     }
     await this.publish(lease, op, terminal);
-    await this.terminateHandle(handle, op.id);
+    await this.terminateHandle(gateway, handle, op.id);
   }
 
   async status(ownerId: string, id: string): Promise<SandboxOperationView> {
@@ -1055,52 +1234,15 @@ export class SandboxStore {
     });
   }
 
-  /** Authentic cost settlement is separate from terminal transport evidence. */
+  /** No authentic receipt issuer is implemented. Shape-valid JSON is not cost proof.
+   * Preserve every hold until a separately reviewed authenticated authority exists. */
   async reconcile(
-    operationId: string,
-    bindingDigest: string,
-    receiptId: string,
-    expectedRevision: number,
+    _operationId: string,
+    _bindingDigest: string,
+    _receiptId: string,
+    _expectedRevision: number,
   ): Promise<SandboxOperationView> {
-    return this.transaction(async (tx) => {
-      const [row] = await tx.execute<Row>(
-        sql`SELECT * FROM sandbox_operation WHERE id=${operationId} AND binding_digest=${bindingDigest}`,
-      );
-      if (!row) fail("not_found", 404);
-      const [stored] = await tx.execute<{ receipt: unknown }>(
-        sql`SELECT receipt FROM sandbox_receipt WHERE id=${receiptId} AND operation_id=${operationId}`,
-      );
-      if (!stored) fail("sandbox_receipt_unavailable", 503);
-      const parsed = sandboxReceiptSchema.safeParse(stored.receipt);
-      if (!parsed.success) fail("sandbox_receipt_unavailable", 503);
-      const receipt: SandboxReceipt = parsed.data;
-      if (
-        receipt.operationId !== operationId ||
-        receipt.bindingDigest !== bindingDigest ||
-        receipt.id !== receiptId
-      )
-        fail("sandbox_receipt_conflict");
-      if (row.state === "settled") {
-        if (canonicalJson(row.receipt) !== canonicalJson(receipt))
-          fail("sandbox_receipt_conflict");
-        return view(row);
-      }
-      if (row.revision !== expectedRevision) fail("sandbox_conflict");
-      if (
-        !["entered", "held", "completed_unreconciled"].includes(row.state) ||
-        receipt.incurredMicrodollars < Number(row.incurred_microdollars)
-      )
-        fail("sandbox_receipt_conflict");
-      const [updated] = await tx.execute<Row>(
-        sql`UPDATE sandbox_operation SET state='settled',incurred_microdollars=${receipt.incurredMicrodollars},receipt_id=${receipt.id},receipt=${JSON.stringify(receipt)}::jsonb,revision=revision+1 WHERE id=${operationId} AND revision=${expectedRevision} RETURNING *`,
-      );
-      if (receipt.incurredMicrodollars > Number(row.reserved_microdollars))
-        await tx.execute(
-          sql`UPDATE funding_control SET stopped=true WHERE id='platform'`,
-        );
-      await audit(tx, updated);
-      return view(updated);
-    });
+    fail("sandbox_receipt_authority_unavailable", 503);
   }
 
   /** Operator-reviewed period bootstrap: freezes the plan identity, the durable
@@ -1121,15 +1263,17 @@ export class SandboxStore {
       })
       .strict()
       .safeParse(rawPlan);
-    if (!parsed.success || !Number.isSafeInteger(ordinaryInfraMicrodollars))
+    if (
+      !parsed.success ||
+      !Number.isSafeInteger(ordinaryInfraMicrodollars) ||
+      ordinaryInfraMicrodollars < 0 ||
+      ordinaryInfraMicrodollars > 10_000_000
+    )
       fail("invalid_sandbox_period", 400);
     const plan = parsed.data;
     return this.transaction(async (tx) => {
       // The bootstrap is the operator procedure that freezes the namespaced
       // carry, so it must be able to run while prior holds are uncovered.
-      await assertActivePlanInTx(tx, plan, this.env, now, 0, {
-        skipSandboxCarryCheck: true,
-      });
       const sources = await this.durableSources(tx, plan.month);
       if (rawSources !== undefined) {
         const expected = z
@@ -1148,16 +1292,28 @@ export class SandboxStore {
         if (canonicalJson(actual) !== canonicalJson(expected.data))
           fail("sandbox_period_sources_changed");
       }
-      const [existing] = await tx.execute<{ sources_digest: string }>(
-        sql`SELECT sources_digest FROM sandbox_period WHERE month=${plan.month}`,
+      const [existing] = await tx.execute<{
+        sources_digest: string;
+        plan_identity: unknown;
+        ordinary_infra_microdollars: string;
+      }>(
+        sql`SELECT sources_digest,plan_identity,ordinary_infra_microdollars FROM sandbox_period WHERE month=${plan.month}`,
       );
       if (existing) {
-        if (existing.sources_digest !== sha256(canonicalJson(sources)))
+        if (
+          existing.sources_digest !== sha256(canonicalJson(sources)) ||
+          canonicalJson(existing.plan_identity) !== canonicalJson(plan) ||
+          Number(existing.ordinary_infra_microdollars) !==
+            ordinaryInfraMicrodollars
+        )
           fail("sandbox_period_conflict");
+        await assertActivePlanInTx(tx, plan, this.env);
+        this.authority(await this.clock(tx));
         return;
       }
       if (
-        sources.reduce((sum, s) => sum + s.amountMicrodollars, 0) >
+        ordinaryInfraMicrodollars +
+          sources.reduce((sum, s) => sum + s.amountMicrodollars, 0) >
         (await tx
           .execute<{ k_infra: number }>(
             sql`SELECT k_infra::integer FROM platform_budget_plan WHERE month=${plan.month}`,
@@ -1174,10 +1330,8 @@ export class SandboxStore {
           sql`INSERT INTO sandbox_operation_commitment(month,source_id,amount_microdollars)
           VALUES(${plan.month},${source.sourceId},${source.amountMicrodollars}) ON CONFLICT DO NOTHING`,
         );
-      await assertActivePlanInTx(tx, plan, this.env, now, 0, {
-        skipSandboxCarryCheck: true,
-      });
-      this.authority(now);
+      await assertActivePlanInTx(tx, plan, this.env);
+      this.authority(await this.clock(tx));
     });
   }
 
@@ -1188,7 +1342,7 @@ export class SandboxStore {
         CASE WHEN o.state='released' THEN 0 WHEN o.state='settled' THEN o.incurred_microdollars ELSE greatest(o.reserved_microdollars,o.incurred_microdollars) END,
         coalesce(c.amount,0))::text AS amount
       FROM sandbox_operation o LEFT JOIN (SELECT source_id,max(amount_microdollars) AS amount FROM sandbox_operation_commitment WHERE month<${month} GROUP BY source_id)c ON c.source_id=o.id
-      WHERE o.month<${month} AND o.state IN ('reserved','entered','held','completed_unreconciled') ORDER BY o.id`);
+      WHERE o.month<${month} ORDER BY o.id`);
     return rows
       .map((row) => ({
         sourceId: row.source_id,

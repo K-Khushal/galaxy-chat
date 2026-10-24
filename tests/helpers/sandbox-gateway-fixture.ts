@@ -17,6 +17,7 @@ export type SandboxGatewayFixture = {
   counters: { create: number; status: number; terminate: number };
   tombstones: () => string[];
   script: SandboxScript;
+  hooks: { created?: () => Promise<void> };
   close: () => Promise<void>;
 };
 
@@ -34,6 +35,7 @@ export function createSandboxGatewayFixture(
     result: "print('fixture result')\n",
     ...overrides,
   };
+  const hooks: SandboxGatewayFixture["hooks"] = {};
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -93,6 +95,7 @@ export function createSandboxGatewayFixture(
             const handle = `sbx-${idempotencyKey.slice(0, 8)}`;
             tombstones.set(idempotencyKey, handle);
             handles.set(handle, idempotencyKey);
+            await hooks.created?.();
             return Response.json({
               protocol: "sandbox-gateway-v1",
               idempotencyKey,
@@ -168,6 +171,7 @@ export function createSandboxGatewayFixture(
     counters,
     tombstones: () => [...tombstones.keys()],
     script,
+    hooks,
     close: async () => {
       server.stop(true);
       await Bun.sleep(20);

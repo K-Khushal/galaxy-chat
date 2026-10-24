@@ -46,17 +46,19 @@ CREATE TABLE sandbox_operation (
  attempts integer NOT NULL DEFAULT 0 CHECK(attempts BETWEEN 0 AND 1),
  deadline timestamptz NOT NULL,
  -- Durable creation tombstone: persisted BEFORE any gateway create call. Once set it is
- -- never cleared; a NULL tombstone with attempts=1 proves no create call ever started.
+ -- never cleared; only attempts=0 with a NULL tombstone proves non-entry.
  create_requested_at timestamptz,
  provider_handle text CHECK(provider_handle IS NULL OR octet_length(provider_handle) BETWEEN 1 AND 128),
  receipt_id text UNIQUE,
  receipt jsonb,
  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  UNIQUE(actor_key,idempotency_key),
- CHECK(state<>'reserved' OR attempts=0),
+ CHECK(state<>'reserved' OR (attempts=0 AND create_requested_at IS NULL)),
+ CHECK(state NOT IN ('entered','held','completed_unreconciled') OR (attempts=1 AND create_requested_at IS NOT NULL)),
+ CHECK(state<>'settled'), -- No authenticated receipt issuer exists in this foundation.
  CHECK((state='settled')=(receipt IS NOT NULL)),
  CHECK((receipt_id IS NULL)=(receipt IS NULL)),
- CHECK(state<>'released' OR incurred_microdollars=0),
+ CHECK(state<>'released' OR (incurred_microdollars=0 AND attempts=0 AND create_requested_at IS NULL)),
  CHECK(provider_handle IS NULL OR attempts=1),
  CHECK(create_requested_at IS NULL OR attempts=1)
 );
@@ -123,14 +125,14 @@ BEGIN
  IF ROW(NEW.id,NEW.actor_key,NEW.actor_version,NEW.idempotency_key,NEW.binding_digest,NEW.identity,NEW.fee_snapshot,NEW.month,NEW.day,NEW.reserved_microdollars,NEW.deadline,NEW.created_at) IS DISTINCT FROM ROW(OLD.id,OLD.actor_key,OLD.actor_version,OLD.idempotency_key,OLD.binding_digest,OLD.identity,OLD.fee_snapshot,OLD.month,OLD.day,OLD.reserved_microdollars,OLD.deadline,OLD.created_at) THEN RAISE EXCEPTION 'sandbox operation identity is immutable'; END IF;
  IF OLD.create_requested_at IS NOT NULL AND NEW.create_requested_at IS DISTINCT FROM OLD.create_requested_at THEN RAISE EXCEPTION 'sandbox creation tombstone is immutable'; END IF;
  IF OLD.provider_handle IS NOT NULL AND NEW.provider_handle IS DISTINCT FROM OLD.provider_handle THEN RAISE EXCEPTION 'sandbox provider handle is immutable'; END IF;
- IF NEW.incurred_microdollars<OLD.incurred_microdollars OR NEW.revision<>OLD.revision+1 THEN RAISE EXCEPTION 'sandbox incurred minimum or revision is immutable'; END IF;
- IF NOT((OLD.state='reserved' AND NEW.state IN('entered','released'))OR(OLD.state='entered' AND NEW.state IN('entered','held','completed_unreconciled','released'))OR(OLD.state IN('held','completed_unreconciled') AND NEW.state='settled')) THEN RAISE EXCEPTION 'invalid sandbox operation state transition'; END IF;
+ IF NEW.attempts<OLD.attempts OR NEW.incurred_microdollars<OLD.incurred_microdollars OR NEW.revision<>OLD.revision+1 THEN RAISE EXCEPTION 'sandbox incurred minimum or revision is immutable'; END IF;
+ IF NOT((OLD.state='reserved' AND NEW.state IN('entered','released'))OR(OLD.state='entered' AND NEW.state IN('entered','held','completed_unreconciled'))OR(OLD.state='completed_unreconciled' AND NEW.state='held')) THEN RAISE EXCEPTION 'invalid sandbox operation state transition'; END IF;
  IF NEW.state='held' AND NOT EXISTS(SELECT 1 FROM sandbox_operation_evidence e WHERE e.operation_id=NEW.id) THEN RAISE EXCEPTION 'sandbox terminal transport evidence required'; END IF;
  IF NEW.state='completed_unreconciled' AND NOT EXISTS(SELECT 1 FROM sandbox_operation_evidence e WHERE e.operation_id=NEW.id) THEN RAISE EXCEPTION 'sandbox terminal transport evidence required'; END IF;
  RETURN NEW;
 END $$;
 CREATE TRIGGER sandbox_operation_guard BEFORE UPDATE OR DELETE ON sandbox_operation FOR EACH ROW EXECUTE FUNCTION guard_sandbox_operation();
-CREATE TRIGGER sandbox_operation_owner_guard BEFORE UPDATE OR DELETE ON sandbox_operation_owner FOR EACH ROW EXECUTE FUNCTION sandbox_immutable_deny();
+CREATE TRIGGER sandbox_operation_owner_guard BEFORE UPDATE ON sandbox_operation_owner FOR EACH ROW EXECUTE FUNCTION sandbox_immutable_deny();
 CREATE TRIGGER sandbox_actor_principal_guard BEFORE UPDATE OR DELETE ON sandbox_actor_principal FOR EACH ROW EXECUTE FUNCTION sandbox_immutable_deny();
 CREATE TRIGGER sandbox_counter_key_guard BEFORE UPDATE OR DELETE ON sandbox_counter_key FOR EACH ROW EXECUTE FUNCTION sandbox_immutable_deny();
 CREATE TRIGGER sandbox_period_guard BEFORE UPDATE OR DELETE ON sandbox_period FOR EACH ROW EXECUTE FUNCTION sandbox_immutable_deny();

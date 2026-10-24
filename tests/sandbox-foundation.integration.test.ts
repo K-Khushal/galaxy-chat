@@ -1,7 +1,10 @@
-import { expect, mock, test } from "bun:test";
+import { expect, mock, spyOn, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
 import { sql } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
+import type { DatabaseTransaction } from "../lib/db/client";
 import { rejectionOf as rawRejection } from "./helpers/rejection";
 import { createSandboxGatewayFixture } from "./helpers/sandbox-gateway-fixture";
 import { setupFixtureBeforeEach } from "./helpers/setup-fixture";
@@ -118,7 +121,9 @@ const get = setupFixtureBeforeEach(async () => {
     gateway: {
       baseUrl: gatewayFixture.url,
       key: gatewayFixture.key,
-      keyIdentity: "d".repeat(64),
+      keyIdentity: createHash("sha256")
+        .update(gatewayFixture.key)
+        .digest("hex"),
     },
     fee: feeSnapshot,
     activeKeyVersion: "v1",
@@ -128,11 +133,49 @@ const get = setupFixtureBeforeEach(async () => {
   const gateway = createSandboxGatewayClient({
     baseUrl: gatewayFixture.url,
     key: gatewayFixture.key,
-    keyIdentity: "d".repeat(64),
+    keyIdentity: createHash("sha256").update(gatewayFixture.key).digest("hex"),
     fetchImpl: realFetch,
   });
+  let afterQuery:
+    | ((statement: string, tx: DatabaseTransaction) => Promise<void>)
+    | undefined;
+  const dialect = new PgDialect();
+  const guardedDb = new Proxy(f.db, {
+    get(target, property, receiver) {
+      if (property === "transaction")
+        return <T>(
+          run: (tx: DatabaseTransaction) => Promise<T>,
+          options?: Parameters<typeof f.db.transaction>[1],
+        ) =>
+          target.transaction(
+            (tx) =>
+              run(
+                new Proxy(tx, {
+                  get(t, key, r) {
+                    if (key === "execute")
+                      return async (
+                        query: Parameters<DatabaseTransaction["execute"]>[0],
+                      ) => {
+                        const result = await t.execute(query);
+                        await afterQuery?.(
+                          typeof query === "string"
+                            ? query
+                            : dialect.sqlToQuery(query.getSQL()).sql,
+                          t,
+                        );
+                        return result;
+                      };
+                    return Reflect.get(t, key, r);
+                  },
+                }),
+              ),
+            options,
+          );
+      return Reflect.get(target, property, receiver);
+    },
+  });
   const coordinator = createSandboxCoordinator({
-    db: f.db,
+    db: guardedDb,
     runtime: () => runtime,
     env: () => process.env,
     gateway,
@@ -146,6 +189,9 @@ const get = setupFixtureBeforeEach(async () => {
     gateway,
     coordinator,
     store: coordinator.store,
+    afterQuery(fn: typeof afterQuery) {
+      afterQuery = fn;
+    },
     jobs,
     source: source.id,
     carolSource: carolSource.id,
@@ -243,7 +289,7 @@ test("happy path: approval funds a fenced execution that publishes one bounded r
   expect(ops).toHaveLength(1);
   expect(ops[0].state).toBe("completed_unreconciled");
   expect(Number(ops[0].reserved_microdollars)).toBe(500_000);
-  // Terminal transport evidence never settles cost: an authentic receipt does.
+  // Terminal transport evidence never settles cost; this child has no authentic receipt authority.
   const evidence = await w.db.execute(
     sql`SELECT kind FROM (SELECT evidence->>'kind' AS kind FROM sandbox_operation_evidence WHERE operation_id=${ops[0].id}) kinds`,
   );
@@ -270,14 +316,16 @@ test("happy path: approval funds a fenced execution that publishes one bounded r
       },
     )}::jsonb)`,
   );
-  const settled = await w.store.reconcile(
-    ops[0].id,
-    bindingDigest[0].binding_digest,
-    receiptId,
-    status.revision,
+  const deniedReceipt = await rejectionOf(
+    w.store.reconcile(
+      ops[0].id,
+      bindingDigest[0].binding_digest,
+      receiptId,
+      status.revision,
+    ),
   );
-  expect(settled.state).toBe("settled");
-  expect(settled.incurredMicrodollars).toBe(100_000);
+  expect(deniedReceipt.id).toBe("sandbox_receipt_authority_unavailable");
+  expect((await operations(w))[0].state).toBe("completed_unreconciled");
   const [control] = await w.db.execute<{ stopped: boolean }>(
     sql`SELECT stopped FROM funding_control WHERE id='platform'`,
   );
@@ -426,6 +474,7 @@ test("exact ownership and source identity: another owner's revision is not found
 test("sandbox envelope: ordinaryInfra + committed + incoming stays within k_infra and never borrows acredit or amcp", async () => {
   const f = get();
   const month = new Date().toISOString().slice(0, 7);
+  await ensureReviewedPeriod();
   // A current-month uncertain orphan hold of 1.6M plus the reviewed ordinary
   // infra commitment of 0.5M leaves no room for a 0.5M incoming reservation.
   await f.db.execute(
@@ -518,22 +567,22 @@ test("ambiguous create retains full liability, stops funded admissions and never
   expect(second.gatewayFixture.counters.create).toBe(1);
 });
 
-test("definitive create rejection is terminal transport evidence: zero remote resource, released hold, funding stays enabled", async () => {
+test("HTTP rejection after entry cannot prove no resource or zero cost", async () => {
   const f = get();
   f.gatewayFixture.script.create = "reject";
   const w = await runToApproval();
   await w.store.approve("alice", w.approval);
   await worker(w).deliver(w.id);
   const done = await w.store.read("alice", w.id);
-  expect(done.error).toBe("sandbox_create_rejected");
+  expect(done.error).toBe("sandbox_create_ambiguous");
   const ops = await operations(w);
-  expect(ops[0].state).toBe("released");
+  expect(ops[0].state).toBe("held");
   expect(Number(ops[0].incurred_microdollars)).toBe(0);
   expect(w.gatewayFixture.tombstones()).toHaveLength(0);
   const [control] = await w.db.execute<{ stopped: boolean }>(
     sql`SELECT stopped FROM funding_control WHERE id='platform'`,
   );
-  expect(control.stopped).toBe(false);
+  expect(control.stopped).toBe(true);
 });
 
 test("crash after the durable creation tombstone: recovery publishes with the fresh fence without a second create", async () => {
@@ -635,13 +684,14 @@ test("recreated accounts and rotated actor keys keep the retained principal and 
     checkpoint: carolRow.checkpoint,
     actionRevision: SANDBOX_ACTION_REVISION,
   });
-  await worker(f).deliver(carolId);
-  const allOps = await operations(f);
-  expect(allOps).toHaveLength(2);
-  const carolOp = allOps.find((op) => op.id !== ops[0].id);
-  if (!carolOp) throw new Error("missing_carol_operation");
-  expect(carolOp.actor_key).toBe(aliceKey);
+  // Delete the original account: retained financial principal and capacity remain.
+  await f.db.execute(sql`DELETE FROM "user" WHERE id='alice'`);
+  expect((await rejectionOf(worker(f).deliver(carolId))).id).toBe(
+    "sandbox_capacity_exhausted",
+  );
+  expect(await operations(f)).toHaveLength(1);
 
+  await f.jobs.cancel("carol", carolId);
   // Rotation to a new key version never resets the retained actor key.
   const rotatedRuntime = {
     ...f.runtime,
@@ -660,34 +710,35 @@ test("recreated accounts and rotated actor keys keep the retained principal and 
   const rotatedId = crypto.randomUUID();
   currentCheckpoint = rotatedCoordinator.checkpoint;
   try {
-    await rotatedCoordinator.store.enqueue("alice", {
+    await rotatedCoordinator.store.enqueue("carol", {
       id: rotatedId,
-      source: { artifactId: f.source, version: 1 },
+      source: { artifactId: f.carolSource, version: 1 },
     });
     await worker(f).deliver(rotatedId);
-    const rotatedRow = await rotatedCoordinator.store.read("alice", rotatedId);
+    const rotatedRow = await rotatedCoordinator.store.read("carol", rotatedId);
     if (!rotatedRow.checkpoint) throw new Error("missing_checkpoint");
-    await rotatedCoordinator.store.approve("alice", {
+    await rotatedCoordinator.store.approve("carol", {
       id: rotatedId,
       checkpoint: rotatedRow.checkpoint,
       actionRevision: SANDBOX_ACTION_REVISION,
     });
-    await worker(f).deliver(rotatedId);
+    expect((await rejectionOf(worker(f).deliver(rotatedId))).id).toBe(
+      "sandbox_capacity_exhausted",
+    );
   } finally {
     currentCheckpoint = f.coordinator.checkpoint;
   }
   const finalOps = await operations(f);
-  expect(finalOps).toHaveLength(3);
-  const rotatedOp = finalOps.find((op) => op.id !== ops[0].id);
-  if (!rotatedOp) throw new Error("missing_rotated_operation");
-  expect(rotatedOp.actor_key).toBe(aliceKey);
+  expect(finalOps).toHaveLength(1);
+  expect(finalOps[0].actor_key).toBe(aliceKey);
+  expect(f.gatewayFixture.counters.create).toBe(1);
   const principals = await f.db.execute<{ count: number }>(
     sql`SELECT count(*)::integer AS count FROM sandbox_actor_principal`,
   );
   expect(principals[0].count).toBe(1);
 });
 
-test("bounded wire client: oversized and malformed responses are ambiguous, rejections are terminal, and handles are path-safe", async () => {
+test("bounded wire client: oversized and malformed responses and HTTP errors never release liability, and handles are path-safe", async () => {
   const f = get();
   const client = f.gateway;
   f.gatewayFixture.script.create = "oversized";
@@ -799,8 +850,8 @@ test("migration 0022 preserves populated 0021 data, keeps financial rows non-cas
     await standalone.exec(`
       INSERT INTO sandbox_actor_principal(principal_digest,actor_key,actor_version)
       VALUES ('${"3".repeat(64)}','${"4".repeat(64)}','v1');
-      INSERT INTO sandbox_operation(id,actor_key,actor_version,idempotency_key,binding_digest,identity,fee_snapshot,month,day,state,reserved_microdollars,deadline)
-      VALUES ('${crypto.randomUUID()}','${"4".repeat(64)}','v1','op-1','${"5".repeat(64)}','{}'::jsonb,'{}'::jsonb,'2026-09',CURRENT_DATE,'held',500000,now()+interval '1 minute');
+      INSERT INTO sandbox_operation(id,actor_key,actor_version,idempotency_key,binding_digest,identity,fee_snapshot,month,day,state,reserved_microdollars,deadline,attempts,create_requested_at)
+      VALUES ('${crypto.randomUUID()}','${"4".repeat(64)}','v1','op-1','${"5".repeat(64)}','{}'::jsonb,'{}'::jsonb,'2026-09',CURRENT_DATE,'held',500000,now()+interval '1 minute',1,clock_timestamp());
     `);
     expect(
       (await rejectionOf(standalone.exec("DELETE FROM sandbox_operation")))
@@ -824,4 +875,437 @@ test("migration 0022 preserves populated 0021 data, keeps financial rows non-cas
   } finally {
     await standalone.close();
   }
+});
+
+test("review: an entered HTTP rejection retains liability and globally stops admissions", async () => {
+  const f = get();
+  f.gatewayFixture.script.create = "reject";
+  const w = await runToApproval();
+  await w.store.approve("alice", w.approval);
+  await worker(w).deliver(w.id);
+  expect((await operations(w))[0].state).toBe("held");
+  const [control] = await w.db.execute<{ stopped: boolean }>(
+    sql`SELECT stopped FROM funding_control WHERE id='platform'`,
+  );
+  expect(control.stopped).toBe(true);
+});
+
+test("review: financial owner mapping does not block actual owner deletion", async () => {
+  const w = await runToCompletion();
+  const op = (await operations(w))[0];
+  await w.db.execute(sql`DELETE FROM "user" WHERE id='alice'`);
+  const [retained] = await w.db.execute<{ count: number }>(
+    sql`SELECT count(*)::integer AS count FROM sandbox_operation WHERE id=${op.id}`,
+  );
+  expect(retained.count).toBe(1);
+  const [mapping] = await w.db.execute<{ count: number }>(
+    sql`SELECT count(*)::integer AS count FROM sandbox_operation_owner WHERE operation_id=${op.id}`,
+  );
+  expect(mapping.count).toBe(0);
+});
+
+test("review: financial evidence never retains raw user output or logs", async () => {
+  const f = get();
+  f.gatewayFixture.script.logs = "private-log-canary";
+  f.gatewayFixture.script.result = "private-result-canary";
+  const w = await runToCompletion();
+  const records = await w.db.execute<{ evidence: unknown }>(
+    sql`SELECT evidence FROM sandbox_operation_evidence`,
+  );
+  expect(JSON.stringify(records)).not.toContain("private-log-canary");
+  expect(JSON.stringify(records)).not.toContain("private-result-canary");
+});
+
+test("review: completed commands without resource-stop evidence cannot free active capacity", async () => {
+  const w = await runToCompletion();
+  const second = await runToApproval();
+  await second.store.approve("alice", second.approval);
+  const error = await rejectionOf(worker(second).deliver(second.id));
+  expect(error.id).toBeTruthy();
+  expect(w.gatewayFixture.counters.create).toBe(1);
+});
+
+test("review: saved test environment cannot enable admission after the real process leaves test mode", async () => {
+  const f = get();
+  const saved = { ...process.env, NODE_ENV: "test" };
+  let afterQuery:
+    | ((statement: string, tx: DatabaseTransaction) => Promise<void>)
+    | undefined;
+  const dialect = new PgDialect();
+  const guardedDb = new Proxy(f.db, {
+    get(target, property, receiver) {
+      if (property === "transaction")
+        return <T>(
+          run: (tx: DatabaseTransaction) => Promise<T>,
+          options?: Parameters<typeof f.db.transaction>[1],
+        ) =>
+          target.transaction(
+            (tx) =>
+              run(
+                new Proxy(tx, {
+                  get(t, key, r) {
+                    if (key === "execute")
+                      return async (
+                        query: Parameters<DatabaseTransaction["execute"]>[0],
+                      ) => {
+                        const result = await t.execute(query);
+                        await afterQuery?.(
+                          typeof query === "string"
+                            ? query
+                            : dialect.sqlToQuery(query.getSQL()).sql,
+                          t,
+                        );
+                        return result;
+                      };
+                    return Reflect.get(t, key, r);
+                  },
+                }),
+              ),
+            options,
+          );
+      return Reflect.get(target, property, receiver);
+    },
+  });
+  const coordinator = createSandboxCoordinator({
+    db: guardedDb,
+    runtime: () => f.runtime,
+    env: () => saved,
+    gateway: f.gateway,
+  });
+  const before = process.env.NODE_ENV;
+  try {
+    Reflect.set(process.env, "NODE_ENV", "production");
+    const error = await rejectionOf(
+      coordinator.store.enqueue("alice", {
+        id: crypto.randomUUID(),
+        source: { artifactId: f.source, version: 1 },
+      }),
+    );
+    expect(error.id).toBe("sandbox_adapter_offline_only");
+  } finally {
+    Reflect.set(process.env, "NODE_ENV", before);
+  }
+});
+
+test("review: raw gateway client cannot send requests after leaving test mode", async () => {
+  const f = get();
+  const before = process.env.NODE_ENV;
+  try {
+    Reflect.set(process.env, "NODE_ENV", "production");
+    const error = await rejectionOf(f.gateway.status("synthetic-handle"));
+    expect(error.id).toBe("sandbox_adapter_offline_only");
+    expect(f.gatewayFixture.counters.status).toBe(0);
+  } finally {
+    Reflect.set(process.env, "NODE_ENV", before);
+  }
+});
+
+test("review: caller-shaped receipts cannot authenticate zero-cost settlement", async () => {
+  const w = await runToCompletion();
+  const op = (await operations(w))[0];
+  const [identity] = await w.db.execute<{
+    binding_digest: string;
+    revision: number;
+  }>(
+    sql`SELECT binding_digest,revision FROM sandbox_operation WHERE id=${op.id}`,
+  );
+  const id = crypto.randomUUID();
+  await w.db.execute(
+    sql`INSERT INTO sandbox_receipt(id,operation_id,receipt) VALUES(${id},${op.id},${JSON.stringify({ id, operationId: op.id, bindingDigest: identity.binding_digest, evidenceDigest: "f".repeat(64), incurredMicrodollars: 0, terminal: true, revision: "fake-self-asserted" })}::jsonb)`,
+  );
+  const error = await rejectionOf(
+    w.store.reconcile(op.id, identity.binding_digest, id, identity.revision),
+  );
+  expect(error.id).toBe("sandbox_receipt_authority_unavailable");
+  expect((await operations(w))[0].state).toBe("completed_unreconciled");
+});
+
+test("review: final entry rechecks the original lease after the last journal write", async () => {
+  const w = await runToApproval();
+  await w.store.approve("alice", w.approval);
+  let crossed = false;
+  w.afterQuery(async (statement, tx) => {
+    if (crossed || !statement.includes("INSERT INTO sandbox_operation_audit"))
+      return;
+    const [op] = await tx.execute<{ state: string }>(
+      sql`SELECT state FROM sandbox_operation LIMIT 1`,
+    );
+    if (op?.state !== "entered") return;
+    crossed = true;
+    await tx.execute(
+      sql`UPDATE durable_job SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=${w.id}`,
+    );
+  });
+  expect((await rejectionOf(worker(w).deliver(w.id))).id).toBe(
+    "job_stale_lease",
+  );
+  w.afterQuery(undefined);
+  expect(crossed).toBe(true);
+  expect(await operations(w)).toHaveLength(0);
+  expect(w.gatewayFixture.counters.create).toBe(0);
+  const [count] = await w.db.execute<{ n: number }>(
+    sql`SELECT count(*)::integer AS n FROM sandbox_operation_commitment`,
+  );
+  expect(count.n).toBe(0);
+});
+
+test("review: final publication policy drift rolls back report, message and result evidence", async () => {
+  const w = await runToApproval();
+  await w.store.approve("alice", w.approval);
+  const previous = process.env.SANDBOX_IMAGE_DIGEST;
+  let crossed = false;
+  w.afterQuery(async (statement, tx) => {
+    if (crossed || !statement.includes("INSERT INTO sandbox_operation_audit"))
+      return;
+    const [op] = await tx.execute<{ state: string }>(
+      sql`SELECT state FROM sandbox_operation LIMIT 1`,
+    );
+    if (op?.state !== "completed_unreconciled") return;
+    crossed = true;
+    process.env.SANDBOX_IMAGE_DIGEST = "f".repeat(64);
+  });
+  try {
+    expect((await rejectionOf(worker(w).deliver(w.id))).id).toBe(
+      "sandbox_binding_changed",
+    );
+  } finally {
+    w.afterQuery(undefined);
+    process.env.SANDBOX_IMAGE_DIGEST = previous;
+  }
+  expect(crossed).toBe(true);
+  const [reports] = await w.db.execute<{ n: number }>(
+    sql`SELECT count(*)::integer AS n FROM artifact WHERE user_id='alice'`,
+  );
+  const [messages] = await w.db.execute<{ n: number }>(
+    sql`SELECT count(*)::integer AS n FROM chat_message WHERE user_id='alice'`,
+  );
+  const [results] = await w.db.execute<{ n: number }>(
+    sql`SELECT count(*)::integer AS n FROM sandbox_operation_evidence WHERE evidence->>'kind'='result'`,
+  );
+  expect(reports.n).toBe(1);
+  expect(messages.n).toBe(1);
+  expect(results.n).toBe(0);
+  expect((await operations(w))[0].state).toBe("held");
+  expect(w.gatewayFixture.counters.create).toBe(1);
+  expect(w.gatewayFixture.counters.terminate).toBe(1);
+});
+
+test("review: owner deletion after create retains an anonymous orphan and cleans the exact observed handle", async () => {
+  const w = await runToApproval();
+  await w.store.approve("alice", w.approval);
+  w.gatewayFixture.hooks.created = async () => {
+    await w.db.execute(sql`DELETE FROM "user" WHERE id='alice'`);
+  };
+  expect((await rejectionOf(worker(w).deliver(w.id))).id).toBe("not_found");
+  const ops = await operations(w);
+  expect(ops).toHaveLength(1);
+  expect(ops[0].state).toBe("held");
+  expect(Number(ops[0].reserved_microdollars)).toBe(500_000);
+  const [mapping] = await w.db.execute<{ n: number }>(
+    sql`SELECT count(*)::integer AS n FROM sandbox_operation_owner`,
+  );
+  const [control] = await w.db.execute<{ stopped: boolean }>(
+    sql`SELECT stopped FROM funding_control WHERE id='platform'`,
+  );
+  expect(mapping.n).toBe(0);
+  expect(control.stopped).toBe(true);
+  expect(w.gatewayFixture.counters.create).toBe(1);
+  expect(w.gatewayFixture.counters.terminate).toBe(1);
+});
+
+test("review: historical released commitments survive three months and block missing carry", async () => {
+  const f = get();
+  const now = new Date();
+  const month = now.toISOString().slice(0, 7);
+  const prev = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1),
+  )
+    .toISOString()
+    .slice(0, 7);
+  const oldest = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 2, 1),
+  )
+    .toISOString()
+    .slice(0, 7);
+  const id = crypto.randomUUID();
+  await f.db.execute(sql`INSERT INTO sandbox_operation(id,actor_key,actor_version,idempotency_key,binding_digest,identity,fee_snapshot,month,day,state,reserved_microdollars,deadline)
+    VALUES(${id},${"a".repeat(64)},'v1',${id},${"b".repeat(64)},'{}'::jsonb,'{}'::jsonb,${oldest},CURRENT_DATE,'reserved',500000,clock_timestamp()+interval '1 minute')`);
+  for (const [period, amount] of [
+    [oldest, 500_000],
+    [prev, 700_000],
+  ] as const) {
+    await f.db.execute(
+      sql`INSERT INTO sandbox_period(month,plan_identity,sources_digest,ordinary_infra_microdollars) VALUES(${period},'{}'::jsonb,${"f".repeat(64)},500000)`,
+    );
+    await f.db.execute(
+      sql`INSERT INTO sandbox_operation_commitment(month,source_id,amount_microdollars) VALUES(${period},${id},${amount})`,
+    );
+  }
+  await f.db.execute(
+    sql`UPDATE sandbox_operation SET state='released',revision=revision+1 WHERE id=${id}`,
+  );
+  const config = resolvePlatformBudgetConfig(process.env, now);
+  const plan = {
+    month,
+    revision: config.plan.revision,
+    digest: config.digest,
+    capacityDigest: config.capacityDigest,
+  };
+  const budget = new PlatformBudgetStore(f.db);
+  expect(
+    (
+      await rejectionOf(
+        budget.assertActivePlan({
+          month: plan.month,
+          expectedRevision: plan.revision,
+          expectedDigest: plan.digest,
+          expectedCapacityDigest: plan.capacityDigest,
+        }),
+      )
+    ).id,
+  ).toBe("uncovered_sandbox_exposure");
+  await f.store.bootstrapPeriod(plan, 500_000);
+  const [carry] = await f.db.execute<{ amount: string }>(
+    sql`SELECT amount_microdollars::text AS amount FROM sandbox_operation_commitment WHERE month=${month} AND source_id=${id}`,
+  );
+  expect(Number(carry.amount)).toBe(700_000);
+  await budget.assertActivePlan({
+    month: plan.month,
+    expectedRevision: plan.revision,
+    expectedDigest: plan.digest,
+    expectedCapacityDigest: plan.capacityDigest,
+  });
+  expect((await rejectionOf(f.store.bootstrapPeriod(plan, 400_000))).id).toBe(
+    "sandbox_period_conflict",
+  );
+});
+
+test("review: gateway identity and credential changes deny before entry", async () => {
+  const w = await runToApproval();
+  await w.store.approve("alice", w.approval);
+  w.runtime.gateway.key = "replacement-key-0123456789abcdef0123456789abcdef";
+  expect((await rejectionOf(worker(w).deliver(w.id))).id).toBe(
+    "sandbox_gateway_unconfigured",
+  );
+  expect(w.gatewayFixture.counters.create).toBe(0);
+  expect(await operations(w)).toHaveLength(0);
+});
+
+test("review: recovery cannot renew the persisted command deadline", async () => {
+  const w = await runToApproval();
+  await w.store.approve("alice", w.approval);
+  const lease = await w.jobs.claim(w.id);
+  if (!lease) throw new Error("missing_lease");
+  await w.store.dispatch(lease, w.gateway, { stopAfterCreate: true });
+  const [op] = await w.db.execute<{ deadline: Date }>(
+    sql`SELECT deadline FROM sandbox_operation`,
+  );
+  await w.db.execute(
+    sql`UPDATE durable_job SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=${w.id}`,
+  );
+  const next = await w.jobs.claim(w.id);
+  if (!next) throw new Error("missing_recovery");
+  const clock = spyOn(Date, "now").mockReturnValue(
+    new Date(op.deadline).getTime() + 1,
+  );
+  try {
+    await w.store.dispatch(next, w.gateway);
+  } finally {
+    clock.mockRestore();
+  }
+  expect(w.gatewayFixture.counters.create).toBe(1);
+  expect(w.gatewayFixture.counters.status).toBe(0);
+  expect(w.gatewayFixture.counters.terminate).toBe(1);
+  expect((await operations(w))[0].state).toBe("held");
+});
+
+test("review: account export includes only sanitized sandbox metadata without runtime configuration", async () => {
+  const w = await runToCompletion();
+  const { exportOwnedAccount } = await import("../lib/actions/account/account");
+  const saved = process.env.NODE_ENV;
+  Reflect.set(process.env, "NODE_ENV", "production");
+  try {
+    const exported = await exportOwnedAccount("alice");
+    expect(exported.sandboxOperations).toHaveLength(1);
+    expect(Object.keys(exported.sandboxOperations[0]).sort()).toEqual([
+      "createdAt",
+      "id",
+      "incurredMicrodollars",
+      "reservedMicrodollars",
+      "revision",
+      "state",
+    ]);
+    expect(JSON.stringify(exported.sandboxOperations)).not.toContain(
+      w.gatewayFixture.key,
+    );
+    expect(JSON.stringify(exported.sandboxOperations)).not.toContain(
+      (await operations(w))[0].provider_handle ?? "missing",
+    );
+  } finally {
+    Reflect.set(process.env, "NODE_ENV", saved);
+  }
+});
+
+test("review: missing or production action handlers cannot fall through to the fixture publisher", async () => {
+  const w = await runToApproval();
+  await w.store.approve("alice", w.approval);
+  const lease = await w.jobs.claim(w.id);
+  if (!lease) throw new Error("missing_lease");
+  const saved = process.env.NODE_ENV;
+  Reflect.set(process.env, "NODE_ENV", "production");
+  try {
+    expect((await rejectionOf(w.jobs.checkpoint(lease))).id).toBe(
+      "job_action_unavailable",
+    );
+    expect(
+      (
+        await rejectionOf(
+          Promise.resolve().then(() =>
+            registerJobActionHandler(
+              "publish-fixture-report-v1",
+              async () => {},
+            ),
+          ),
+        )
+      ).id,
+    ).toBe("job_action_unavailable");
+  } finally {
+    Reflect.set(process.env, "NODE_ENV", saved);
+  }
+  expect(w.gatewayFixture.counters.create).toBe(0);
+  expect(await operations(w)).toHaveLength(0);
+});
+
+test("review: anonymous retention recovery needs neither deleted owner nor usable runtime", async () => {
+  const w = await runToCompletion();
+  const op = (await operations(w))[0];
+  await w.db.execute(sql`DELETE FROM "user" WHERE id='alice'`);
+  const { SandboxStore } = await import("../lib/sandbox/store");
+  const store = new SandboxStore(w.db);
+  const kept = await store.retainUncertainOperation(op.id);
+  expect(kept.state).toBe("held");
+  expect(kept.reservedMicrodollars).toBe(500_000);
+  expect((await store.retainUncertainOperation(op.id)).revision).toBe(
+    kept.revision,
+  );
+  const [control] = await w.db.execute<{ stopped: boolean }>(
+    sql`SELECT stopped FROM funding_control WHERE id='platform'`,
+  );
+  expect(control.stopped).toBe(true);
+  expect(w.gatewayFixture.counters.create).toBe(1);
+});
+
+test("review: failed commands retain resource capacity and request exact-handle cleanup", async () => {
+  const f = get();
+  f.gatewayFixture.script.status = "failed";
+  const w = await runToApproval();
+  await w.store.approve("alice", w.approval);
+  await worker(w).deliver(w.id);
+  expect((await operations(w))[0].state).toBe("held");
+  expect(w.gatewayFixture.counters.create).toBe(1);
+  expect(w.gatewayFixture.counters.terminate).toBe(1);
+  const [control] = await w.db.execute<{ stopped: boolean }>(
+    sql`SELECT stopped FROM funding_control WHERE id='platform'`,
+  );
+  expect(control.stopped).toBe(true);
 });

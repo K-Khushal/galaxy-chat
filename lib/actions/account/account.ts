@@ -28,6 +28,7 @@ import { createMcpExecutionStore } from "@/lib/mcp/execution-store";
 import { createMcpOAuthStore } from "@/lib/mcp/oauth-store";
 import { createMcpOperationStore } from "@/lib/mcp/operation-store";
 import { McpRegistryStore } from "@/lib/mcp/registry-store";
+import { SandboxStore } from "@/lib/sandbox/store";
 import { SearchStore } from "@/lib/search/store";
 import { ToolStore } from "@/lib/tools/store";
 
@@ -42,6 +43,7 @@ export type AccountProfile = {
 export type AccountExport = {
   profile: AccountProfile;
   jobs: Awaited<ReturnType<JobStore["export"]>>;
+  sandboxOperations: Awaited<ReturnType<SandboxStore["exportOperations"]>>;
   imageData: Awaited<ReturnType<ImageStore["export"]>>;
   toolData: Awaited<ReturnType<ToolStore["export"]>>;
   attachments: Array<AttachmentView & { extractedText: string }>;
@@ -229,6 +231,7 @@ export async function exportOwnedAccount(
   }));
   return {
     profile,
+    sandboxOperations: await new SandboxStore(db).exportOperations(userId),
     jobs,
     toolData,
     imageData,

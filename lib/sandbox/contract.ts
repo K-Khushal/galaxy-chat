@@ -99,6 +99,7 @@ export const sandboxBindingCoreSchema = z
     gateway: sandboxGatewayIdentitySchema,
     provider: sandboxProviderSchema,
     feeDigest: digestSchema,
+    envelopeDigest: digestSchema,
     plan: planIdentitySchema,
     approvalExpiresAt: z.iso.datetime(),
   })
@@ -106,13 +107,11 @@ export const sandboxBindingCoreSchema = z
 export type SandboxBindingCore = z.infer<typeof sandboxBindingCoreSchema>;
 
 /** Full durable operation identity: binding core plus the exact consumed approval. */
-export const sandboxBindingSchema = sandboxBindingCoreSchema.and(
-  z
-    .object({
-      approval: z.object({ checkpoint: digestSchema }).strict(),
-    })
-    .strict(),
-);
+export const sandboxBindingSchema = sandboxBindingCoreSchema
+  .extend({
+    approval: z.object({ checkpoint: digestSchema }).strict(),
+  })
+  .strict();
 export type SandboxBinding = z.infer<typeof sandboxBindingSchema>;
 
 export const sandboxRequestSchema = z

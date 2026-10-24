@@ -57,7 +57,7 @@ export function sandboxProviderDecision(
   env: EnvSource = process.env,
 ): SandboxProviderDecision {
   if (providerId === SANDBOX_OFFLINE_ADAPTER_ID) {
-    if (env.NODE_ENV !== "test") {
+    if (process.env.NODE_ENV !== "test" || env.NODE_ENV !== "test") {
       return {
         kind: "deny",
         providerId,
@@ -183,6 +183,19 @@ export function parseSandboxRuntime(
   const value = parsed.data;
   const decision = sandboxProviderDecision(value.providerId, env);
   if (decision.kind === "deny") deny(decision);
+  const url = new URL(value.gateway.baseUrl);
+  if (
+    url.protocol !== "http:" ||
+    url.hostname !== "127.0.0.1" ||
+    url.username ||
+    url.password ||
+    url.pathname !== "/" ||
+    url.search ||
+    url.hash ||
+    value.gateway.keyIdentity !==
+      createHash("sha256").update(value.gateway.key).digest("hex")
+  )
+    throw new AppError("sandbox_gateway_unconfigured", 503);
   const fee = parseSandboxFeeSnapshot(value.fee, now);
   return deepFreeze({
     ...value,
