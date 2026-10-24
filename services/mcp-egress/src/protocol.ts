@@ -3,7 +3,9 @@ import {
   createDecipheriv,
   createHash,
   createHmac,
+  createPrivateKey,
   randomBytes,
+  sign as signEd25519,
   timingSafeEqual,
 } from "node:crypto";
 import { fail, integer, object, text } from "./errors.js";
@@ -115,7 +117,24 @@ export function parseEnvelope(value: unknown, now: number): Envelope {
   });
 }
 // An explicit field order gives Node and future app clients one wire format.
-export function canonical(e: Envelope): string {
+export function canonical(e: Envelope | RuntimeEnvelope): string {
+  if (e.version === 2)
+    return JSON.stringify({
+      version: 2,
+      requestId: e.requestId,
+      operationId: e.operationId,
+      issuedAt: e.issuedAt,
+      deadline: e.deadline,
+      profileId: e.profileId,
+      revision: e.revision,
+      purpose: e.purpose,
+      bodyHash: e.bodyHash,
+      body: e.body,
+      frameId: e.frameId,
+      manifestDigest: e.manifestDigest,
+      profileDigest: e.profileDigest,
+      keyVersion: e.keyVersion,
+    });
   return JSON.stringify({
     version: e.version,
     requestId: e.requestId,
@@ -139,14 +158,14 @@ export function canonical(e: Envelope): string {
       : {}),
   });
 }
-export function sign(e: Envelope, key: Buffer): string {
+export function sign(e: Envelope | RuntimeEnvelope, key: Buffer): string {
   return createHmac("sha256", key)
-    .update("galaxy-mcp-egress-v1\n")
+    .update(`galaxy-mcp-egress-v${e.version}\n`)
     .update(canonical(e))
     .digest("hex");
 }
 export function authenticate(
-  e: Envelope,
+  e: Envelope | RuntimeEnvelope,
   signature: unknown,
   key: Buffer,
 ): void {
@@ -160,7 +179,11 @@ export function authenticate(
   )
     fail("authentication");
 }
-function aad(e: Envelope, p: Profile, connectionRevision: string): Buffer {
+function aad(
+  e: Envelope | RuntimeEnvelope,
+  p: Profile,
+  connectionRevision: string,
+): Buffer {
   return Buffer.from(
     JSON.stringify([
       "galaxy-mcp-credential-v1",
@@ -199,7 +222,7 @@ export function sealCredential(
   });
 }
 export function openCredential(
-  e: Envelope,
+  e: Envelope | RuntimeEnvelope,
   p: Profile,
   key: Buffer,
 ): string | undefined {
@@ -218,4 +241,107 @@ export function openCredential(
   } catch {
     fail("authentication");
   }
+}
+
+export type RuntimeEnvelope = Omit<Envelope, "version" | "credential"> & {
+  version: 2;
+  credential?: never;
+  frameId: string;
+  manifestDigest: string;
+  profileDigest: string;
+  keyVersion: string;
+};
+export function parseAnyEnvelope(
+  value: unknown,
+  now: number,
+): Envelope | RuntimeEnvelope {
+  return value &&
+    typeof value === "object" &&
+    Reflect.get(value, "version") === 2
+    ? parseRuntimeEnvelope(value, now)
+    : parseEnvelope(value, now);
+}
+function parseRuntimeEnvelope(value: unknown, now: number): RuntimeEnvelope {
+  const e = object(value, [
+    "version",
+    "requestId",
+    "operationId",
+    "issuedAt",
+    "deadline",
+    "profileId",
+    "revision",
+    "purpose",
+    "bodyHash",
+    "body",
+    "frameId",
+    "manifestDigest",
+    "profileDigest",
+    "keyVersion",
+  ]);
+  const { frameId, manifestDigest, profileDigest, keyVersion, ...base } = e;
+  if (
+    !/^[a-f0-9]{64}$/.test(String(manifestDigest)) ||
+    !/^[a-f0-9]{64}$/.test(String(profileDigest))
+  )
+    fail("invalid_request");
+  const parsed = parseEnvelope({ ...base, version: 1 }, now);
+  const { credential: _credential, ...withoutCredential } = parsed;
+  return Object.freeze({
+    ...withoutCredential,
+    version: 2,
+    frameId: uuid(frameId),
+    manifestDigest: manifestDigest as string,
+    profileDigest: profileDigest as string,
+    keyVersion: identifier(keyVersion),
+  });
+}
+export function canonicalEvidence(value: unknown): string {
+  const walk = (v: unknown): unknown =>
+    v && typeof v === "object" && !Array.isArray(v)
+      ? Object.fromEntries(
+          Object.entries(v)
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([k, x]) => [k, walk(x)]),
+        )
+      : v;
+  return JSON.stringify(walk(value));
+}
+export function signTransportEvidence(
+  e: RuntimeEnvelope,
+  response: { status: number; body: string },
+  keyVersion: string,
+  privateKey: string,
+) {
+  const now = Date.now();
+  const evidence = {
+    version: 2,
+    operationId: e.operationId,
+    frameId: e.frameId,
+    requestId: e.requestId,
+    manifestDigest: e.manifestDigest,
+    profileDigest: e.profileDigest,
+    bodyHash: e.bodyHash,
+    responseHash: createHash("sha256")
+      .update(Buffer.from(response.body, "base64"))
+      .digest("hex"),
+    status: response.status,
+    purpose: e.purpose,
+    phase: "terminal",
+    terminal: true,
+    issuedAt: now,
+    expiresAt: now + 30000,
+    keyVersion,
+  };
+  const key = createPrivateKey(privateKey);
+  if (key.asymmetricKeyType !== "ed25519") fail("configuration");
+  return {
+    evidence,
+    signature: signEd25519(
+      null,
+      Buffer.from(
+        `galaxy-mcp-transport-evidence-v2\n${canonicalEvidence(evidence)}`,
+      ),
+      key,
+    ).toString("base64"),
+  };
 }

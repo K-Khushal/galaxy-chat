@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { isIP } from "node:net";
 import { fail, integer, object, text } from "./errors.js";
 export const PURPOSES = [
@@ -31,6 +32,12 @@ export type Profile = Readonly<{
   resource: string;
   issuer: string;
   credential: "none" | "bearer" | "refresh" | "revoke";
+  runtime?: Readonly<{
+    manifestDigest: string;
+    profileDigest: string;
+    protocolVersion: "2025-11-25";
+    toolName: string;
+  }>;
   clientSecretRef?: string;
   formFields: Readonly<Record<string, string>>;
 }>;
@@ -100,6 +107,7 @@ export function parseProfiles(value: unknown): readonly Profile[] {
           "credential",
           "clientSecretRef",
           "formFields",
+          "runtime",
         ]);
         const url = endpoint(p.endpoint);
         const kind = purpose(p.purpose);
@@ -185,7 +193,34 @@ export function parseProfiles(value: unknown): readonly Profile[] {
           !["oauth.token", "oauth.refresh", "oauth.revoke"].includes(kind)
         )
           fail("configuration");
-        return Object.freeze({
+        let runtime: Profile["runtime"];
+        if (p.runtime !== undefined) {
+          const r = object(p.runtime, [
+            "manifestDigest",
+            "profileDigest",
+            "protocolVersion",
+            "toolName",
+          ]);
+          if (
+            !/^[a-f0-9]{64}$/.test(String(r.manifestDigest)) ||
+            !/^[a-f0-9]{64}$/.test(String(r.profileDigest)) ||
+            r.protocolVersion !== "2025-11-25" ||
+            typeof r.toolName !== "string" ||
+            !/^[a-zA-Z][a-zA-Z0-9_.-]{0,63}$/.test(r.toolName) ||
+            p.credential !== "none" ||
+            !["mcp.initialize", "mcp.call"].includes(kind) ||
+            p.responseTypes.length !== 1 ||
+            p.responseTypes[0] !== "application/json"
+          )
+            fail("configuration");
+          runtime = Object.freeze({
+            manifestDigest: r.manifestDigest as string,
+            profileDigest: r.profileDigest as string,
+            protocolVersion: r.protocolVersion,
+            toolName: r.toolName,
+          });
+        }
+        const result = Object.freeze({
           profileId: identifier(p.profileId),
           revision: identifier(p.revision),
           purpose: kind,
@@ -211,10 +246,45 @@ export function parseProfiles(value: unknown): readonly Profile[] {
           formFields: Object.freeze(fields),
           credential: p.credential as Profile["credential"],
           ...(secret ? { clientSecretRef: secret } : {}),
+          ...(runtime ? { runtime } : {}),
         });
+        if (runtime && runtimeProfileDigest(result) !== runtime.profileDigest)
+          fail("configuration");
+        return result;
       }),
     );
   } catch {
     fail("configuration");
   }
+}
+
+export function runtimeProfileDigest(p: Profile) {
+  if (!p.runtime) fail("configuration");
+  const value = {
+    profileId: p.profileId,
+    revision: p.revision,
+    purpose: p.purpose,
+    endpoint: p.endpoint,
+    contentType: p.contentType,
+    responseTypes: p.responseTypes,
+    maxRequestBytes: p.maxRequestBytes,
+    maxResponseBytes: p.maxResponseBytes,
+    timeoutMs: p.timeoutMs,
+    connectMs: p.connectMs,
+    firstByteMs: p.firstByteMs,
+    resource: p.resource,
+    issuer: p.issuer,
+    credential: p.credential,
+    protocolVersion: p.runtime.protocolVersion,
+    toolName: p.runtime.toolName,
+  };
+  return createHash("sha256")
+    .update(
+      JSON.stringify(
+        Object.fromEntries(
+          Object.entries(value).sort(([a], [b]) => a.localeCompare(b)),
+        ),
+      ),
+    )
+    .digest("hex");
 }
