@@ -67,6 +67,14 @@ function evidenceEvents(at: number, host = "example.com"): unknown[] {
   ];
 }
 
+function pageEvents(): unknown[] {
+  return [
+    { kind: "session", at: 0 },
+    ...evidenceEvents(10),
+    { kind: "navigate", at: 30, url: INITIAL_URL, method: "GET" },
+  ];
+}
+
 function validTrace(): { events: unknown[] } {
   return {
     events: [
@@ -325,13 +333,13 @@ test("trace bounds reject oversized and unparseable input before per-event work"
     events: [{ kind: "session", at: 0, blob: "x".repeat(5 * 1024 * 1024) }],
   };
   expect(codesOf(evaluateBrowserTrace(INTENT, huge))).toEqual([
-    "trace_too_large",
+    "event_malformed",
   ]);
 
   const cyclic: { events: unknown[] } = { events: [] };
   cyclic.events.push(cyclic);
   expect(codesOf(evaluateBrowserTrace(INTENT, cyclic))).toEqual([
-    "trace_unparseable",
+    "event_unrecognized",
   ]);
 
   expect(codesOf(evaluateBrowserTrace(INTENT, { nope: true }))).toEqual([
@@ -431,7 +439,7 @@ test("navigation and action exhaustion", () => {
     actionEvents.push({
       kind: "extract-text",
       at: 2000 + i,
-      url: `${HOST}/p${i}`,
+      url: INITIAL_URL,
       text: "x",
     });
   }
@@ -814,7 +822,7 @@ test("extraction and screenshot byte limits use actual measured bytes", () => {
     "latin1",
   );
   const pass = evaluate([
-    { kind: "session", at: 1000 },
+    ...pageEvents(),
     { kind: "extract-text", at: 1100, url: INITIAL_URL, text: atLimit },
   ]);
   expect(codesOf(pass)).toEqual([]);
@@ -824,7 +832,7 @@ test("extraction and screenshot byte limits use actual measured bytes", () => {
   expect(
     codesOf(
       evaluate([
-        { kind: "session", at: 1000 },
+        ...pageEvents(),
         { kind: "extract-text", at: 1100, url: INITIAL_URL, text: overLimit },
       ]),
     ),
@@ -832,7 +840,7 @@ test("extraction and screenshot byte limits use actual measured bytes", () => {
 
   const multibyteAtLimit = "é".repeat(BROWSER_LIMITS.extractionBytes / 2);
   const multibytePass = evaluate([
-    { kind: "session", at: 1000 },
+    ...pageEvents(),
     {
       kind: "extract-text",
       at: 1100,
@@ -849,7 +857,7 @@ test("extraction and screenshot byte limits use actual measured bytes", () => {
   expect(
     codesOf(
       evaluate([
-        { kind: "session", at: 1000 },
+        ...pageEvents(),
         {
           kind: "extract-text",
           at: 1100,
@@ -864,7 +872,7 @@ test("extraction and screenshot byte limits use actual measured bytes", () => {
     "base64",
   );
   const shotPass = evaluate([
-    { kind: "session", at: 1000 },
+    ...pageEvents(),
     { kind: "screenshot", at: 1100, url: INITIAL_URL, data: maxShot },
   ]);
   expect(codesOf(shotPass)).toEqual([]);
@@ -876,7 +884,7 @@ test("extraction and screenshot byte limits use actual measured bytes", () => {
   expect(
     codesOf(
       evaluate([
-        { kind: "session", at: 1000 },
+        ...pageEvents(),
         { kind: "screenshot", at: 1100, url: INITIAL_URL, data: shotOver },
       ]),
     ),
@@ -885,7 +893,7 @@ test("extraction and screenshot byte limits use actual measured bytes", () => {
   expect(
     codesOf(
       evaluate([
-        { kind: "session", at: 1000 },
+        ...pageEvents(),
         {
           kind: "screenshot",
           at: 1100,
@@ -899,7 +907,7 @@ test("extraction and screenshot byte limits use actual measured bytes", () => {
 
 test("forged claimed byte counts are detected against measurement", () => {
   const forgedExtract = evaluate([
-    { kind: "session", at: 1000 },
+    ...pageEvents(),
     {
       kind: "extract-text",
       at: 1100,
@@ -912,7 +920,7 @@ test("forged claimed byte counts are detected against measurement", () => {
 
   const data = Buffer.from("abcdefgh").toString("base64");
   const forgedShot = evaluate([
-    { kind: "session", at: 1000 },
+    ...pageEvents(),
     {
       kind: "screenshot",
       at: 1100,
@@ -932,7 +940,7 @@ test("forged claimed byte counts are detected against measurement", () => {
   expect(
     codesOf(
       evaluate([
-        { kind: "session", at: 1000 },
+        ...pageEvents(),
         {
           kind: "screenshot",
           at: 1100,
@@ -945,7 +953,7 @@ test("forged claimed byte counts are detected against measurement", () => {
   ).toEqual(["screenshot_too_large"]);
 
   const honestExtract = evaluate([
-    { kind: "session", at: 1000 },
+    ...pageEvents(),
     {
       kind: "extract-text",
       at: 1100,
@@ -996,4 +1004,134 @@ test("reports are sanitized: no URLs, payloads or input-derived strings", () => 
     );
     expect((error as BrowserPolicyError).code).toBe("browser_intent_rejected");
   }
+});
+
+test("review: trace validation never invokes caller serialization hooks", () => {
+  let invoked = 0;
+  const raw = {
+    ...validTrace(),
+    toJSON() {
+      invoked++;
+      return {};
+    },
+  };
+  const result = evaluateBrowserTrace(INTENT, raw);
+  expect(invoked).toBe(0);
+  expect(result.accepted).toBe(false);
+});
+test("review: session must precede every network observation", () => {
+  expect(
+    evaluate([
+      ...evidenceEvents(0),
+      { kind: "session", at: 1000 },
+      { kind: "navigate", at: 1300, url: INITIAL_URL, method: "GET" },
+    ]).accepted,
+  ).toBe(false);
+});
+test("review: outputs must belong to a page actually navigated", () => {
+  expect(
+    evaluate([
+      { kind: "session", at: 1000 },
+      { kind: "extract-text", at: 1100, url: INITIAL_URL, text: "unvisited" },
+    ]).accepted,
+  ).toBe(false);
+  const raw = validTrace();
+  raw.events[raw.events.length - 1] = {
+    kind: "screenshot",
+    at: 1600,
+    url: `${HOST}/p1`,
+    data: "eA==",
+  };
+  expect(evaluate(raw).accepted).toBe(false);
+});
+test("review: redirects consume the total navigation ceiling", () => {
+  const raw = validTrace();
+  raw.events = raw.events.slice(0, 4);
+  for (let i = 0; i < 3; i++)
+    raw.events.push({
+      kind: "redirect",
+      at: 1400 + i,
+      url: INITIAL_URL,
+      method: "GET",
+    });
+  expect(evaluate(raw).accepted).toBe(false);
+});
+test("review: extra fields cannot hide unsupported action semantics", () => {
+  const raw = validTrace();
+  raw.events[5] = {
+    kind: "extract-text",
+    at: 1500,
+    url: INITIAL_URL,
+    text: "x",
+    method: "POST",
+  };
+  expect(evaluate(raw).accepted).toBe(false);
+});
+test("review: structural intent objects cannot bypass the bounded parser", () => {
+  expect(() => evaluateBrowserTrace({ ...INTENT }, validTrace())).toThrow(
+    BrowserPolicyError,
+  );
+});
+test("review: timestamps cannot be negative or overflow the original deadline", () => {
+  expect(evaluate([{ kind: "session", at: -1 }]).accepted).toBe(false);
+  expect(
+    evaluate([{ kind: "session", at: Number.MAX_SAFE_INTEGER }]).accepted,
+  ).toBe(false);
+});
+
+test("review: connected destinations cannot switch within a multi-answer DNS set", () => {
+  const other = { address: "1.1.1.1", family: 4 };
+  expect(
+    evaluate([
+      { kind: "session", at: 0 },
+      {
+        kind: "resolved",
+        at: 1,
+        hostname: "example.com",
+        answers: [PUBLIC_V4, other],
+      },
+      { kind: "connected", at: 2, hostname: "example.com", ...PUBLIC_V4 },
+      { kind: "navigate", at: 3, url: INITIAL_URL, method: "GET" },
+      { kind: "connected", at: 4, hostname: "example.com", ...other },
+    ]).accepted,
+  ).toBe(false);
+});
+
+test("review: total trace budget rejects multiple individually bounded screenshots", () => {
+  const data = Buffer.alloc(BROWSER_LIMITS.screenshotBytes).toString("base64");
+  const result = evaluate([
+    ...pageEvents(),
+    { kind: "screenshot", at: 40, url: INITIAL_URL, data },
+    { kind: "screenshot", at: 50, url: INITIAL_URL, data },
+  ]);
+  expect(codesOf(result)).toEqual(["trace_too_large"]);
+  expect(result.counts.events).toBe(0);
+});
+test("review: accessors cannot execute through candidate or trace parsing", () => {
+  let calls = 0;
+  const input = intentInput();
+  Object.defineProperty(input, "initialUrl", {
+    get() {
+      calls++;
+      return INITIAL_URL;
+    },
+  });
+  expect(() => parseBrowserIntent(input)).toThrow(BrowserPolicyError);
+  const result = evaluateBrowserTrace(INTENT, {
+    get events() {
+      calls++;
+      return validTrace().events;
+    },
+  });
+  expect(result.accepted).toBe(false);
+  expect(calls).toBe(0);
+});
+
+test("review: DNS and connections must themselves target enumerated origins", () => {
+  expect(
+    evaluate([
+      { kind: "session", at: 0 },
+      ...evidenceEvents(10, "unlisted.example.com"),
+    ]).accepted,
+  ).toBe(false);
 });

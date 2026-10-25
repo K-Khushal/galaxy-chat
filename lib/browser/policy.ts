@@ -89,7 +89,7 @@ function createViolations(): Violations {
 
 interface HostEvidence {
   answers: Set<string>;
-  connected: boolean;
+  connected: string | null;
 }
 
 /**
@@ -161,6 +161,7 @@ function checkTraceUrl(
 
 function checkHostname(
   raw: unknown,
+  intent: BrowserIntent,
   index: number,
   violations: Violations,
 ): string | undefined {
@@ -176,6 +177,14 @@ function checkHostname(
     !HOSTNAME_PATTERN.test(raw)
   ) {
     violations.add("hostname_not_allowed", index);
+    return undefined;
+  }
+  if (
+    !intent.allowlist.some(
+      (rule) => rule.origin === `https://${raw}` && rule.paths.length > 0,
+    )
+  ) {
+    violations.add("destination_not_allowed", index);
     return undefined;
   }
   return raw;
@@ -211,8 +220,178 @@ function publicAnswer(
   }
 }
 
+const EVENT_KEYS: Readonly<Record<string, readonly string[]>> = {
+  session: ["kind", "at"],
+  navigate: ["kind", "at", "url", "method"],
+  redirect: ["kind", "at", "url", "method"],
+  subresource: ["kind", "at", "url", "method"],
+  resolved: ["kind", "at", "hostname", "answers"],
+  connected: ["kind", "at", "hostname", "address", "family"],
+  "extract-text": ["kind", "at", "url", "text", "claimedBytes"],
+  screenshot: ["kind", "at", "url", "data", "claimedBytes"],
+};
+
+function dataRecord(
+  raw: unknown,
+  keys: readonly string[],
+): Record<string, unknown> | undefined {
+  if (
+    !raw ||
+    typeof raw !== "object" ||
+    Array.isArray(raw) ||
+    (Object.getPrototypeOf(raw) !== Object.prototype &&
+      Object.getPrototypeOf(raw) !== null)
+  )
+    return;
+  const copy: Record<string, unknown> = {};
+  let count = 0;
+  for (const key in raw) {
+    if (
+      !Object.hasOwn(raw, key) ||
+      ++count > keys.length ||
+      !keys.includes(key)
+    )
+      return;
+    const descriptor = Object.getOwnPropertyDescriptor(raw, key);
+    if (!descriptor || !("value" in descriptor)) return;
+    copy[key] = descriptor.value;
+  }
+  return copy;
+}
+
+/** Copies a finite vocabulary of bounded plain data, never serializes caller
+ * objects or invokes toJSON/accessors. Each serialization below is of a fresh,
+ * already bounded snapshot; cumulative JSON UTF-8 bytes are capped as well. */
+function traceSnapshot(
+  raw: unknown,
+  violations: Violations,
+): readonly unknown[] | null {
+  const trace = dataRecord(raw, ["events"]);
+  if (
+    !trace ||
+    !Array.isArray(trace.events) ||
+    Object.getPrototypeOf(trace.events) !== Array.prototype
+  ) {
+    violations.add("trace_unparseable");
+    return null;
+  }
+  if (trace.events.length > BROWSER_LIMITS.maxTraceEvents) {
+    violations.add("trace_event_overflow");
+    return null;
+  }
+  const events: unknown[] = [];
+  let bytes = 13; // {"events":[]}
+  for (let index = 0; index < trace.events.length; index++) {
+    const descriptor = Object.getOwnPropertyDescriptor(
+      trace.events,
+      String(index),
+    );
+    const rawEvent =
+      descriptor && "value" in descriptor ? descriptor.value : null;
+    if (!rawEvent || typeof rawEvent !== "object" || Array.isArray(rawEvent)) {
+      violations.add("event_unrecognized", index);
+      return null;
+    }
+    const kindDescriptor = Object.getOwnPropertyDescriptor(rawEvent, "kind");
+    const kind =
+      kindDescriptor && "value" in kindDescriptor
+        ? kindDescriptor.value
+        : undefined;
+    if (
+      typeof kind !== "string" ||
+      kind.length > 32 ||
+      !KNOWN_KINDS.has(kind)
+    ) {
+      // Unknown/forbidden semantics deny without inspecting any accompanying payload.
+      violations.add(
+        typeof kind === "string" && FORBIDDEN_KINDS.has(kind)
+          ? "forbidden_event"
+          : "event_unrecognized",
+        index,
+      );
+      return null;
+    }
+    const record = dataRecord(rawEvent, EVENT_KEYS[kind]);
+    if (!record) {
+      violations.add("event_malformed", index);
+      return null;
+    }
+    for (const key in record) {
+      const value = record[key];
+      if (key === "answers") {
+        if (
+          !Array.isArray(value) ||
+          value.length > BROWSER_LIMITS.maxResolvedAnswers ||
+          Object.getPrototypeOf(value) !== Array.prototype
+        ) {
+          violations.add("address_evidence_invalid", index);
+          return null;
+        }
+        const answers: unknown[] = [];
+        for (let i = 0; i < value.length; i++) {
+          const entry = Object.getOwnPropertyDescriptor(value, String(i));
+          const answer = dataRecord(
+            entry && "value" in entry ? entry.value : null,
+            ["address", "family"],
+          );
+          if (
+            !answer ||
+            typeof answer.address !== "string" ||
+            answer.address.length > 45 ||
+            typeof answer.family !== "number"
+          ) {
+            violations.add("address_evidence_invalid", index);
+            return null;
+          }
+          answers.push(answer);
+        }
+        record[key] = answers;
+      } else if (typeof value === "string") {
+        const limit =
+          key === "data"
+            ? MAX_SCREENSHOT_B64_CHARS
+            : key === "text"
+              ? BROWSER_LIMITS.extractionBytes
+              : key === "url"
+                ? BROWSER_LIMITS.maxEventUrlChars
+                : key === "hostname"
+                  ? BROWSER_LIMITS.maxHostnameChars
+                  : key === "address"
+                    ? 45
+                    : 32;
+        if (value.length > limit) {
+          violations.add(
+            key === "data"
+              ? "screenshot_too_large"
+              : key === "text"
+                ? "extraction_too_large"
+                : "event_malformed",
+            index,
+          );
+          return null;
+        }
+        if (value.length > BROWSER_LIMITS.maxTraceBytes - bytes) {
+          violations.add("trace_too_large");
+          return null;
+        }
+      } else if (typeof value !== "number" || !Number.isFinite(value)) {
+        violations.add("event_malformed", index);
+        return null;
+      }
+    }
+    bytes +=
+      Buffer.byteLength(JSON.stringify(record), "utf8") + (index ? 1 : 0);
+    if (bytes > BROWSER_LIMITS.maxTraceBytes) {
+      violations.add("trace_too_large");
+      return null;
+    }
+    events.push(record);
+  }
+  return events;
+}
+
 function isSafeTime(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value);
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
 /**
@@ -225,6 +404,7 @@ export function evaluateBrowserTrace(
   intent: BrowserIntent,
   raw: unknown,
 ): BrowserTraceDiagnostic {
+  const intentFingerprint = browserIntentFingerprint(intent);
   const violations = createViolations();
   const counts = {
     events: 0,
@@ -239,42 +419,10 @@ export function evaluateBrowserTrace(
     distinctHosts: 0,
   };
 
-  let events: readonly unknown[];
-  let wholesaleRejected = false;
-  if (
-    !raw ||
-    typeof raw !== "object" ||
-    Array.isArray(raw) ||
-    !Array.isArray((raw as { events?: unknown }).events)
-  ) {
-    violations.add("trace_unparseable");
-    wholesaleRejected = true;
-    events = [];
-  } else {
-    events = (raw as { events: readonly unknown[] }).events;
-    if (events.length > BROWSER_LIMITS.maxTraceEvents) {
-      // Bound before any iteration or serialization of the events.
-      violations.add("trace_event_overflow");
-      wholesaleRejected = true;
-      events = [];
-    } else {
-      let totalBytes: number | null = null;
-      try {
-        totalBytes = Buffer.byteLength(JSON.stringify(raw) ?? "", "utf8");
-      } catch {
-        totalBytes = null;
-      }
-      if (totalBytes === null) {
-        violations.add("trace_unparseable");
-        wholesaleRejected = true;
-        events = [];
-      } else if (totalBytes > BROWSER_LIMITS.maxTraceBytes) {
-        violations.add("trace_too_large");
-        wholesaleRejected = true;
-        events = [];
-      }
-    }
-  }
+  const snapshot = traceSnapshot(raw, violations);
+  const wholesaleRejected = snapshot === null;
+  const events = snapshot ?? [];
+  let currentPage: string | null = null;
 
   let lastAt: number | null = null;
   let deadline: number | null = null;
@@ -326,12 +474,26 @@ export function evaluateBrowserTrace(
         violations.add("extra_session", index);
         continue;
       }
+      if (record.at > Number.MAX_SAFE_INTEGER - BROWSER_LIMITS.totalMs) {
+        violations.add("event_malformed", index);
+        continue;
+      }
       deadline = record.at + BROWSER_LIMITS.totalMs;
       continue;
     }
 
+    if (sessions !== 1) {
+      violations.add("missing_session", index);
+      continue;
+    }
+
     if (kind === "resolved") {
-      const hostname = checkHostname(record.hostname, index, violations);
+      const hostname = checkHostname(
+        record.hostname,
+        intent,
+        index,
+        violations,
+      );
       if (hostname === undefined) continue;
       if (
         !Array.isArray(record.answers) ||
@@ -361,13 +523,18 @@ export function evaluateBrowserTrace(
         if (!same) violations.add("address_rebinding", index);
         continue;
       }
-      hosts.set(hostname, { answers, connected: false });
+      hosts.set(hostname, { answers, connected: null });
       counts.distinctHosts = hosts.size;
       continue;
     }
 
     if (kind === "connected") {
-      const hostname = checkHostname(record.hostname, index, violations);
+      const hostname = checkHostname(
+        record.hostname,
+        intent,
+        index,
+        violations,
+      );
       if (hostname === undefined) continue;
       const checked = publicAnswer(record, index, violations);
       if (!checked) continue;
@@ -380,7 +547,11 @@ export function evaluateBrowserTrace(
         violations.add("address_rebinding", index);
         continue;
       }
-      evidence.connected = true;
+      if (evidence.connected && evidence.connected !== checked.address) {
+        violations.add("address_rebinding", index);
+        continue;
+      }
+      evidence.connected = checked.address;
       continue;
     }
 
@@ -389,17 +560,17 @@ export function evaluateBrowserTrace(
         violations.add("method_not_get", index);
         continue;
       }
-      if (kind === "navigate") {
+      if (kind === "navigate" || kind === "redirect") {
         navigations++;
         counts.navigations = navigations;
         if (navigations > BROWSER_LIMITS.maxNavigations) {
           violations.add("navigation_exhausted", index);
         }
-      } else if (kind === "redirect") {
-        counts.redirects++;
-      } else {
-        counts.subresources++;
       }
+      if (kind === "redirect") counts.redirects++;
+      if (kind === "subresource") counts.subresources++;
+      if (kind !== "navigate" && currentPage === null)
+        violations.add("page_not_navigated", index);
       // Only navigations and payload actions are user-level actions;
       // redirects and subresources are observational events.
       if (kind === "navigate") {
@@ -422,6 +593,8 @@ export function evaluateBrowserTrace(
         // Every network destination needs resolved + connected evidence.
         if (!hosts.get(host)?.connected)
           violations.add("address_evidence_missing", index);
+        else if (kind === "navigate" || kind === "redirect")
+          currentPage = record.url as string;
       }
       continue;
     }
@@ -432,6 +605,8 @@ export function evaluateBrowserTrace(
         violations.add("action_exhausted", index);
       }
       checkTraceUrl(record.url, intent, index, violations);
+      if (currentPage === null || record.url !== currentPage)
+        violations.add("page_not_navigated", index);
       if (kind === "extract-text") counts.extractions++;
       else counts.screenshots++;
       const claimed = record.claimedBytes;
@@ -504,7 +679,7 @@ export function evaluateBrowserTrace(
     unreportedTraffic: "not-observable",
     accepted: violations.list.length === 0 && sessions === 1,
     actionRevision: BROWSER_INTENT_REVISION,
-    intentFingerprint: browserIntentFingerprint(intent),
+    intentFingerprint,
     counts: Object.freeze({ ...counts }),
     violations: Object.freeze([...violations.list]),
   });

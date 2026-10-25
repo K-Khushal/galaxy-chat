@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { isIP } from "node:net";
 import { BrokerError } from "../../services/mcp-egress/src/errors.js";
 import { endpoint } from "../../services/mcp-egress/src/profile";
 
@@ -60,6 +59,8 @@ export type BrowserOriginRule = Readonly<{
  * listing both spellings explicitly, which the exactness rules make
  * indistinguishable-by-spelling impossible.
  */
+const parsedIntents = new WeakMap<object, string>();
+
 export type BrowserIntent = Readonly<{
   actionRevision: typeof BROWSER_INTENT_REVISION;
   initialUrl: string;
@@ -99,6 +100,7 @@ export const BROWSER_VIOLATION_CODES = [
   "screenshot_too_large",
   "claimed_bytes_mismatch",
   "payload_unparseable",
+  "page_not_navigated",
 ] as const;
 export type BrowserViolationCode = (typeof BROWSER_VIOLATION_CODES)[number];
 
@@ -188,9 +190,36 @@ function strictKeys(
   keys: readonly string[],
 ): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) reject();
+  if (
+    Object.getPrototypeOf(value) !== Object.prototype &&
+    Object.getPrototypeOf(value) !== null
+  )
+    reject();
   const record = value as Record<string, unknown>;
-  for (const key of Object.keys(record)) if (!keys.includes(key)) reject();
-  return record;
+  let count = 0;
+  for (const key in record) {
+    if (
+      !Object.hasOwn(record, key) ||
+      ++count > keys.length ||
+      !keys.includes(key)
+    )
+      reject();
+    const descriptor = Object.getOwnPropertyDescriptor(record, key);
+    if (!descriptor || !("value" in descriptor)) reject();
+  }
+  const copy: Record<string, unknown> = {};
+  for (const key of keys) {
+    const descriptor = Object.getOwnPropertyDescriptor(record, key);
+    if (!descriptor || !("value" in descriptor)) reject();
+    copy[key] = descriptor.value;
+  }
+  return copy;
+}
+
+function arrayEntry(value: readonly unknown[], index: number): unknown {
+  const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+  if (!descriptor || !("value" in descriptor)) reject();
+  return descriptor.value;
 }
 
 function boundedString(value: unknown, max: number): string {
@@ -264,12 +293,13 @@ function parseOriginRule(raw: unknown): BrowserOriginRule {
   const origin = parseHostOrigin(record.origin);
   if (
     !Array.isArray(record.paths) ||
+    Object.getPrototypeOf(record.paths) !== Array.prototype ||
     record.paths.length > BROWSER_LIMITS.pathsPerOrigin
   )
     reject();
   const paths: string[] = [];
-  for (const entry of record.paths) {
-    const path = parseReviewedPath(entry);
+  for (let i = 0; i < record.paths.length; i++) {
+    const path = parseReviewedPath(arrayEntry(record.paths, i));
     if (paths.includes(path)) reject();
     paths.push(path);
   }
@@ -279,10 +309,12 @@ function parseOriginRule(raw: unknown): BrowserOriginRule {
 function exactActions(value: unknown): readonly BrowserAction[] {
   if (
     !Array.isArray(value) ||
-    value.length !== BROWSER_ACTIONS.length ||
-    value.some((action, index) => action !== BROWSER_ACTIONS[index])
+    Object.getPrototypeOf(value) !== Array.prototype ||
+    value.length !== BROWSER_ACTIONS.length
   )
     reject();
+  for (let i = 0; i < BROWSER_ACTIONS.length; i++)
+    if (arrayEntry(value, i) !== BROWSER_ACTIONS[i]) reject();
   return Object.freeze([...BROWSER_ACTIONS]);
 }
 
@@ -313,13 +345,14 @@ export function parseBrowserIntent(raw: unknown): BrowserIntent {
   const { origin, path } = parseExactUrl(record.initialUrl);
   if (
     !Array.isArray(record.allowlist) ||
+    Object.getPrototypeOf(record.allowlist) !== Array.prototype ||
     record.allowlist.length > BROWSER_LIMITS.allowlistOrigins
   )
     reject();
   const seenOrigins = new Set<string>();
   const allowlist: BrowserOriginRule[] = [];
-  for (const entry of record.allowlist) {
-    const rule = parseOriginRule(entry);
+  for (let i = 0; i < record.allowlist.length; i++) {
+    const rule = parseOriginRule(arrayEntry(record.allowlist, i));
     if (seenOrigins.has(rule.origin)) reject();
     seenOrigins.add(rule.origin);
     allowlist.push(rule);
@@ -342,7 +375,12 @@ export function parseBrowserIntent(raw: unknown): BrowserIntent {
     maxActions: BROWSER_LIMITS.maxActions,
     totalMs: BROWSER_LIMITS.totalMs,
   });
-  return deepFreeze(intent);
+  deepFreeze(intent);
+  parsedIntents.set(
+    intent,
+    createHash("sha256").update(canonicalJson(intent)).digest("hex"),
+  );
+  return intent;
 }
 
 /** Exact allowlist membership. GET never widens this and never implies safety. */
@@ -351,6 +389,7 @@ export function browserAllowlistAllows(
   origin: string,
   path: string,
 ): boolean {
+  browserIntentFingerprint(intent);
   return intent.allowlist.some(
     (rule) => rule.origin === origin && rule.paths.includes(path),
   );
@@ -381,11 +420,9 @@ function canonicalJson(value: unknown): string {
 
 /** Stable SHA-256 content fingerprint over the normalized intent. */
 export function browserIntentFingerprint(intent: BrowserIntent): string {
-  return createHash("sha256").update(canonicalJson(intent)).digest("hex");
-}
-
-export function isIpLiteral(host: string): boolean {
-  return isIP(host) !== 0 || (host.startsWith("[") && host.endsWith("]"));
+  const fingerprint = parsedIntents.get(intent);
+  if (!fingerprint) reject();
+  return fingerprint;
 }
 
 function deepFreeze<T>(value: T): T {
