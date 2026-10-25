@@ -23,7 +23,12 @@ import {
 import { AppError } from "@/lib/errors";
 import { ImageStore } from "@/lib/images/store";
 import { JobStore } from "@/lib/jobs/store";
+import { createMcpCatalogStore } from "@/lib/mcp/catalog-store";
+import { createMcpExecutionStore } from "@/lib/mcp/execution-store";
+import { createMcpOAuthStore } from "@/lib/mcp/oauth-store";
+import { createMcpOperationStore } from "@/lib/mcp/operation-store";
 import { McpRegistryStore } from "@/lib/mcp/registry-store";
+import { SandboxStore } from "@/lib/sandbox/store";
 import { SearchStore } from "@/lib/search/store";
 import { ToolStore } from "@/lib/tools/store";
 
@@ -38,6 +43,7 @@ export type AccountProfile = {
 export type AccountExport = {
   profile: AccountProfile;
   jobs: Awaited<ReturnType<JobStore["export"]>>;
+  sandboxOperations: Awaited<ReturnType<SandboxStore["exportOperations"]>>;
   imageData: Awaited<ReturnType<ImageStore["export"]>>;
   toolData: Awaited<ReturnType<ToolStore["export"]>>;
   attachments: Array<AttachmentView & { extractedText: string }>;
@@ -47,7 +53,19 @@ export type AccountExport = {
   projects: Array<typeof project.$inferSelect>;
   providerCredentials: CredentialView[];
   searchCredentials: Awaited<ReturnType<SearchStore["credentials"]>>;
+  mcpOAuthGrants: Awaited<
+    ReturnType<ReturnType<typeof createMcpOAuthStore>["metadata"]>
+  >;
   mcpConnections: Awaited<ReturnType<McpRegistryStore["export"]>>;
+  mcpCatalogs: Awaited<
+    ReturnType<ReturnType<typeof createMcpCatalogStore>["export"]>
+  >;
+  mcpRuntime: Awaited<
+    ReturnType<ReturnType<typeof createMcpExecutionStore>["exportMetadata"]>
+  >;
+  mcpOperations: Awaited<
+    ReturnType<ReturnType<typeof createMcpOperationStore>["export"]>
+  >;
   byokOperations: Array<{
     id: string;
     provider: string;
@@ -174,6 +192,12 @@ export async function exportOwnedAccount(
   const providerCredentials = await new ByokStore(db).credentials(userId);
   const searchCredentials = await new SearchStore(db).credentials(userId);
   const mcpConnections = await new McpRegistryStore(db).export(userId);
+  const mcpCatalogs = await createMcpCatalogStore({ db }).export(userId);
+  const mcpOAuthGrants = await createMcpOAuthStore({ db }).metadata(userId);
+  const mcpOperations = await createMcpOperationStore({ db }).export(userId);
+  const mcpRuntime = await createMcpExecutionStore({ db }).exportMetadata(
+    userId,
+  );
   let actor: string | undefined;
   try {
     actor = resourceActor(userId, process.env);
@@ -207,6 +231,7 @@ export async function exportOwnedAccount(
   }));
   return {
     profile,
+    sandboxOperations: await new SandboxStore(db).exportOperations(userId),
     jobs,
     toolData,
     imageData,
@@ -223,6 +248,10 @@ export async function exportOwnedAccount(
     providerCredentials,
     searchCredentials,
     mcpConnections,
+    mcpCatalogs,
+    mcpOAuthGrants,
+    mcpOperations,
+    mcpRuntime,
     byokOperations,
   };
 }

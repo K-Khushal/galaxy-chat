@@ -157,6 +157,11 @@ beforeAll(async () => {
     "0015_platform_budget",
     "0016_credit_reservation_plan_binding",
     "0017_durable_jobs",
+    "0018_mcp_operations",
+    "0019_mcp_catalog_actions",
+    "0020_mcp_oauth_state",
+    "0021_mcp_execution",
+    "0022_sandbox_execution",
   ]);
 
   await db
