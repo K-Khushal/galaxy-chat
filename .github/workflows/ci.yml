@@ -25,6 +25,6 @@ jobs:
       - run: bun run typecheck
       - run: npm --prefix services/mcp-egress run check
       - run: npm --prefix services/mcp-egress run test
-      - run: bun run test:native-postgres
+      - run: bun run --no-env-file test:native-postgres
       - run: bun test
       - run: bun run build

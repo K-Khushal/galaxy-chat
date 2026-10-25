@@ -13,7 +13,7 @@
     "format": "biome format --write",
     "typecheck": "tsc --noEmit --pretty false --incremental false",
     "test": "bun test",
-    "test:native-postgres": "bun scripts/test-native-postgres.ts",
+    "test:native-postgres": "bun --no-env-file scripts/test-native-postgres.ts",
     "f01:integrity": "node scripts/f01-vendor-integrity.mjs",
     "f01:preview": "bun scripts/f01-preview.ts",
     "db:migrate": "bun scripts/db-migrate.ts",

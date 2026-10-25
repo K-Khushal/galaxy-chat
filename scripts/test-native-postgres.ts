@@ -1,723 +1,528 @@
-/**
- * Native PostgreSQL verification harness (issue #63).
- *
- * Provisions a disposable, private PostgreSQL cluster on 127.0.0.1 from
- * already-installed server binaries, runs the existing
- * tests/f10-f11-postgres.test.ts unskipped against it, and tears the cluster
- * down on every exit path. It proves nothing on its own: the acceptance
- * evidence is the bun test run below (1 pass / 0 skip with real
- * pg_blocking_pids lock waits). If PostgreSQL server binaries are not
- * installed, this command fails loudly and nonzero; it never falls back to
- * PGlite or reports a mocked success.
- *
- * Hard guarantees:
- * - Only binaries discovered via `pg_config --bindir` or a short fallback
- *   list are used. Nothing is installed; no machine-wide service is started,
- *   stopped, or contacted; no sudo; no processes are killed by name.
- * - The cluster is a brand-new initdb data directory under a 0700 random
- *   temp dir, bound to literal 127.0.0.1 on a dynamically selected port with
- *   a bounded retry, private socket dir and private log path. Credentials
- *   are synthetic and generated here; no DATABASE_URL, Supabase project,
- *   .env file, or persisted credential is ever read or forwarded.
- * - The bun test child runs with an allowlisted environment and Bun's
- *   documented `--no-env-file` flag, so automatic .env loading is disabled
- *   and only PATH/HOME/TMPDIR/locale variables plus F10_F11_POSTGRES_URL are
- *   visible to the test. Passwords and connection strings are never logged.
- * - On success, assertion failure, spawn failure, timeout, SIGINT or
- *   SIGTERM: wait for the test child, stop this cluster (fast, then
- *   immediate), verify it is no longer listening and its postmaster PID is
- *   gone, and remove only its own temp directory. Any teardown failure turns
- *   the command nonzero. Subprocesses are spawned via argv arrays only.
- */
+/** Disposable native verification only. Never installs binaries or uses an
+ * external database. One cancellation path, one awaited teardown; postgres is
+ * an owned foreground child rather than a detached pg_ctl-managed daemon. */
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import {
   accessSync,
+  chmodSync,
+  constants,
   existsSync,
-  constants as fsConstants,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { connect } from "node:net";
+import { connect, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 const REPO_ROOT = resolve(import.meta.dir, "..");
 const TEST_FILE = "tests/f10-f11-postgres.test.ts";
 const TEST_NAME = "F10/F11 native concurrent artifact FK";
-const REQUIRED_BINARIES = ["initdb", "pg_ctl", "postgres"] as const;
-
-const INITDB_TIMEOUT_MS = 120_000;
-const START_TIMEOUT_MS = 90_000;
-const CHILD_TIMEOUT_MS = 300_000;
-const CHILD_KILL_GRACE_MS = 10_000;
-const LISTEN_VERIFY_TIMEOUT_MS = 20_000;
-const STOP_TIMEOUT_MS = 60_000;
-const PORT_ATTEMPTS = 8;
-
-type BinarySet = {
-  bindir: string;
-  initdb: string;
-  pg_ctl: string;
-  postgres: string;
-};
-
-type ToolResult = {
-  exitCode: number | null;
-  stdout: string;
-  stderr: string;
-  timedOut: boolean;
-};
-
-function log(message: string): void {
+const cancel = new AbortController();
+const owned = new Set<OwnedProcess>();
+const secrets: string[] = [];
+let signalCode = 1;
+const log = (message: string) =>
   process.stdout.write(`[native-postgres] ${message}\n`);
-}
-
-function fail(message: string): void {
-  process.stderr.write(`[native-postgres] ERROR: ${message}\n`);
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
-}
-
-/** In-flight tool children so a signal never orphans initdb/pg_ctl/postgres. */
-const activeToolChildren = new Set<ChildProcess>();
-
-/** Spawn a tool via argv (never a shell) with a finite timeout. */
-function runTool(
-  command: readonly string[],
-  options: { timeoutMs: number },
-): Promise<ToolResult> {
-  const [file, ...args] = command;
-  if (!file) {
-    return Promise.resolve({
-      exitCode: null,
-      stdout: "",
-      stderr: "",
-      timedOut: false,
-    });
-  }
-  return new Promise((resolvePromise) => {
-    let stdout = "";
-    let stderr = "";
-    let timedOut = false;
-    let finished = false;
-    const child: ChildProcess = spawn(file, args, {
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    activeToolChildren.add(child);
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGTERM");
-      setTimeout(() => {
-        if (!finished) child.kill("SIGKILL");
-      }, 5_000);
-    }, options.timeoutMs);
-    child.stdout?.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString();
-    });
-    child.stderr?.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
-    });
-    const finish = (exitCode: number | null): void => {
-      if (finished) return;
-      finished = true;
-      clearTimeout(timer);
-      activeToolChildren.delete(child);
-      resolvePromise({ exitCode, stdout, stderr, timedOut });
-    };
-    child.on("error", (error: NodeJS.ErrnoException) => {
-      fail(`failed to spawn ${command[0]}: ${error.message}`);
-      finish(null);
-    });
-    child.on("close", (exitCode) => finish(exitCode));
-  });
-}
-
-function processAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM";
-  }
-}
-
-/** True when a TCP connection to host:port succeeds within the timeout. */
-function tcpConnects(
-  host: string,
-  port: number,
-  timeoutMs: number,
-): Promise<boolean> {
-  return new Promise((resolvePromise) => {
-    const socket = connect({ host, port });
-    const done = (result: boolean): void => {
-      socket.destroy();
-      resolvePromise(result);
-    };
-    socket.setTimeout(timeoutMs, () => done(false));
-    socket.once("connect", () => done(true));
-    socket.once("error", () => done(false));
-  });
-}
-
-async function waitListening(
-  host: string,
-  port: number,
-  deadlineMs: number,
-): Promise<void> {
-  const deadline = Date.now() + deadlineMs;
-  while (Date.now() < deadline) {
-    if (await tcpConnects(host, port, 1_000)) return;
-    await sleep(200);
-  }
-  throw new Error(
-    `cluster did not accept connections on ${host}:${port} within ${deadlineMs}ms`,
+function sanitized(value: string): string {
+  let result = value;
+  for (const secret of secrets)
+    result = result.replaceAll(secret, "[redacted]");
+  return result.replace(
+    /postgres(?:ql)?:\/\/[^\s'"<>]+/gi,
+    "[redacted database URL]",
   );
 }
+const fail = (message: string) =>
+  process.stderr.write(`[native-postgres] ERROR: ${sanitized(message)}\n`);
+function checkCancelled() {
+  if (cancel.signal.aborted) throw new Error("verification_cancelled");
+}
+function environment(root?: string): NodeJS.ProcessEnv {
+  return {
+    PATH: process.env.PATH || "/usr/bin:/bin",
+    LANG: "C",
+    LC_ALL: "C",
+    NODE_ENV: "test",
+    ...(root ? { HOME: join(root, "home"), TMPDIR: root } : {}),
+  };
+}
+function delay(ms: number) {
+  return new Promise<void>((resolvePromise) => setTimeout(resolvePromise, ms));
+}
+type Result = { exitCode: number | null; output: string; stdout: string };
 
-function executable(path: string): boolean {
+/** All subprocesses have an owned process group, bounded output and a close
+ * promise installed synchronously at spawn. No ambient PG/loader settings. */
+class OwnedProcess {
+  readonly child: ChildProcess;
+  readonly done: Promise<Result>;
+  readonly pid: number | undefined;
+  closed = false;
+  overflow = false;
+  output = "";
+  stdout = "";
+  private onOverflow: () => void = () => {};
+  readonly limitReached = new Promise<null>((resolvePromise) => {
+    this.onOverflow = () => resolvePromise(null);
+  });
+  constructor(
+    argv: readonly string[],
+    env: NodeJS.ProcessEnv,
+    cwd: string,
+    limit = 65_536,
+  ) {
+    const [file, ...args] = argv;
+    if (!file) throw new Error("empty_verification_command");
+    this.child = spawn(file, args, {
+      cwd,
+      env,
+      detached: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    this.pid = this.child.pid;
+    owned.add(this);
+    this.done = new Promise((resolvePromise) => {
+      let bytes = 0;
+      const capture = (chunk: Buffer, stdout: boolean) => {
+        bytes += chunk.byteLength;
+        if (bytes > limit) {
+          this.overflow = true;
+          this.signal("SIGTERM");
+          this.onOverflow();
+          return;
+        }
+        const text = chunk.toString();
+        this.output += text;
+        if (stdout) this.stdout += text;
+      };
+      this.child.stdout?.on("data", (chunk) => capture(chunk, true));
+      this.child.stderr?.on("data", (chunk) => capture(chunk, false));
+      const finish = (exitCode: number | null) => {
+        if (this.closed) return;
+        this.closed = true;
+        owned.delete(this);
+        resolvePromise({ exitCode, output: this.output, stdout: this.stdout });
+      };
+      this.child.once("error", () => {
+        if (this.pid === undefined) finish(null);
+      });
+      this.child.once("close", (exitCode) => finish(exitCode));
+    });
+  }
+  signal(signal: NodeJS.Signals) {
+    if (this.closed || this.pid === undefined) return;
+    try {
+      process.kill(-this.pid, signal);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+    }
+  }
+}
+async function waitClosed(
+  child: OwnedProcess,
+  ms: number,
+): Promise<Result | null> {
+  return new Promise((resolvePromise) => {
+    const timer = setTimeout(() => resolvePromise(null), ms);
+    void child.done.then((result) => {
+      clearTimeout(timer);
+      resolvePromise(result);
+    });
+  });
+}
+async function stop(child: OwnedProcess, first: NodeJS.Signals = "SIGTERM") {
+  if (child.closed) return;
+  child.signal(first);
+  if (await waitClosed(child, 10_000)) return;
+  child.signal(first === "SIGINT" ? "SIGQUIT" : "SIGKILL");
+  if (await waitClosed(child, 5_000)) return;
+  child.signal("SIGKILL");
+  if (!(await waitClosed(child, 5_000)))
+    throw new Error("owned_process_did_not_exit");
+}
+async function command(
+  argv: readonly string[],
+  env: NodeJS.ProcessEnv,
+  cwd: string,
+  timeoutMs: number,
+  limit?: number,
+): Promise<Result> {
+  checkCancelled();
+  const child = new OwnedProcess(argv, env, cwd, limit);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let abort: (() => void) | undefined;
   try {
-    if (!statSync(path).isFile()) return false;
-    accessSync(path, fsConstants.X_OK);
-    return true;
+    const interrupted = new Promise<null>((resolvePromise) => {
+      abort = () => resolvePromise(null);
+      cancel.signal.addEventListener("abort", abort, { once: true });
+      if (cancel.signal.aborted) abort();
+      timer = setTimeout(() => resolvePromise(null), timeoutMs);
+    });
+    const result = await Promise.race([
+      child.done,
+      interrupted,
+      child.limitReached,
+    ]);
+    if (!result || child.overflow) {
+      await stop(child);
+      throw new Error(
+        cancel.signal.aborted
+          ? "verification_cancelled"
+          : child.overflow
+            ? "verification_output_limit"
+            : "verification_command_timeout",
+      );
+    }
+    checkCancelled();
+    return result;
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (abort) cancel.signal.removeEventListener("abort", abort);
+    if (!child.closed) await stop(child);
+  }
+}
+function executable(path: string) {
+  try {
+    accessSync(path, constants.X_OK);
+    return statSync(path).isFile();
   } catch {
     return false;
   }
 }
-
-function subdirectories(parent: string): string[] {
+function children(parent: string, prefix = ""): string[] {
   try {
     return readdirSync(parent, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => join(parent, entry.name));
+      .filter(
+        (e) =>
+          (e.isDirectory() || e.isSymbolicLink()) && e.name.startsWith(prefix),
+      )
+      .map((e) => join(parent, e.name));
   } catch {
     return [];
   }
 }
-
-/** Documented discovery order; see docs/operations/native-postgres.md. */
-async function candidateBindirs(): Promise<string[]> {
-  const dirs: string[] = [];
-  const pgConfig = await runTool(["pg_config", "--bindir"], {
-    timeoutMs: 10_000,
-  });
-  if (pgConfig.exitCode === 0) {
-    const bindir = pgConfig.stdout.trim();
-    if (bindir) dirs.push(bindir);
-  }
-  dirs.push(
-    ...subdirectories("/usr/lib/postgresql")
-      .map((dir) => join(dir, "bin"))
+async function binaries() {
+  const pg = await command(
+    ["pg_config", "--bindir"],
+    environment(),
+    REPO_ROOT,
+    10_000,
+  );
+  const candidates = [
+    ...(pg.exitCode === 0 ? [pg.stdout.trim()] : []),
+    ...children("/usr/lib/postgresql")
       .sort()
-      .reverse(),
-  );
-  dirs.push(
-    ...subdirectories("/usr/pgsql-")
-      .map((dir) => join(dir, "bin"))
+      .reverse()
+      .map((p) => join(p, "bin")),
+    ...children("/usr", "pgsql-")
       .sort()
-      .reverse(),
-  );
-  dirs.push(
-    ...subdirectories("/opt/homebrew/opt").filter((dir) =>
-      dir.includes("postgresql"),
-    ),
-  );
-  dirs.push("/opt/homebrew/bin", "/usr/local/bin");
-  dirs.push(
-    ...subdirectories("/usr/local/opt").filter((dir) =>
-      dir.includes("postgresql"),
-    ),
-  );
-  return dirs;
-}
-
-async function findBinaries(): Promise<BinarySet> {
-  const searched: string[] = [];
-  for (const dir of await candidateBindirs()) {
-    if (!existsSync(dir)) continue;
-    searched.push(dir);
-    if (REQUIRED_BINARIES.every((binary) => executable(join(dir, binary)))) {
+      .reverse()
+      .map((p) => join(p, "bin")),
+    ...children("/opt/homebrew/opt", "postgresql").map((p) => join(p, "bin")),
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    ...children("/usr/local/opt", "postgresql").map((p) => join(p, "bin")),
+  ];
+  for (const directory of candidates) {
+    checkCancelled();
+    if (
+      directory &&
+      ["initdb", "postgres"].every((name) => executable(join(directory, name)))
+    )
       return {
-        bindir: dir,
-        initdb: join(dir, "initdb"),
-        pg_ctl: join(dir, "pg_ctl"),
-        postgres: join(dir, "postgres"),
+        initdb: join(directory, "initdb"),
+        postgres: join(directory, "postgres"),
+        directory,
       };
-    }
   }
   throw new Error(
-    "no usable PostgreSQL server binaries found (need initdb, pg_ctl and " +
-      "postgres from one installation). Searched: pg_config --bindir, " +
-      "/usr/lib/postgresql/*/bin, /usr/pgsql-*/bin, " +
-      "/opt/homebrew/opt/postgresql*/bin, /opt/homebrew/bin, /usr/local/bin, " +
-      `/usr/local/opt/postgresql*/bin. Visited: ${
-        searched.length > 0 ? searched.join(", ") : "none"
-      }. ` +
-      "This command never installs packages, never substitutes PGlite, and " +
-      "never reports a mocked success: on machines without PostgreSQL server " +
-      "binaries the native case stays unproven and CI's dedicated " +
-      "test:native-postgres step (ubuntu-24.04, PostgreSQL 16 preinstalled) " +
-      "carries the proof.",
+    "native_postgres_binaries_unavailable: need installed initdb and postgres; no install, skip or PGlite substitution is performed",
   );
 }
-
+async function candidatePort(): Promise<number> {
+  checkCancelled();
+  return new Promise((resolvePromise, reject) => {
+    const server = createServer();
+    server.once("error", () =>
+      reject(new Error("native_port_allocation_failed")),
+    );
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      server.close((error) => {
+        if (error || !address || typeof address === "string")
+          reject(new Error("native_port_allocation_failed"));
+        else resolvePromise(address.port);
+      });
+    });
+  });
+}
+function tcpConnects(port: number): Promise<boolean> {
+  return new Promise((resolvePromise) => {
+    const socket = connect({ host: "127.0.0.1", port });
+    let finished = false;
+    const done = (result: boolean) => {
+      if (finished) return;
+      finished = true;
+      socket.destroy();
+      resolvePromise(result);
+    };
+    socket.setTimeout(1000, () => done(false));
+    socket.once("connect", () => done(true));
+    socket.once("error", () => done(false));
+  });
+}
 type Cluster = {
   root: string;
-  dataDir: string;
-  socketDir: string;
-  logPath: string;
-  pid: number | null;
+  data: string;
+  sockets: string;
+  log: string;
+  server: OwnedProcess | null;
   port: number | null;
-  testChild: ChildProcess | null;
+  ready: boolean;
 };
-
-function createTempRoot(): {
-  root: string;
-  dataDir: string;
-  socketDir: string;
-  logPath: string;
-} {
-  const root = mkdtempSync(join(tmpdir(), "galaxy-native-pg-"));
-  const dataDir = join(root, "data");
-  const socketDir = join(root, "socket");
-  const logPath = join(root, "postgres.log");
-  mkdirSync(socketDir, { recursive: true, mode: 0o700 });
-  return { root, dataDir, socketDir, logPath };
+function configString(value: string) {
+  return `'${value.replaceAll("\\", "\\\\").replaceAll("'", "''")}'`;
 }
-
-/** Fresh ephemeral candidate port from the OS, before the server binds. */
-function candidatePort(): number {
-  const port = 20_000 + (randomBytes(2).readUInt16BE(0) % 40_000);
-  return port;
-}
-
-async function initCluster(
-  binaries: BinarySet,
-  cluster: Cluster,
-  dbUser: string,
-  dbPassword: string,
-): Promise<void> {
-  const pwFile = join(cluster.root, "pwfile");
-  writeFileSync(pwFile, `${dbPassword}\n`, { mode: 0o600 });
-  const initdb = await runTool(
-    [
-      binaries.initdb,
-      "-D",
-      cluster.dataDir,
-      "-U",
-      dbUser,
-      "-A",
-      "scram-sha-256",
-      "--pwfile",
-      pwFile,
-      "-E",
-      "UTF8",
-      "--no-instructions",
-      "--no-sync",
-    ],
-    { timeoutMs: INITDB_TIMEOUT_MS },
-  );
-  unlinkSync(pwFile);
-  if (initdb.exitCode !== 0) {
-    throw new Error(
-      `initdb failed (exit ${initdb.exitCode}${initdb.timedOut ? ", timed out" : ""})`,
-    );
-  }
-  log("new cluster initialized in private temp directory");
-}
-
 async function startCluster(
-  binaries: BinarySet,
+  bin: Awaited<ReturnType<typeof binaries>>,
   cluster: Cluster,
-): Promise<number> {
-  let lastFailure = "no attempt made";
-  for (let attempt = 1; attempt <= PORT_ATTEMPTS; attempt++) {
-    const port = candidatePort();
-    const serverOptions = [
-      "-c listen_addresses=127.0.0.1",
-      `-c port=${port}`,
-      `-c unix_socket_directories=${cluster.socketDir}`,
-      "-c fsync=off",
-      "-c synchronous_commit=off",
-      "-c full_page_writes=off",
-    ].join(" ");
-    const start = await runTool(
-      [
-        binaries.pg_ctl,
-        "-D",
-        cluster.dataDir,
-        "-l",
-        cluster.logPath,
-        "-w",
-        "-t",
-        "60",
-        "start",
-        "-o",
-        serverOptions,
-      ],
-      { timeoutMs: START_TIMEOUT_MS },
+) {
+  for (let attempt = 0; attempt < 8; attempt++) {
+    checkCancelled();
+    const port = await candidatePort();
+    checkCancelled();
+    // Config file values avoid pg_ctl -o's shell-parsed option string, including
+    // when a private temp path contains spaces or shell punctuation.
+    writeFileSync(
+      join(cluster.data, "postgresql.auto.conf"),
+      `listen_addresses = '127.0.0.1'\nport = ${port}\nunix_socket_directories = ${configString(cluster.sockets)}\nlogging_collector = off\n`,
+      { mode: 0o600 },
     );
-    if (start.exitCode === 0) {
-      cluster.port = port;
-      const pidFile = join(cluster.dataDir, "postmaster.pid");
-      const pid = Number(readFileSync(pidFile, "utf8").split("\n")[0]);
-      if (!Number.isInteger(pid) || pid <= 1) {
-        throw new Error(`invalid postmaster PID recorded in ${pidFile}`);
+    const server = new OwnedProcess(
+      [bin.postgres, "-D", cluster.data],
+      environment(cluster.root),
+      cluster.root,
+    );
+    cluster.server = server;
+    cluster.port = port;
+    cluster.ready = false;
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      checkCancelled();
+      if (server.closed) break;
+      if (server.overflow) throw new Error("postgres_log_limit");
+      if (
+        server.output.includes("database system is ready to accept connections")
+      ) {
+        const lines = readFileSync(
+          join(cluster.data, "postmaster.pid"),
+          "utf8",
+        ).split("\n");
+        if (
+          Number(lines[0]) !== server.pid ||
+          lines[1] !== cluster.data ||
+          Number(lines[3]) !== port
+        )
+          throw new Error("owned_postmaster_identity_mismatch");
+        cluster.ready = true;
+        if (await tcpConnects(port)) {
+          log(`owned postmaster ${server.pid} ready on 127.0.0.1:${port}`);
+          return port;
+        }
       }
-      cluster.pid = pid;
-      await waitListening("127.0.0.1", port, LISTEN_VERIFY_TIMEOUT_MS);
-      log(
-        `cluster listening on 127.0.0.1:${port} (postmaster pid ${pid}, loopback only)`,
-      );
-      return port;
+      await delay(50);
     }
-    lastFailure = `pg_ctl start attempt ${attempt} exited ${start.exitCode}${start.timedOut ? " (timed out)" : ""}`;
-    const logText = existsSync(cluster.logPath)
-      ? readFileSync(cluster.logPath, "utf8")
-      : "";
-    const bindFailure = /could not bind|Address already in use/i.test(logText);
-    if (!bindFailure) break;
-    log(`port ${port} was taken by a concurrent bind; retrying`);
+    await stop(server, "SIGINT");
+    if (!/could not bind|Address already in use/i.test(server.output))
+      throw new Error("native_postgres_start_failed");
+    log("port bind raced; retrying with a new OS-selected port");
   }
-  throw new Error(
-    `cluster failed to start: ${lastFailure}; see log tail printed at teardown`,
-  );
+  throw new Error("native_postgres_port_attempts_exhausted");
 }
-
-function childEnvironment(url: string): NodeJS.ProcessEnv {
-  const allowed = ["HOME", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE"];
-  // bun test sets NODE_ENV=test itself; make it explicit because the spawn
-  // environment here is fully allowlisted rather than inherited.
-  const env: NodeJS.ProcessEnv = {
-    NODE_ENV: process.env.NODE_ENV || "test",
-    PATH: process.env.PATH || "/usr/bin:/bin",
-    F10_F11_POSTGRES_URL: url,
+function verifyTest(result: Result) {
+  const count = (name: string) => {
+    const matches = [
+      ...result.output.matchAll(new RegExp(`^\\s*(\\d+) ${name}\\s*$`, "gm")),
+    ];
+    return matches.length === 1 ? Number(matches[0]?.[1]) : null;
   };
-  for (const key of allowed) {
-    const value = process.env[key];
-    if (value !== undefined && value !== "") env[key] = value;
-  }
-  return env;
-}
-
-type ChildResult = {
-  exitCode: number | null;
-  output: string;
-  timedOut: boolean;
-};
-
-/**
- * Spawn the existing native test file with the documented Bun flag that
- * disables automatic .env loading, and an allowlisted environment.
- */
-async function runTestChild(
-  cluster: Cluster,
-  url: string,
-): Promise<ChildResult> {
-  const command = [process.execPath, "test", "--no-env-file", TEST_FILE];
-  log(`spawning bun test --no-env-file ${TEST_FILE} (allowlisted environment)`);
-  const [file, ...args] = command;
-  if (!file) throw new Error("internal error: empty bun test command");
-  const child: ChildProcess = spawn(file, args, {
-    cwd: REPO_ROOT,
-    env: childEnvironment(url),
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  cluster.testChild = child;
-  let output = "";
-  let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    fail(
-      `bun test exceeded overall timeout of ${CHILD_TIMEOUT_MS}ms; sending SIGTERM`,
-    );
-    child.kill("SIGTERM");
-    setTimeout(() => child.kill("SIGKILL"), CHILD_KILL_GRACE_MS);
-  }, CHILD_TIMEOUT_MS);
-  child.stdout?.on("data", (chunk: Buffer) => {
-    output += chunk.toString();
-    process.stdout.write(chunk);
-  });
-  child.stderr?.on("data", (chunk: Buffer) => {
-    output += chunk.toString();
-    process.stderr.write(chunk);
-  });
-  await new Promise<void>((resolvePromise) => {
-    child.on("close", () => resolvePromise());
-  });
-  clearTimeout(timer);
-  cluster.testChild = null;
-  return { exitCode: child.exitCode, output, timedOut };
-}
-
-/** The native case must show 1 PASS / 0 SKIP with a real passing marker. */
-function evaluateChild(result: ChildResult): {
-  ok: boolean;
-  reasons: string[];
-} {
-  const reasons: string[] = [];
-  if (result.timedOut) reasons.push("bun test exceeded the overall timeout");
-  if (result.exitCode !== 0) {
-    reasons.push(
-      `bun test exited ${result.exitCode ?? "via signal"} (required 0)`,
-    );
-  }
-  const lastMatch = (pattern: RegExp): number | null => {
-    const matches = [...result.output.matchAll(pattern)];
-    const last = matches[matches.length - 1];
-    return last?.[1] ? Number(last[1]) : null;
-  };
-  const pass = lastMatch(/(\d+)\s+pass/g);
-  // bun omits the skip/fail summary lines entirely when the counts are zero.
-  const failCount = lastMatch(/(\d+)\s+fail/g) ?? 0;
-  const skip = lastMatch(/(\d+)\s+skip/g) ?? 0;
-  if (pass === null) {
-    reasons.push("bun test summary (pass count) not found in output");
-  } else {
-    log(`bun test summary: ${pass} pass, ${failCount} fail, ${skip} skip`);
-    if (skip !== 0)
-      reasons.push(`native case was skipped (${skip} skip; required 0)`);
-    if (pass < 1)
-      reasons.push("no passing native case (required at least 1 pass)");
-    if (failCount !== 0) {
-      reasons.push(`${failCount} failing assertions`);
-    }
-  }
-  const passMarker = result.output
+  const pass = count("pass"),
+    failCount = count("fail") ?? 0,
+    skip = count("skip") ?? 0;
+  const marker = result.output
     .split("\n")
-    .some((line) => line.includes("(pass)") && line.includes(TEST_NAME));
-  if (!passMarker) {
-    reasons.push(`no '(pass)' marker found for "${TEST_NAME}"`);
-  }
-  return { ok: reasons.length === 0, reasons };
-}
-
-function printLogTail(cluster: Cluster, label: string): void {
-  try {
-    if (!existsSync(cluster.logPath)) return;
-    const lines = readFileSync(cluster.logPath, "utf8").trimEnd().split("\n");
-    const tail = lines.slice(-40).join("\n");
-    process.stderr.write(
-      `[native-postgres] --- ${label} (last ${Math.min(40, lines.length)} lines) ---\n${tail}\n`,
-    );
-  } catch {
-    process.stderr.write(
-      `[native-postgres] --- ${label} could not be read ---\n`,
-    );
-  }
-}
-
-async function stopCluster(
-  binaries: BinarySet,
-  cluster: Cluster,
-): Promise<void> {
+    .some((line) => line.startsWith("(pass) ") && line.includes(TEST_NAME));
   if (
-    cluster.pid !== null ||
-    existsSync(join(cluster.dataDir, "postmaster.pid"))
-  ) {
-    let stop = await runTool(
-      [
-        binaries.pg_ctl,
-        "-D",
-        cluster.dataDir,
-        "-m",
-        "fast",
-        "-w",
-        "-t",
-        "30",
-        "stop",
-      ],
-      { timeoutMs: STOP_TIMEOUT_MS },
+    result.exitCode !== 0 ||
+    pass !== 1 ||
+    failCount !== 0 ||
+    skip !== 0 ||
+    !marker
+  )
+    throw new Error(
+      "native_case_required_exactly_one_pass_zero_skip_zero_fail",
     );
-    if (stop.exitCode !== 0) {
-      log("fast stop failed; attempting immediate stop");
-      stop = await runTool(
-        [
-          binaries.pg_ctl,
-          "-D",
-          cluster.dataDir,
-          "-m",
-          "immediate",
-          "-w",
-          "-t",
-          "30",
-          "stop",
-        ],
-        { timeoutMs: STOP_TIMEOUT_MS },
-      );
-    }
-    if (stop.exitCode !== 0) {
-      throw new Error(
-        `pg_ctl stop failed in both fast and immediate modes (exit ${stop.exitCode})`,
-      );
-    }
-  }
+  log("native test verdict: 1 pass / 0 skip / 0 fail");
 }
-
-/**
- * Stop only this cluster, verify it is neither listening nor running, and
- * remove only its own temp directory. Throws on any teardown failure so the
- * command can never exit green with a surviving postmaster or temp dir.
- */
-async function teardown(binaries: BinarySet, cluster: Cluster): Promise<void> {
-  const testChild = cluster.testChild;
-  if (testChild && testChild.exitCode === null) {
-    log("test child still running at teardown; waiting for it to exit");
-    testChild.kill("SIGTERM");
-    await new Promise<void>((resolvePromise) => {
-      testChild.once("close", () => resolvePromise());
-      setTimeout(() => {
-        testChild.kill("SIGKILL");
-        resolvePromise();
-      }, CHILD_KILL_GRACE_MS);
+async function teardown(cluster: Cluster, failed: boolean) {
+  // No startup/test continuation runs concurrently with teardown. Every process
+  // created before an await is tracked, including failed startup attempts.
+  for (const child of [...owned])
+    if (child !== cluster.server) await stop(child);
+  if (cluster.server) {
+    await stop(cluster.server, "SIGINT");
+    await cluster.server.done;
+    if (!cluster.server.closed) throw new Error("owned_postmaster_not_closed");
+    writeFileSync(cluster.log, sanitized(cluster.server.output), {
+      mode: 0o600,
     });
-    cluster.testChild = null;
-  }
-  try {
-    await stopCluster(binaries, cluster);
-  } catch (error) {
-    printLogTail(cluster, "postgres.log (stop failure)");
-    throw error;
-  }
-  if (cluster.port !== null) {
-    if (await tcpConnects("127.0.0.1", cluster.port, 2_000)) {
-      printLogTail(cluster, "postgres.log (port still accepting)");
-      throw new Error(
-        `teardown verification failed: port ${cluster.port} still accepts connections after stop`,
+    if (
+      cluster.ready &&
+      cluster.port !== null &&
+      (await tcpConnects(cluster.port))
+    )
+      throw new Error("owned_postgres_port_still_listening");
+    if (failed && cluster.server.output)
+      process.stderr.write(
+        `[native-postgres] bounded startup/server log:\n${sanitized(cluster.server.output).slice(-16_384)}\n`,
       );
-    }
-    log(`verified: port ${cluster.port} no longer accepting connections`);
-  }
-  if (cluster.pid !== null) {
-    const deadline = Date.now() + 5_000;
-    while (processAlive(cluster.pid) && Date.now() < deadline) await sleep(200);
-    if (processAlive(cluster.pid)) {
-      throw new Error(
-        `teardown verification failed: postmaster pid ${cluster.pid} is still running`,
-      );
-    }
-    log(`verified: postmaster pid ${cluster.pid} is gone`);
+    log(
+      cluster.ready
+        ? "verified: owned postmaster exited and its port is closed"
+        : "verified: owned startup process exited (no ready listener was attested)",
+    );
   }
   rmSync(cluster.root, { recursive: true, force: true });
-  if (existsSync(cluster.root)) {
-    throw new Error(
-      `teardown verification failed: temp dir ${cluster.root} still present`,
-    );
-  }
-  log("verified: temp directory removed");
+  if (existsSync(cluster.root))
+    throw new Error("native_temp_directory_not_removed");
+  log("verified: private cluster directory removed");
 }
 
-let activeBinaries: BinarySet | null = null;
-let activeCluster: Cluster | null = null;
-let interrupted = false;
-
-async function handleSignal(signal: NodeJS.Signals): Promise<void> {
-  if (interrupted) return;
-  interrupted = true;
-  fail(`received ${signal}; tearing down cluster before exiting nonzero`);
-  for (const child of activeToolChildren) child.kill("SIGTERM");
-  if (activeCluster && activeBinaries) {
-    try {
-      await teardown(activeBinaries, activeCluster);
-    } catch (error) {
-      fail(
-        `teardown after ${signal} failed: ${String(
-          error instanceof Error ? error.message : error,
-        )}`,
-      );
-    }
-  }
-  process.exit(1);
-}
-
-async function main(): Promise<number> {
-  let binaries: BinarySet;
-  try {
-    binaries = await findBinaries();
-  } catch (error) {
-    fail(error instanceof Error ? error.message : String(error));
-    return 1;
-  }
-  activeBinaries = binaries;
-  process.on("SIGINT", () => void handleSignal("SIGINT"));
-  process.on("SIGTERM", () => void handleSignal("SIGTERM"));
-
-  log(`using PostgreSQL binaries from ${binaries.bindir}`);
-  const version = await runTool([binaries.postgres, "--version"], {
-    timeoutMs: 10_000,
+// Signal handlers only cancel. Main owns the single awaited cleanup path and
+// cannot start another stage after cancellation, even during binary discovery.
+for (const signal of ["SIGINT", "SIGTERM"] as const)
+  process.on(signal, () => {
+    if (cancel.signal.aborted) return;
+    signalCode = signal === "SIGINT" ? 130 : 143;
+    fail(`received ${signal}; awaiting child shutdown and cluster teardown`);
+    cancel.abort();
   });
-  const versionLine = version.stdout.trim();
-  if (versionLine) log(versionLine);
-
-  const cluster: Cluster = {
-    ...createTempRoot(),
-    pid: null,
-    port: null,
-    testChild: null,
-  };
-  activeCluster = cluster;
-  let ok = true;
-  const problems: string[] = [];
+async function main() {
+  let cluster: Cluster | null = null;
+  let passed = false;
   try {
-    const dbUser = "galaxy_native_ci";
-    const dbPassword = randomBytes(24).toString("hex");
-    await initCluster(binaries, cluster, dbUser, dbPassword);
-    const port = await startCluster(binaries, cluster);
-    const pgVersionFile = join(cluster.dataDir, "PG_VERSION");
-    if (existsSync(pgVersionFile)) {
-      log(
-        `cluster data directory PG_VERSION: ${readFileSync(pgVersionFile, "utf8").trim()}`,
-      );
-    }
-    const url = `postgres://${dbUser}:${dbPassword}@127.0.0.1:${port}/postgres`;
-    const result = await runTestChild(cluster, url);
-    const verdict = evaluateChild(result);
-    if (!verdict.ok) {
-      ok = false;
-      problems.push(...verdict.reasons);
-      printLogTail(cluster, "postgres.log (test failure)");
-    }
-  } catch (error) {
-    ok = false;
-    problems.push(String(error instanceof Error ? error.message : error));
-    printLogTail(cluster, "postgres.log (failure)");
-  }
-  try {
-    await teardown(binaries, cluster);
-  } catch (error) {
-    ok = false;
-    problems.push(
-      `teardown: ${String(error instanceof Error ? error.message : error)}`,
+    const bin = await binaries();
+    checkCancelled();
+    const version = await command(
+      [bin.postgres, "--version"],
+      environment(),
+      REPO_ROOT,
+      10_000,
     );
+    if (
+      version.exitCode !== 0 ||
+      !/^postgres \(PostgreSQL\) [^\r\n]{1,120}$/.test(version.stdout.trim())
+    )
+      throw new Error("native_postgres_version_unavailable");
+    log(version.stdout.trim());
+    checkCancelled();
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "galaxy-native-pg-")));
+    chmodSync(root, 0o700);
+    cluster = {
+      root,
+      data: join(root, "data"),
+      sockets: join(root, "socket"),
+      log: join(root, "postgres.log"),
+      server: null,
+      port: null,
+      ready: false,
+    };
+    mkdirSync(cluster.sockets, { mode: 0o700 });
+    mkdirSync(join(root, "home"), { mode: 0o700 });
+    const password = randomBytes(24).toString("hex");
+    secrets.push(password);
+    const pwfile = join(root, "pwfile");
+    writeFileSync(pwfile, `${password}\n`, { mode: 0o600 });
+    try {
+      const initialized = await command(
+        [
+          bin.initdb,
+          "-D",
+          cluster.data,
+          "-U",
+          "galaxy_native_ci",
+          "-A",
+          "scram-sha-256",
+          "--pwfile",
+          pwfile,
+          "-E",
+          "UTF8",
+          "--no-instructions",
+        ],
+        environment(root),
+        root,
+        120_000,
+      );
+      if (initialized.exitCode !== 0) throw new Error("native_initdb_failed");
+    } finally {
+      if (existsSync(pwfile)) unlinkSync(pwfile);
+    }
+    checkCancelled();
+    const port = await startCluster(bin, cluster);
+    checkCancelled();
+    const url = `postgres://galaxy_native_ci:${password}@127.0.0.1:${port}/postgres`;
+    secrets.push(url);
+    const childEnv = {
+      ...environment(root),
+      F10_F11_POSTGRES_URL: url,
+      NO_COLOR: "1",
+    };
+    log(
+      `running ${TEST_FILE} with an isolated environment and dotenv disabled`,
+    );
+    const result = await command(
+      [process.execPath, "test", "--no-env-file", TEST_FILE],
+      childEnv,
+      REPO_ROOT,
+      300_000,
+      2 * 1024 * 1024,
+    );
+    process.stdout.write(sanitized(result.output));
+    verifyTest(result);
+    passed = true;
+  } catch (error) {
+    fail(error instanceof Error ? error.message : "native_verification_failed");
+  } finally {
+    try {
+      if (cluster) await teardown(cluster, !passed || cancel.signal.aborted);
+      else for (const child of [...owned]) await stop(child);
+    } catch (error) {
+      passed = false;
+      fail(error instanceof Error ? error.message : "native_teardown_failed");
+    }
   }
-  activeCluster = null;
-  if (!ok) {
-    for (const problem of problems) fail(problem);
-    fail("native PostgreSQL verification did NOT pass; see reasons above");
-    return 1;
-  }
+  if (cancel.signal.aborted) return signalCode;
+  if (!passed) return 1;
   log(
-    "native PostgreSQL verification passed: 1 pass / 0 skip, cluster torn down cleanly",
+    "native PostgreSQL verification passed; all owned processes and cluster removed",
   );
   return 0;
 }
-
 process.exitCode = 1;
-main()
-  .then((code) => {
+await main().then(
+  (code) => {
     process.exitCode = code;
-  })
-  .catch((error: unknown) => {
-    fail(
-      `unexpected harness failure: ${String(error instanceof Error ? error.message : error)}`,
-    );
+  },
+  () => {
+    fail("unexpected_native_harness_failure");
     process.exitCode = 1;
-  });
+  },
+);
