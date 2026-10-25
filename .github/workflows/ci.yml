@@ -6,7 +6,11 @@ on:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    # Pinned for repeatability: GitHub has announced ubuntu-latest will move
+    # to 26.04, and the native PostgreSQL step below depends on the 24.04
+    # image's preinstalled PostgreSQL 16 server binaries (service disabled).
+    # See docs/operations/native-postgres.md.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -21,5 +25,6 @@ jobs:
       - run: bun run typecheck
       - run: npm --prefix services/mcp-egress run check
       - run: npm --prefix services/mcp-egress run test
+      - run: bun run test:native-postgres
       - run: bun test
       - run: bun run build
