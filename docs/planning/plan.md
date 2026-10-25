@@ -1,6 +1,6 @@
 # Galaxy Chat rebuild plan
 
-Date: 2026-10-17. Status: product direction accepted; implementation not started. This plan supersedes conflicting legacy requirements.md choices for the rebuild.
+Plan established 2026-10-17; status updated 2026-10-25: current-phase local implementation/reviews complete; live acceptance pending. Remaining connectors and advanced execution are deferred to the next phase. This plan supersedes the original legacy stack requirements for the rebuild.
 
 ## Product and release boundary
 

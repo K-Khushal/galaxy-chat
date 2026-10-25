@@ -1,5 +1,7 @@
 # Low-cost beta stack research
 
+> Historical research snapshot. Early proposals below (including Supabase Auth and Google OAuth) are not the implemented baseline. Use [the current stack](../stack.md) and [local testing](../operations/local-testing.md) for setup. Provider prices/allowances below are dated research, not verified operating-budget commitments.
+
 Verified 2026-10-17. Prices are USD, exclude taxes, and are not guarantees of future availability. Recommendations below are engineering judgments; linked facts come from primary sources.
 
 ## Recommended baseline

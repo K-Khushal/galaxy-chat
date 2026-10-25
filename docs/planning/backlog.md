@@ -177,3 +177,23 @@ Enable longer autonomous work only with separate execution funding.
 - [ ] Run isolated ephemeral sandboxes with network/secret restrictions, resource limits, idle shutdown and audit trail.
 - [ ] Require explicit approval for external messages, purchases, uploads or irreversible mutations.
 - [ ] Choose sandbox vendor after pricing validation; advanced execution stays disabled until separately funded within an approved budget.
+
+
+## F15: Redesign the home and landing page
+
+Phase: M1. Dependencies: #8, #9, #10, #11 local implementation. Deliver before the public beta gate #12. Parent roadmap: #4.
+
+Replace the old home/landing page with a distinctive, polished introduction to the rebuilt Galaxy Chat. Carry the chat application's semantic design system into a fast, responsive public experience. Choose the best suitable free components regardless of library; use the installed design.how workflow. Routine visual decisions are delegated to the implementation agent.
+
+Acceptance criteria:
+
+- [ ] Audit the current homepage and replace outdated branding, library-era copy, navigation, screenshots and unsupported claims. Establish a cohesive visual direction, typography, spacing and light/dark/system behavior consistent with the real chat shell.
+- [ ] Design a strong hero, clear product explanation, useful feature/benefit sections and a clear primary action. Show a real shared UI or explicitly labeled preview; no invented conversations presented as real, testimonials, customer counts or performance promises.
+- [ ] Support the agreed entry flow: one bounded basic guest prompt when configured, then sign-in; invited signed-in users continue to chat. Coordinate guest interaction implementation with #12, preserving the server's quota, bot/proxy and authentication checks. Unconfigured/exhausted states must remain useful and honest.
+- [ ] Explain BYOK and platform funding accurately: five daily credits ($0.50) reset at 00:00 UTC, subject to shared funding; provider charges apply to BYOK. Do not promise guaranteed free inference, unlimited use, all-model access or unfinished memory/artifact/tool/browser capabilities. Distinguish delivered features from roadmap items.
+- [ ] Provide working sign-in/chat, privacy/data-control and support links using real routes or explicitly unavailable states. Preserve existing routing, session and ownership behavior; do not change auth or billing policy as part of the redesign.
+- [ ] Make phone/tablet/desktop layouts accessible: semantic headings, labeled controls, visible keyboard focus, readable contrast, touch targets, contained overflow and reduced motion. Use restrained animation with a clear purpose and no heavy decorative runtime.
+- [ ] Keep initial loading fast: server-render static content where appropriate, avoid unnecessary client bundles or paid dependencies, optimize any imagery and provide meaningful page metadata/social previews. Use installed Next.js version documentation.
+- [ ] Record independent browser evidence for desktop and phone, light/dark themes and primary CTA states; run relevant lint/type/build checks. Report measured performance/accessibility results with the test conditions, and leave physical-device/live-provider checks pending when unavailable.
+
+Out of scope: provisioning/deploying services, enabling billing, real paid inference, replacing the chat shell again, or implementing every roadmap capability. Safe placeholders must build without credentials. This ticket does not override #12's live beta acceptance gate.

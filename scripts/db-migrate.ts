@@ -1,10 +1,15 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { loadEnvConfig } from "@next/env";
 import postgres from "postgres";
 import {
   applyVersionedMigrations,
   type MigrationExecutor,
 } from "../lib/db/migrate";
+
+// Match next dev by default; operators can explicitly select production.
+// Run with Bun's automatic env loading disabled so Next's precedence wins.
+loadEnvConfig(process.cwd(), process.env.NODE_ENV !== "production");
 
 const databaseUrl = process.env.DATABASE_URL?.trim();
 if (!databaseUrl) {

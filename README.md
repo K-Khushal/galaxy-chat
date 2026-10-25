@@ -1,261 +1,43 @@
-# Galaxy Chat 🚀
+# Galaxy Chat
 
-A modern, AI-powered chat application built with Next.js, featuring persistent memory, file uploads, and a ChatGPT-like interface. Galaxy Chat provides an intelligent conversational experience with support for multiple AI models, conversation history, and seamless user authentication.
+An invite-only chat application built with Next.js 16, React 19, AI SDK 7, Better Auth, Drizzle and PostgreSQL. Local implementations include owned chat history, streaming and branches, budget accounting, encrypted provider keys, a bounded guest flow, and public landing/help/privacy pages. Live provider, hosted runtime and beta acceptance checks remain tracked separately in [beta operations](docs/operations/beta.md).
 
-## ✨ Features
+Current implementation details: [stack](docs/stack.md). Complete configuration and testing walkthrough: [local testing](docs/operations/local-testing.md).
 
-- 🤖 **AI Chat Interface** - ChatGPT-like UI with streaming responses
-- 🧠 **Persistent Memory** - Conversation context using Mem0
-- 📁 **File Uploads** - Support for images and documents via Cloudinary
-- 🔐 **Authentication** - Secure user management with Clerk
-- 💾 **Data Persistence** - MongoDB for chat history and user profiles
-- 🎨 **Modern UI** - Built with Radix UI and Tailwind CSS
-- 📱 **Responsive Design** - Mobile-first approach
-- ⚡ **Real-time Streaming** - Vercel AI SDK for smooth chat experience
-- 🔄 **Message Editing** - Edit and regenerate responses
-- 📚 **Chat Library** - Browse and manage conversation history
+## Local setup
 
-## 🛠️ Tech Stack
+Requires Node.js 22+, Bun, a PostgreSQL connection (Supabase direct or pooler), and a GitHub OAuth application.
 
-### Frontend
-- **Framework**: Next.js 15.5.4 (App Router)
-- **Language**: TypeScript
-- **UI Library**: Radix UI + ShadCN
-- **Styling**: Tailwind CSS 4
-- **Icons**: Lucide React
-- **Animations**: Framer Motion
-- **Forms**: React Hook Form + Zod validation
+1. Install dependencies: `bun install --frozen-lockfile`.
+2. Copy `.env.example` to `.env.local` (preserve it if it already exists) and configure `DATABASE_URL`, `BETTER_AUTH_SECRET` (at least 32 characters), `BETTER_AUTH_URL`, `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`. Existing `.env` files also work. Never commit credentials.
+3. Add your GitHub username to `GITHUB_INVITE_LOGINS` (comma-separated). An empty list allows nobody to sign in.
+4. Match your OAuth application's callback URL to `<BETTER_AUTH_URL>/api/auth/callback/github`. Use the same hostname and port in your browser and `BETTER_AUTH_URL`, for example `http://127.0.0.1:3000`.
+5. **Run `bun run db:migrate` before signing in.** Environment configuration alone does not create database tables. The command applies all pending SQL migrations in `drizzle/` in a transaction. Repeating it skips recorded versions.
+6. Run `bun run dev` and open the configured local URL. Restart the server after changing environment values.
 
-### Backend
-- **Runtime**: Node.js 18+
-- **Database**: MongoDB with Mongoose ODM
-- **Authentication**: Clerk
-- **File Storage**: Cloudinary
-- **AI Integration**: Vercel AI SDK + OpenRouter
-- **Memory**: Mem0 for conversation persistence
+The migration command uses Next.js environment-file precedence and defaults to development. For production configuration, run `NODE_ENV=production bun run db:migrate`; exported environment variables take precedence. Use the server PostgreSQL role, never a public Supabase API key. The app uses Better Auth rather than Supabase Auth.
 
-### Development Tools
-- **Linting**: Biome
-- **Type Checking**: TypeScript
-- **Package Manager**: npm
+If sign-in fails with `relation "verification" does not exist`, run the migration command against the same database as the application. If the migration fails, resolve that error before retrying sign-in; do not delete the database or bypass authentication.
 
-## 📁 Project Structure
+## Feature configuration
 
-```
-galaxy-chat/
-├── app/                          # Next.js App Router
-│   ├── (auth)/                   # Authentication routes
-│   │   ├── forgot-password/      # Password reset
-│   │   ├── sign-in/              # Sign in page
-│   │   └── sign-up/              # Sign up page
-│   ├── (chat)/                   # Protected chat routes
-│   │   ├── api/                  # API routes
-│   │   │   ├── chat/             # Chat API endpoints
-│   │   │   ├── history/          # Chat history API
-│   │   │   ├── library/          # Library management API
-│   │   │   └── upload/           # File upload API
-│   │   ├── chat/                 # Chat interface
-│   │   │   ├── [id]/             # Individual chat pages
-│   │   │   └── library/          # Chat library
-│   │   └── action.ts             # Server actions
-│   ├── globals.css               # Global styles
-│   └── layout.tsx                # Root layout
-├── components/                   # React components
-│   ├── auth/                     # Authentication components
-│   ├── chat/                     # Chat-related components
-│   │   └── message/              # Message components
-│   ├── elements/                 # UI elements
-│   ├── home/                     # Homepage components
-│   ├── library/                  # Library components
-│   ├── sidebar/                  # Sidebar components
-│   ├── svg/                      # SVG icons
-│   └── ui/                       # Reusable UI components
-├── hooks/                        # Custom React hooks
-├── lib/                          # Utility libraries
-│   ├── actions/                  # Server actions
-│   │   ├── auth/                 # Authentication actions
-│   │   ├── chat/                 # Chat actions
-│   │   └── mem0/                 # Memory actions
-│   ├── ai/                       # AI-related utilities
-│   ├── database/                 # Database configuration
-│   │   └── models/               # Mongoose models
-│   ├── mappers/                  # Data transformation
-│   ├── schema/                   # Zod schemas
-│   └── types/                    # TypeScript types
-├── public/                       # Static assets
-├── middleware.ts                 # Next.js middleware
-└── package.json                  # Dependencies
-```
+Signing in does not enable inference. Platform-funded chat requires the explicit funding, budget and reviewed model settings in `.env.example`. BYOK requires encryption/resource secrets, a reviewed model allowlist, `BYOK_ENABLED=1`, and a user key saved in Account & settings. Disabled or incomplete configuration stays unavailable. Guest generation additionally requires Turnstile and a trusted hosted proxy; localhost does not satisfy that flow's production requirements.
 
-## 🚀 Getting Started
+The repository now includes explicit memory/projects, attachments, artifacts, charts/tables/images, tools, search, and MCP foundations. Availability depends on configuration and the live acceptance gates; see the operational guides in `docs/operations/`. Automatic memory collection and autonomous browser execution remain unavailable. The app no longer uses Clerk, MongoDB, Cloudinary or Mem0. See [beta operations](docs/operations/beta.md) for configuration boundaries, data controls, backup and recovery, and pending live acceptance.
 
-### Prerequisites
+## Checks and commands
 
-- Node.js 18 or higher
-- MongoDB Atlas account
-- Clerk account
-- OpenRouter/AI GATEWAY API key
-- Cloudinary account
-- Mem0 account
+- `bun run lint` — Biome checks.
+- `bun run typecheck` — TypeScript checks.
+- `bun test` — local unit and PostgreSQL integration tests using disposable PGlite databases and provider fixtures.
+- `bun run build` — production Next.js build.
+- `bun run start` — serve the production build.
+- `bun run db:migrate` — apply pending PostgreSQL migrations.
+- `bun run test:native-postgres` — run the real native concurrency case using installed PostgreSQL binaries; fails explicitly when unavailable.
+- `bun run build:workers` — create an OpenNext Cloudflare bundle; does not deploy.
 
-### Installation
+Run the full test suite and production build sequentially on this host. Tests use local provider fixtures and do not prove real GitHub login, paid inference or deployment.
 
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd galaxy-chat
-   ```
+## Current status
 
-2. **Install dependencies**
-   ```bash
-   npm install
-   ```
-
-3. **Set up environment variables**
-   
-   Create a `.env.local` file in the project root:
-   ```bash
-   # Clerk Authentication
-   NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_...
-   CLERK_SECRET_KEY=sk_test_...
-
-   # MongoDB Database
-   MONGODB_URI=mongodb+srv://<username>:<password>@<cluster>.mongodb.net/
-   MONGODB_DB=galaxy_chat
-
-   # OpenRouter/AI GATEWAY
-   AI_GATEWAY_API_KEY=vck...
-   OPENROUTER_API_KEY=sk...
-
-   # Cloudinary File Storage
-   CLOUDINARY_CLOUD_NAME=your_cloudinary_cloud_name
-   CLOUDINARY_API_KEY=your_cloudinary_api_key
-   CLOUDINARY_API_SECRET=your_cloudinary_api_secret
-
-   # Mem0
-   MEM0_API_KEY=m0...
-   ```
-
-4. **Run the development server**
-   ```bash
-   npm run dev
-   ```
-
-5. **Open your browser**
-   
-   Navigate to [http://localhost:3000](http://localhost:3000)
-
-## 🔧 Available Scripts
-
-- `npm run dev` - Start development server
-- `npm run build` - Build for production
-- `npm run start` - Start production server
-- `npm run lint` - Run Biome linter
-- `npm run format` - Format code with Biome
-
-## 🗄️ Database Schema
-
-### Chat Model
-```typescript
-{
-  id: string;           // Unique chat identifier
-  title: string;        // Chat title
-  userId: string;       // Clerk user ID
-  visibility: 'public' | 'private';
-  lastContext: AppUsage | null;
-  createdAt: Date;
-  updatedAt: Date;
-}
-```
-
-### User Profile Model
-```typescript
-{
-  userId: string;       // Clerk user ID
-  email: string;        // User email
-  name?: string;        // Display name
-  imageUrl?: string;    // Profile image
-  createdAt: Date;
-  updatedAt: Date;
-}
-```
-
-### Chat Message Model
-```typescript
-{
-  id: string;           // Unique message ID
-  chatId: string;       // Parent chat ID
-  role: 'user' | 'assistant';
-  content: string;      // Message content
-  attachments?: Attachment[];
-  createdAt: Date;
-  updatedAt: Date;
-}
-```
-
-## 🔐 Authentication Flow
-
-1. **Public Routes**: `/`, `/sign-in`, `/sign-up`, `/forgot-password`
-2. **Protected Routes**: All `/chat/*` routes require authentication
-3. **Middleware**: Automatic redirects based on auth state
-4. **User Profiles**: Automatically created on first login
-
-## 🤖 AI Integration
-
-- **Models**: Support for multiple AI models via OpenRouter
-- **Streaming**: Real-time response streaming
-- **Memory**: Persistent conversation context with Mem0
-- **File Support**: Image and document analysis
-- **Context Management**: Automatic context window management
-
-## 📁 File Upload
-
-- **Supported Formats**: Images (PNG, JPG, WebP), Documents (PDF, DOCX, TXT)
-- **Storage**: Cloudinary integration
-- **Processing**: Automatic file optimization and transformation
-- **Security**: File type validation and size limits
-
-## 🎨 UI Components
-
-Built with Radix UI primitives and styled with Tailwind CSS:
-- Accessible by default
-- Keyboard navigation support
-- Responsive design
-- Dark/light theme support
-- Custom animations with Framer Motion
-
-## 🚀 Deployment
-
-### Vercel (Recommended)
-
-1. Push your code to GitHub
-2. Connect your repository to Vercel
-3. Add environment variables in Vercel dashboard
-4. Deploy automatically on every push
-
-### Environment Variables for Production
-
-Ensure all environment variables are set in your deployment platform:
-- Clerk keys (production)
-- MongoDB URI
-- OpenRouter API key
-- Cloudinary credentials
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Run tests and linting
-5. Submit a pull request
-
-## 🆘 Support
-
-For support and questions:
-- Create an issue in the repository
-- Check the documentation
-- Review the codebase structure
-
----
-
-Built with ❤️ using Next.js, TypeScript, and modern web technologies.
+Current-phase local implementation and reviews are complete through PR #64. Live OAuth, Supabase, provider, deployment, budget and remaining device/accessibility acceptance are pending. Connector integrations and remaining remote/sandbox/browser execution are deferred to the next phase; their reviewed foundations remain default-off. Historical research and planning notes are retained as evidence, not instructions to activate these capabilities.

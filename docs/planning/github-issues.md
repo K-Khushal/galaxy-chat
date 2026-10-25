@@ -19,8 +19,24 @@ Roadmap: [#4 — Galaxy Chat rebuild](https://github.com/K-Khushal/galaxy-chat/i
 - [F13: Add bounded tools, cited web search and MCP](https://github.com/K-Khushal/galaxy-chat/issues/17)
 - [F14: Add connectors and durable sandbox/browser tasks](https://github.com/K-Khushal/galaxy-chat/issues/18)
 
-All 14 tickets contain acceptance criteria and dependency issue references. Ticket source: [backlog.md](backlog.md). Agreed specification: [plan.md](plan.md).
+- [F15: Redesign the home and landing page](https://github.com/K-Khushal/galaxy-chat/issues/24)
+
+All 15 tickets contain acceptance criteria and dependency issue references. Ticket source: [backlog.md](backlog.md). Agreed specification: [plan.md](plan.md).
 
 M2–M4 scopes require refinement before implementation.
 
 The integration returned 403, but CLI authentication succeeded with network access. The earlier invalid-login report came from the restricted environment. No access change was required.
+
+
+## M3/M4 implementation slices (status updated 2026-10-25)
+
+- F12-A: https://github.com/K-Khushal/galaxy-chat/issues/29 (parent #16, local implementation merged; live acceptance pending)
+- F12-B: https://github.com/K-Khushal/galaxy-chat/issues/30 (parent #16, local implementation merged; live acceptance pending)
+- F12-C: https://github.com/K-Khushal/galaxy-chat/issues/31 (parent #16, local implementation merged; live acceptance pending)
+- F13-A: https://github.com/K-Khushal/galaxy-chat/issues/32 (parent #17, local foundations merged; live acceptance pending)
+- F13-B: https://github.com/K-Khushal/galaxy-chat/issues/33 (parent #17, local foundations merged; live acceptance pending)
+- F13-C: https://github.com/K-Khushal/galaxy-chat/issues/34 (parent #17, local foundations merged; live acceptance pending)
+- F14-A: https://github.com/K-Khushal/galaxy-chat/issues/35 (parent #18, remaining work deferred; merged foundations retained)
+- F14-B: https://github.com/K-Khushal/galaxy-chat/issues/36 (parent #18, remaining work deferred; merged foundations retained)
+- F14-C: https://github.com/K-Khushal/galaxy-chat/issues/37 (parent #18, remaining work deferred; merged foundations retained)
+- F14-D: https://github.com/K-Khushal/galaxy-chat/issues/38 (parent #18, remaining work deferred; merged foundations retained)

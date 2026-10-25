@@ -72,23 +72,53 @@ function createAuth(config: ResolvedAuth, db: Database) {
         if (BLOCKED_AUTH_PATHS.has(path)) {
           throw new APIError("FORBIDDEN", { message: "invite_required" });
         }
+        // Better Auth shares provider-field parsing with browser profile edits.
+        // Only the verified GitHub profile may set this authorization field.
+        if (
+          path === "/update-user" &&
+          Object.hasOwn(ctx.body ?? {}, "githubLogin")
+        ) {
+          throw new APIError("FORBIDDEN", {
+            message: "github_login_read_only",
+          });
+        }
       }),
     },
     socialProviders: {
       github: {
         clientId: config.githubClientId,
         clientSecret: config.githubClientSecret,
+        // Refresh existing rows too, including accounts created before the
+        // provider username was persisted correctly.
+        overrideUserInfoOnSignIn: true,
         mapProfileToUser: (profile: { login?: string }) => ({
           githubLogin: profile.login ?? null,
         }),
       },
     },
     user: {
+      validateUserInfo: ({ user: incoming, source }) => {
+        const login = source.oauth?.profile?.login;
+        if (
+          source.method !== "oauth" ||
+          source.oauth?.providerId !== "github" ||
+          typeof login !== "string" ||
+          incoming.githubLogin !== login ||
+          !isInvitedLogin(
+            login,
+            parseInviteLogins(process.env.GITHUB_INVITE_LOGINS),
+          )
+        ) {
+          return { error: "invite_required" };
+        }
+      },
       additionalFields: {
         githubLogin: {
           type: "string",
           required: false,
-          input: false,
+          // input:false also strips fields supplied by OAuth providers in
+          // Better Auth 1.7. Browser writes are blocked in the hook above.
+          input: true,
         },
       },
     },

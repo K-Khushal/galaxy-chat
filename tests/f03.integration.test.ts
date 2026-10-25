@@ -979,3 +979,192 @@ test("object keys from another user are rejected before storage", async () => {
     error: { id: "invalid_object" },
   });
 });
+
+async function githubCallback(
+  login: string | undefined,
+  subject: number,
+  email: string,
+) {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = Object.assign(
+    async (input: string | URL | Request) => {
+      const url = new URL(
+        input instanceof Request ? input.url : input.toString(),
+      );
+      if (
+        url.origin === "https://github.com" &&
+        url.pathname === "/login/oauth/access_token"
+      ) {
+        return Response.json({
+          access_token: "fixture-oauth-token",
+          token_type: "bearer",
+          scope: "read:user,user:email",
+        });
+      }
+      if (url.origin === "https://api.github.com" && url.pathname === "/user") {
+        return Response.json({
+          id: subject,
+          login,
+          name: "OAuth fixture",
+          email,
+          avatar_url: null,
+        });
+      }
+      if (
+        url.origin === "https://api.github.com" &&
+        url.pathname === "/user/emails"
+      ) {
+        return Response.json([{ email, primary: true, verified: true }]);
+      }
+      throw new Error("Unexpected network request in OAuth fixture");
+    },
+    { preconnect: originalFetch.preconnect },
+  );
+  try {
+    const headers = new Headers({
+      "content-type": "application/json",
+      origin: "http://127.0.0.1:3000",
+    });
+    const started = await authRoutes.POST(
+      request(
+        "/api/auth/sign-in/social",
+        headers,
+        "POST",
+        JSON.stringify({ provider: "github", callbackURL: "/chat" }),
+      ),
+    );
+    expect(started.status).toBe(200);
+    const data = await started.json();
+    const state = new URL(data.url).searchParams.get("state");
+    expect(state).toBeTruthy();
+    const cookies = started.headers
+      .getSetCookie()
+      .map((cookie) => cookie.split(";")[0])
+      .join("; ");
+    return await authRoutes.GET(
+      request(
+        `/api/auth/callback/github?code=fixture-code&state=${encodeURIComponent(state ?? "")}`,
+        new Headers({ cookie: cookies }),
+      ),
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+test("GitHub OAuth persists the invited login and repairs profiles missing it on later sign-in", async () => {
+  const originalInvites = process.env.GITHUB_INVITE_LOGINS;
+  process.env.GITHUB_INVITE_LOGINS = `${originalInvites},oauth-invited`;
+  try {
+    const first = await githubCallback(
+      "oauth-invited",
+      70001,
+      "oauth-invited@example.com",
+    );
+    expect(first.headers.get("location")).toBe("/chat");
+    expect(
+      first.headers
+        .getSetCookie()
+        .some((cookie) => cookie.includes("session_token=")),
+    ).toBe(true);
+    const [created] = await db
+      .select()
+      .from(userTable)
+      .where(eq(userTable.email, "oauth-invited@example.com"));
+    expect(created?.githubLogin).toBe("oauth-invited");
+    if (!created) throw new Error("OAuth user was not created");
+    await db
+      .update(userTable)
+      .set({ githubLogin: null })
+      .where(eq(userTable.id, created.id));
+    const returning = await githubCallback(
+      "oauth-invited",
+      70001,
+      "oauth-invited@example.com",
+    );
+    expect(returning.headers.get("location")).toBe("/chat");
+    const [repaired] = await db
+      .select()
+      .from(userTable)
+      .where(eq(userTable.id, created.id));
+    expect(repaired?.githubLogin).toBe("oauth-invited");
+    const cookie = returning.headers
+      .getSetCookie()
+      .map((value) => value.split(";")[0])
+      .join("; ");
+    const sessionLookup = await authRoutes.GET(
+      request("/api/auth/get-session", new Headers({ cookie })),
+    );
+    expect((await sessionLookup.json())?.user?.githubLogin).toBe(
+      "oauth-invited",
+    );
+    const privateHistory = await historyGet(
+      request("/api/history", new Headers({ cookie })),
+    );
+    expect(privateHistory.status).toBe(200);
+    const spoofed = await authRoutes.POST(
+      request(
+        "/api/auth/update-user",
+        new Headers({
+          cookie,
+          origin: "http://127.0.0.1:3000",
+          "content-type": "application/json",
+        }),
+        "POST",
+        JSON.stringify({ githubLogin: "alice" }),
+      ),
+    );
+    expect(spoofed.status).toBe(403);
+    const [unchanged] = await db
+      .select()
+      .from(userTable)
+      .where(eq(userTable.id, created.id));
+    expect(unchanged?.githubLogin).toBe("oauth-invited");
+    // A fresh provider username must not reuse a stale stored invitation.
+    const revoked = await githubCallback(
+      "oauth-outsider",
+      70001,
+      "oauth-invited@example.com",
+    );
+    expect(
+      new URL(
+        revoked.headers.get("location") ?? "http://invalid",
+      ).searchParams.get("error"),
+    ).toBe("invite_required");
+    expect(
+      revoked.headers
+        .getSetCookie()
+        .some((value) => value.includes("session_token=")),
+    ).toBe(false);
+  } finally {
+    process.env.GITHUB_INVITE_LOGINS = originalInvites;
+  }
+});
+
+test("GitHub OAuth rejects uninvited or missing usernames before creating accounts", async () => {
+  for (const [login, subject] of [
+    ["oauth-outsider", 70002],
+    [undefined, 70003],
+  ] as const) {
+    const response = await githubCallback(
+      login,
+      subject,
+      `oauth-${subject}@example.com`,
+    );
+    expect(
+      new URL(
+        response.headers.get("location") ?? "http://invalid",
+      ).searchParams.get("error"),
+    ).toBe("invite_required");
+    expect(
+      response.headers
+        .getSetCookie()
+        .some((value) => value.includes("session_token=")),
+    ).toBe(false);
+    const users = await db
+      .select()
+      .from(userTable)
+      .where(eq(userTable.email, `oauth-${subject}@example.com`));
+    expect(users).toHaveLength(0);
+  }
+});
