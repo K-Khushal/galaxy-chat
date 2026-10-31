@@ -24,7 +24,7 @@ export function SignInPanel({ notice }: { notice?: string }) {
     try {
       const result = await authClient.signIn.social({
         provider: "github",
-        callbackURL: "/",
+        callbackURL: "/chat",
       });
       if (result.error) {
         setFailure(true);
@@ -39,9 +39,7 @@ export function SignInPanel({ notice }: { notice?: string }) {
     <section className="w-full max-w-md">
       <div className="mb-10 flex items-center gap-2.5">
         <Sparkles aria-hidden="true" className="size-6 text-primary" />
-        <span className="text-lg font-semibold tracking-tight">
-          Galaxy Chat
-        </span>
+        <span className="text-lg font-semibold tracking-tight">Galaxy</span>
       </div>
       <h1 className="text-3xl font-medium tracking-tight">Sign in to Galaxy</h1>
       <p className="mt-4 text-base leading-relaxed text-muted-foreground">
