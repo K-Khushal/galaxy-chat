@@ -9,6 +9,7 @@ import {
   text,
   timestamp,
 } from "drizzle-orm/pg-core";
+import type { AttachmentKind } from "@/lib/attachments/rules";
 
 /** Better Auth tables. Mirrors drizzle/0000_auth.sql. */
 export const user = pgTable("user", {
@@ -172,4 +173,69 @@ export const userSettings = pgTable(
       sql`length(${table.responseInstructions}) <= 2000`,
     ),
   ],
+);
+
+/** Attachments on R2. Mirrors drizzle/0005_attachments.sql. */
+export const attachment = pgTable(
+  "attachment",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    chatId: text("chat_id").references(() => chat.id, { onDelete: "cascade" }),
+    filename: text("filename").notNull(),
+    kind: text("kind").$type<AttachmentKind>().notNull(),
+    contentType: text("content_type").notNull(),
+    size: integer("size").notNull(),
+    status: text("status")
+      .$type<"pending" | "ready" | "deleted">()
+      .notNull()
+      .default("pending"),
+    presignExpiresAt: timestamp("presign_expires_at", {
+      withTimezone: true,
+    }).notNull(),
+    extractedText: text("extracted_text"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("attachment_chat_idx").on(table.chatId),
+    index("attachment_unattached_idx")
+      .on(table.userId, table.createdAt)
+      .where(sql`${table.chatId} IS NULL`),
+    check(
+      "attachment_filename_check",
+      sql`char_length(${table.filename}) BETWEEN 1 AND 255`,
+    ),
+    check(
+      "attachment_kind_check",
+      sql`${table.kind} IN ('image', 'pdf', 'text')`,
+    ),
+    check(
+      "attachment_size_check",
+      sql`${table.size} > 0 AND ${table.size} <= 10485760`,
+    ),
+    check(
+      "attachment_status_check",
+      sql`${table.status} IN ('pending', 'ready', 'deleted')`,
+    ),
+  ],
+);
+
+// Minimal storage cleanup records deliberately outlive User and Chat cascades.
+// Kept for repeated sweeps because expiry does not settle accepted PUTs.
+export const attachmentTombstone = pgTable(
+  "attachment_tombstone",
+  {
+    id: text("id").primaryKey(),
+    key: text("key").notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    purgeAfter: timestamp("purge_after", { withTimezone: true }).notNull(),
+    nextPurgeAt: timestamp("next_purge_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [index("attachment_tombstone_purge_idx").on(table.nextPurgeAt)],
 );

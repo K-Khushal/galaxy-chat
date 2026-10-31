@@ -15,6 +15,14 @@ export default function Privacy() {
         provider ID and survives account deletion.
       </p>
       <p>
+        Deleted attachments leave a minimal storage cleanup record containing
+        their object key and cleanup times, without filenames or file content.
+        These records survive account deletion so delayed uploads can be
+        removed. Once the upload URL has expired for at least 24 hours, a
+        successful object deletion also removes the cleanup record. Cleanup runs
+        when the application is used; it is not scheduled.
+      </p>
+      <p>
         Do not include sensitive information in Chats. Contact the operator to
         request account deletion or ask about your data.
       </p>

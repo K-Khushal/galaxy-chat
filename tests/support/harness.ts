@@ -17,6 +17,7 @@ import {
   type Script,
   scriptedStream,
 } from "./mock-model";
+import { MemoryStorage } from "./memory-storage";
 
 export { BYOK_ENV, PLATFORM_KEY, type Script } from "./mock-model";
 
@@ -81,6 +82,7 @@ export async function createHarness(timing: Partial<GenerationTiming> = {}) {
   const pg = await migratedDatabase();
   const db = drizzle(pg, { schema }) as unknown as Db;
   const redis = new MemoryRedis();
+  const storage = new MemoryStorage();
   const pending: Promise<unknown>[] = [];
   const waitUntil = (promise: Promise<unknown>) => {
     pending.push(promise);
@@ -107,12 +109,19 @@ export async function createHarness(timing: Partial<GenerationTiming> = {}) {
       doneWatchdogIntervalMs: 100,
     }),
     rateLimit: async (kind) => !state.rateLimited.has(kind),
+    storage,
     languageModel: (modelId, apiKey, options) => {
       const call: ModelCall = { modelId, apiKey, ...options };
       state.calls.push(call);
       const script = state.script;
       return new MockLanguageModelV4({
         modelId,
+        // Read URLs from the mock storage go to the model as they are,
+        // as they do for PDFs on OpenRouter.
+        supportedUrls: {
+          "image/*": [/^https?:\/\/(storage\.test|localhost:3100)\//],
+          "application/*": [/^https?:\/\/(storage\.test|localhost:3100)\//],
+        },
         doStream: async (request) => {
           call.maxOutputTokens = request.maxOutputTokens;
           call.prompt = JSON.stringify(request.prompt);
@@ -179,7 +188,7 @@ export async function createHarness(timing: Partial<GenerationTiming> = {}) {
   }
 
   open.add({ settle, pg });
-  return { ctx, db, pg, redis, state, addUser, settle };
+  return { ctx, db, pg, redis, storage, state, addUser, settle };
 }
 
 type Handler = (

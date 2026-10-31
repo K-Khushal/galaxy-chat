@@ -46,6 +46,12 @@ const errors: Record<string, string> = {
     "A Reply is already being written. Stop it or wait for it to finish.",
   chat_not_found:
     "This Chat could not be found. Start a new Chat from the sidebar.",
+  attachment_unsupported:
+    "This model can’t read one of the attached files. Remove it or choose another model.",
+  attachment_not_found:
+    "An attached file is no longer available. Remove it and attach it again.",
+  attachment_limit:
+    "Too many files are waiting to be sent. Send or remove some first.",
   server_misconfigured:
     "Chat is unavailable right now. Please try again later.",
 };

@@ -3,6 +3,7 @@ import type { Kv } from "@/lib/redis";
 export type RateLimitKind =
   | "send"
   | "byok"
+  | "presign"
   | "emailCodeIp"
   | "emailCodeAddress";
 
@@ -20,6 +21,8 @@ export const RATE_LIMITS: Record<
   send: { limit: 20, windowMs: 60_000 },
   // Saving or testing a BYOK key (per User).
   byok: { limit: 10, windowMs: 10 * 60_000 },
+  // Upload URLs for Attachments (per User).
+  presign: { limit: 60, windowMs: 10 * 60_000 },
   // Sign-in code requests, per client IP and per hashed email address.
   emailCodeIp: { limit: 3, windowMs: 60_000 },
   emailCodeAddress: { limit: 3, windowMs: 60_000 },

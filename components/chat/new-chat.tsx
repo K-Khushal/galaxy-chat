@@ -32,9 +32,10 @@ export function NewChat() {
             />
           }
           chatId="new"
+          model={model}
           busy={busy}
           onStop={() => {}}
-          onSend={async (text) => {
+          onSend={async (text, files) => {
             setBusy(true);
             try {
               const { chat } = await api<{ chat: { id: string } }>(
@@ -42,6 +43,12 @@ export function NewChat() {
                 { model },
               );
               sessionStorage.setItem(`galaxy:send:${chat.id}`, text);
+              if (files.length > 0) {
+                sessionStorage.setItem(
+                  `galaxy:attach:${chat.id}`,
+                  JSON.stringify(files),
+                );
+              }
               window.dispatchEvent(new Event("galaxy:chats"));
               router.push(`/chat/${chat.id}`);
               return false; // Retain the new-Chat draft until its first send is accepted.
