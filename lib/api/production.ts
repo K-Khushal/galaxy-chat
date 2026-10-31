@@ -83,7 +83,11 @@ export function route(
     return observeRequest(request, async () => {
       try {
         requireSameOrigin(request, appOrigins());
-        return await handler(await appContext(), request, (await params)?.id ?? "");
+        return await handler(
+          await appContext(),
+          request,
+          (await params)?.id ?? "",
+        );
       } catch (error) {
         return errorResponse(error);
       }
