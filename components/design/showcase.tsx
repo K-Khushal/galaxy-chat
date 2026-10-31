@@ -2,7 +2,7 @@
 
 import { ArrowUp, Bell, Download, Plus, Search, Trash2 } from "lucide-react";
 import { useId } from "react";
-import { Composer } from "@/components/shell/composer";
+import { Composer } from "@/components/chat/composer";
 import { StatePanel } from "@/components/shell/state-panel";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -336,7 +336,11 @@ export function Showcase() {
       </Block>
 
       <Block title="Composer shell">
-        <Composer />
+        <Composer
+          chatId="showcase"
+          onSend={async () => false}
+          onStop={() => {}}
+        />
       </Block>
 
       <Block title="Empty and error states">

@@ -43,7 +43,7 @@ async function streamContext(): Promise<ResumableStreamContext> {
  * Builds the request context without touching Redis, the Platform key or the
  * BYOK keyring: each is read, and Redis connected, only when a route uses it.
  */
-function appContext(): AppContext {
+export function appContext(): AppContext {
   const kv = lazyKv();
   return {
     db: getDb(),
