@@ -10,10 +10,10 @@ export async function searchChats(db: Db, userId: string, query: string) {
       FROM chat c WHERE c.user_id = ${userId} AND NOT c.archived
         AND to_tsvector('english', coalesce(c.title, '')) @@ websearch_to_tsquery('english', ${query})
       UNION ALL
-      SELECT c.id, ts_rank(jsonb_to_tsvector('english', jsonb_path_query_array(m.parts, '$[*] ? (@.type == "text").text'), '["string"]'), websearch_to_tsquery('english', ${query})) AS rank
+      SELECT c.id, ts_rank(m.search_document, websearch_to_tsquery('english', ${query})) AS rank
       FROM message m JOIN chat c ON c.id = m.chat_id
       WHERE c.user_id = ${userId} AND NOT c.archived
-        AND jsonb_to_tsvector('english', jsonb_path_query_array(m.parts, '$[*] ? (@.type == "text").text'), '["string"]') @@ websearch_to_tsquery('english', ${query})
+        AND m.search_document @@ websearch_to_tsquery('english', ${query})
     )
     SELECT c.id, c.title FROM matches JOIN chat c ON c.id = matches.id
     GROUP BY c.id ORDER BY max(matches.rank) DESC, c.updated_at DESC, c.id LIMIT 50

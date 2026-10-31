@@ -66,18 +66,23 @@ export function temporaryMessageRoute(ctx: AppContext, request: Request) {
     const abort = new AbortController();
     let firstToken = false;
     let complete = false;
+    let stopped = false;
     let charged = false;
     let cleanup: Promise<void> | undefined;
     let renewal: ReturnType<typeof setInterval> | undefined;
     let deadline: ReturnType<typeof setTimeout> | undefined;
     const stop = () => abort.abort();
+    const clientStop = () => {
+      stopped = true;
+      stop();
+    };
     const finish = () => {
       cleanup ??= (async () => {
         clearInterval(renewal);
         clearTimeout(deadline);
-        request.signal.removeEventListener("abort", stop);
+        request.signal.removeEventListener("abort", clientStop);
         try {
-          if (charged && !firstToken && !complete)
+          if (charged && !firstToken && !complete && !stopped)
             await refundCredit(ctx.db, userId);
         } finally {
           await releaseGeneration(ctx.kv, acquired.lease);
@@ -101,8 +106,8 @@ export function temporaryMessageRoute(ctx: AppContext, request: Request) {
           throw new AppError("no_credits", 402);
       }
       charged = payment.source === "credits";
-      request.signal.addEventListener("abort", stop, { once: true });
-      if (request.signal.aborted) stop();
+      request.signal.addEventListener("abort", clientStop, { once: true });
+      if (request.signal.aborted) clientStop();
       renewal = setInterval(() => {
         renewGeneration(ctx.kv, acquired.lease, ctx.timing.lockTtlMs)
           .then((held) => {
@@ -149,7 +154,7 @@ export function temporaryMessageRoute(ctx: AppContext, request: Request) {
         },
         async cancel() {
           cancelled = true;
-          stop();
+          clientStop();
           await finish();
         },
       });

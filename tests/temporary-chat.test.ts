@@ -130,12 +130,12 @@ for (const firstToken of [false, true]) {
     abort.abort();
     while (!(await reader.read()).done) {}
     expect(h.state.aborts).toBe(1);
-    expect(await getCredits(h.db, "alice")).toBe(firstToken ? 9 : 10);
+    expect(await getCredits(h.db, "alice")).toBe(9);
     await assertSlotsReleased();
   });
 }
 
-test("cancelling the response body aborts the model and refunds before first token", async () => {
+test("cancelling the response body aborts the model and keeps the Credit before first token", async () => {
   h.state.script = { words: ["never"], delayMs: 1, hangAt: 0 };
   const response = await send();
   const reader = response.body?.getReader();
@@ -145,7 +145,7 @@ test("cancelling the response body aborts the model and refunds before first tok
   await reader.cancel();
   await sleep(10);
   expect(h.state.aborts).toBe(1);
-  expect(await getCredits(h.db, "alice")).toBe(10);
+  expect(await getCredits(h.db, "alice")).toBe(9);
   await assertSlotsReleased();
 });
 
