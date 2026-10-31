@@ -1,4 +1,10 @@
-import { boolean, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import {
+  boolean,
+  integer,
+  pgTable,
+  text,
+  timestamp,
+} from "drizzle-orm/pg-core";
 
 /** Better Auth tables. Mirrors drizzle/0000_auth.sql. */
 export const user = pgTable("user", {
@@ -53,3 +59,18 @@ export const verification = pgTable("verification", {
 });
 
 export const authSchema = { user, session, account, verification };
+
+/** Credits (ADR 0003). Mirrors drizzle/0001_credits.sql. */
+export const creditBalance = pgTable("credit_balance", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => user.id, { onDelete: "cascade" }),
+  remaining: integer("remaining").notNull(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+/** Survives account deletion; see drizzle/0001_credits.sql. */
+export const creditGrantIdentity = pgTable("credit_grant_identity", {
+  identityHash: text("identity_hash").primaryKey(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});

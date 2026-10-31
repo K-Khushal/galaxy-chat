@@ -68,7 +68,7 @@ test("the starting migration creates only the Better Auth tables", async () => {
   const files = readdirSync(resolve("drizzle")).filter((name) =>
     name.endsWith(".sql"),
   );
-  expect(files).toEqual(["0000_auth.sql"]);
+  expect(files[0]).toBe("0000_auth.sql");
   const database = await PGlite.create();
   try {
     await database.exec(
