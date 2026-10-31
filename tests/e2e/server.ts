@@ -21,17 +21,20 @@ const build = Bun.spawn(["bun", "run", "build"], {
 });
 if (await build.exited) process.exit(1);
 // Fail CI if test implementations accidentally become production dependencies.
-const leaked = Bun.spawn(
-  [
-    "rg",
-    "-l",
-    "MockLanguageModelV4|e2e-byok-key-000|Mock did not receive image|const grants =",
-    ".next/server",
-  ],
-  { stdout: "inherit", stderr: "inherit" },
-);
-if ((await leaked.exited) !== 1)
-  throw new Error("Test implementation leaked into production output");
+const leakPattern =
+  /MockLanguageModelV4|e2e-byok-key-000|Mock did not receive image|const grants =/;
+const leaked: string[] = [];
+for await (const file of new Bun.Glob("**/*").scan({
+  cwd: ".next/server",
+  onlyFiles: true,
+})) {
+  if (leakPattern.test(await Bun.file(join(".next/server", file)).text()))
+    leaked.push(file);
+}
+if (leaked.length)
+  throw new Error(
+    `Test implementation leaked into production output: ${leaked.join(", ")}`,
+  );
 const directory = await mkdtemp(join(tmpdir(), "galaxy-e2e-"));
 const bindir = (await Bun.$`pg_config --bindir`.text()).trim();
 await Bun.$`${bindir}/initdb -D ${directory} -U postgres -A trust --no-locale`.quiet();
