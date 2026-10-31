@@ -249,3 +249,28 @@ export const testE2eEnabled = concern(e2eSchema);
 
 /** The R2 account, credentials and bucket, for lib/attachments/storage.ts. */
 export const storageEnv = concern(storageSchema);
+const optional = z.preprocess(
+  (value) => (value === "" ? undefined : value),
+  z.string().optional(),
+);
+export const observabilityEnv = concern(
+  z.object({
+    SENTRY_DSN: z.preprocess(
+      (value) => (value === "" ? undefined : value),
+      z.url().optional(),
+    ),
+    SENTRY_ENVIRONMENT: optional.pipe(
+      z
+        .string()
+        .regex(/^[a-zA-Z0-9_-]+$/)
+        .optional(),
+    ),
+    SENTRY_AUTH_TOKEN: optional,
+    R2_ACCOUNT_ID: optional.pipe(
+      z
+        .string()
+        .regex(/^[a-f0-9]{32}$/)
+        .optional(),
+    ),
+  }),
+);

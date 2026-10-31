@@ -19,7 +19,17 @@ async function view(page: Page) {
   ).json();
 }
 
+const violations = new WeakMap<Page, string[]>();
+test.afterEach(async ({ page }) => {
+  expect(violations.get(page)).toEqual([]);
+});
 test.beforeEach(async ({ page }) => {
+  const errors: string[] = [];
+  violations.set(page, errors);
+  page.on("console", (message) => {
+    if (/content security policy|violates.*directive/i.test(message.text()))
+      errors.push(message.text());
+  });
   await page.route("**/*", async (route) => {
     const url = new URL(route.request().url());
     if (url.origin !== "http://127.0.0.1:3008") {
@@ -27,7 +37,11 @@ test.beforeEach(async ({ page }) => {
     }
     await route.continue();
   });
-  await page.goto("/sign-in");
+  const response = await page.goto("/sign-in");
+  expect(response?.headers()["content-security-policy"]).toContain("nonce-");
+  expect(response?.headers()["content-security-policy"]).not.toContain(
+    "unsafe-eval",
+  );
   await page.getByRole("button", { name: "E2E sign in" }).click();
   await expect(
     page.getByText("10 Credits left", { exact: true }),
