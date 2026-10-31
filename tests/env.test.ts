@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { databaseUrl, EnvError, parseEnv } from "../lib/env";
+import { byokKeyring, databaseUrl, EnvError, parseEnv } from "../lib/env";
 
 const valid = {
   DATABASE_URL: "postgres://localhost/galaxy",
@@ -16,6 +16,12 @@ const valid = {
   UPSTASH_REDIS_REST_TOKEN: "secret",
   TURNSTILE_SECRET_KEY: "secret",
   TURNSTILE_SITE_KEY: "public",
+  REDIS_URL: "rediss://default:password@redis.example:6379",
+  OPENROUTER_API_KEY: "platform-key",
+  BYOK_ENCRYPTION_KEYS_JSON: JSON.stringify({
+    v1: Buffer.alloc(32, 1).toString("base64"),
+  }),
+  BYOK_ACTIVE_KEY_VERSION: "v1",
 };
 
 test("parses a complete environment", () => {
@@ -41,6 +47,10 @@ test("names every missing or invalid variable in one error", () => {
     "BETTER_AUTH_URL",
     "GITHUB_CLIENT_ID",
     "GITHUB_CLIENT_SECRET",
+    "REDIS_URL",
+    "OPENROUTER_API_KEY",
+    "BYOK_ENCRYPTION_KEYS_JSON",
+    "BYOK_ACTIVE_KEY_VERSION",
   ]) {
     expect(message).toContain(name);
   }
@@ -51,4 +61,28 @@ test("databaseUrl needs only DATABASE_URL", () => {
     "postgres://db/x",
   );
   expect(() => databaseUrl({})).toThrow("DATABASE_URL is required");
+});
+
+test("validates the Redis URL and the BYOK keyring", () => {
+  const env = parseEnv(valid);
+  expect(env.BYOK_KEYRING.active).toBe("v1");
+  expect(env.BYOK_KEYRING.keys.get("v1")?.length).toBe(32);
+  expect(() =>
+    parseEnv({ ...valid, REDIS_URL: "https://redis.example" }),
+  ).toThrow("REDIS_URL must be a redis:// or rediss:// URL");
+  expect(() => parseEnv({ ...valid, BYOK_ACTIVE_KEY_VERSION: "v2" })).toThrow(
+    "BYOK_ACTIVE_KEY_VERSION must name a version",
+  );
+  for (const keys of [
+    "not json",
+    "[]",
+    "{}",
+    JSON.stringify({ v1: "short" }),
+    JSON.stringify({ v1: Buffer.alloc(31).toString("base64") }),
+    JSON.stringify({ "bad version!": Buffer.alloc(32).toString("base64") }),
+  ]) {
+    expect(() =>
+      byokKeyring({ ...valid, BYOK_ENCRYPTION_KEYS_JSON: keys }),
+    ).toThrow("BYOK_ENCRYPTION_KEYS_JSON must map");
+  }
 });
