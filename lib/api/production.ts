@@ -14,9 +14,10 @@ import { errorResponse, requireSameOrigin } from "@/lib/api/respond";
 import { requireAccess } from "@/lib/auth/access";
 import { testOpenRouterKey } from "@/lib/byok/store";
 import { getDb } from "@/lib/db/client";
-import { appOrigins, platformKey } from "@/lib/env";
+import { appOrigins, platformKey, testE2eEnabled } from "@/lib/env";
 import { redisRateLimit } from "@/lib/ratelimit";
 import { getRedis, lazyKv } from "@/lib/redis";
+import { e2eLanguageModel } from "@/lib/testing/e2e-model";
 
 const languageModel: LanguageModelFactory = (modelId, apiKey, options) =>
   createOpenRouter({ apiKey, compatibility: "strict" }).chat(modelId, {
@@ -55,10 +56,15 @@ export function appContext(): AppContext {
         (await streamContext()).resumeExistingStream(...args),
     },
     rateLimit: redisRateLimit(kv),
-    languageModel,
+    languageModel: testE2eEnabled() ? e2eLanguageModel : languageModel,
     platformKey: () => platformKey(),
     byokEnv: process.env,
-    testByokKey: (key) => testOpenRouterKey(key),
+    testByokKey: (key) =>
+      testE2eEnabled()
+        ? Promise.resolve(
+            key === "e2e-byok-key-00000000000000000000000000000000",
+          )
+        : testOpenRouterKey(key),
     authenticate: async (request) =>
       (await requireAccess(request.headers)).userId,
     sessionCreatedAt: async (request) =>
