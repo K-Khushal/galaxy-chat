@@ -1,3 +1,4 @@
+import { readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import type {
   LanguageModelV4StreamPart,
@@ -108,7 +109,8 @@ let template: Promise<PGlite> | null = null;
 async function migratedDatabase() {
   template ??= (async () => {
     const pg = await PGlite.create();
-    for (const file of ["0000_auth.sql", "0001_credits.sql", "0002_chat.sql"]) {
+    const files = (await readdir("drizzle")).filter((f) => f.endsWith(".sql"));
+    for (const file of files.sort()) {
       await pg.exec(await Bun.file(resolve("drizzle", file)).text());
     }
     return pg;
@@ -163,7 +165,7 @@ export async function createHarness(timing: Partial<GenerationTiming> = {}) {
         }),
       });
     },
-    platformKey: PLATFORM_KEY,
+    platformKey: () => PLATFORM_KEY,
     byokEnv: BYOK_ENV,
     testByokKey: async () => state.keyAccepted,
     authenticate: async (request) => {

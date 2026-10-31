@@ -1,16 +1,27 @@
 import "server-only";
 import { UI_MESSAGE_STREAM_HEADERS } from "ai";
 import type { z } from "zod";
+import { EnvError } from "@/lib/env";
 import { AppError, logErrorId } from "@/lib/errors";
 
 export function json(body: unknown, status = 200): Response {
   return Response.json(body, { status });
 }
 
-/** AppErrors become `{ error: id }`; anything else is logged by ID only. */
+/**
+ * AppErrors become `{ error: id }`. A missing or invalid environment variable
+ * is a 503 and its message (variable names only, never values) is logged.
+ * Anything else is logged by ID only.
+ */
 export function errorResponse(error: unknown): Response {
   if (error instanceof AppError) {
     return json({ error: error.id }, error.status);
+  }
+  if (error instanceof EnvError) {
+    process.stderr.write(
+      `${JSON.stringify({ level: "error", id: "env_invalid", message: error.message })}\n`,
+    );
+    return json({ error: "server_misconfigured" }, 503);
   }
   logErrorId("internal_error");
   return json({ error: "internal_error" }, 500);

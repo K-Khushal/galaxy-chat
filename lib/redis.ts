@@ -1,21 +1,28 @@
 import "server-only";
 import { createClient } from "redis";
 import type { Publisher, Subscriber } from "resumable-stream";
-import { env } from "@/lib/env";
+import { redisUrl } from "@/lib/env";
 import { logErrorId } from "@/lib/errors";
 
 /**
- * The few atomic Redis operations Galaxy needs. Production wraps node-redis
- * (below); tests use an in-memory implementation.
+ * The few atomic Redis operations Galaxy needs: Generation locks, rate limits
+ * and Better Auth's secondary storage. Production wraps node-redis (below);
+ * tests use an in-memory implementation.
  */
 export type Kv = {
   get(key: string): Promise<string | null>;
-  /** SET with a millisecond expiry. With `nx`, only when absent. True if written. */
+  /**
+   * SET, with a millisecond expiry when `px` is given. With `nx`, only when
+   * absent. True if written.
+   */
   set(
     key: string,
     value: string,
-    options: { px: number; nx?: boolean },
+    options?: { px?: number; nx?: boolean },
   ): Promise<boolean>;
+  del(key: string): Promise<void>;
+  /** Reads and deletes the key in one step. */
+  getDel(key: string): Promise<string | null>;
   /** Deletes the key only while it still holds `value`. */
   delIfEquals(key: string, value: string): Promise<boolean>;
   /** Re-arms the expiry only while the key still holds `value`. */
@@ -52,11 +59,15 @@ type RedisClient = ReturnType<typeof newClient>;
 function kvFor(client: RedisClient): Kv {
   return {
     get: (key) => client.get(key),
-    set: async (key, value, { px, nx }) =>
+    set: async (key, value, { px, nx } = {}) =>
       (await client.set(key, value, {
-        expiration: { type: "PX", value: px },
+        ...(px ? { expiration: { type: "PX" as const, value: px } } : {}),
         ...(nx ? { condition: "NX" as const } : {}),
       })) === "OK",
+    del: async (key) => {
+      await client.del(key);
+    },
+    getDel: (key) => client.getDel(key),
     delIfEquals: async (key, value) =>
       Number(
         await client.eval(DEL_IF_EQUALS, { keys: [key], arguments: [value] }),
@@ -81,12 +92,18 @@ function kvFor(client: RedisClient): Kv {
 let connecting: Promise<RedisConnections> | null = null;
 
 async function connect(): Promise<RedisConnections> {
-  const client = newClient(env().REDIS_URL);
+  const client = newClient(redisUrl());
   const subscriber = client.duplicate();
   // Never log the error itself: it can include the URL and its password.
   client.on("error", () => logErrorId("redis_error"));
   subscriber.on("error", () => logErrorId("redis_subscriber_error"));
-  await Promise.all([client.connect(), subscriber.connect()]);
+  try {
+    await Promise.all([client.connect(), subscriber.connect()]);
+  } catch (error) {
+    client.destroy();
+    subscriber.destroy();
+    throw error;
+  }
   return {
     kv: kvFor(client),
     publisher: client as unknown as Publisher,
@@ -94,11 +111,30 @@ async function connect(): Promise<RedisConnections> {
   };
 }
 
-/** Shared Redis connections for the server process, connected on first use. */
+/**
+ * The server process's one Redis client and its pub/sub subscriber, created
+ * and connected on first use. The only place that opens Redis connections.
+ */
 export function getRedis(): Promise<RedisConnections> {
   connecting ??= connect().catch((error) => {
     connecting = null;
     throw error;
   });
   return connecting;
+}
+
+/** A Kv that connects on first use, so callers can be built without Redis. */
+export function lazyKv(): Kv {
+  return {
+    get: async (key) => (await getRedis()).kv.get(key),
+    set: async (key, value, options) =>
+      (await getRedis()).kv.set(key, value, options),
+    del: async (key) => (await getRedis()).kv.del(key),
+    getDel: async (key) => (await getRedis()).kv.getDel(key),
+    delIfEquals: async (key, value) =>
+      (await getRedis()).kv.delIfEquals(key, value),
+    expireIfEquals: async (key, value, px) =>
+      (await getRedis()).kv.expireIfEquals(key, value, px),
+    incrWindow: async (key, px) => (await getRedis()).kv.incrWindow(key, px),
+  };
 }

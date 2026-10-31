@@ -8,9 +8,9 @@ const required = (name: string) =>
     .trim()
     .min(1, `${name} is required`);
 
-const databaseShape = {
+const databaseSchema = z.object({
   DATABASE_URL: required("DATABASE_URL"),
-};
+});
 
 export type ByokKeyring = { keys: Map<string, Buffer>; active: string };
 
@@ -74,8 +74,7 @@ const byokSchema = z
     return { keys, active: value.BYOK_ACTIVE_KEY_VERSION };
   });
 
-const envSchema = z.object({
-  ...databaseShape,
+const authSchema = z.object({
   BETTER_AUTH_SECRET: required("BETTER_AUTH_SECRET").min(
     32,
     "BETTER_AUTH_SECRET must be at least 32 characters",
@@ -87,24 +86,33 @@ const envSchema = z.object({
   GITHUB_CLIENT_SECRET: required("GITHUB_CLIENT_SECRET"),
   GOOGLE_CLIENT_ID: required("GOOGLE_CLIENT_ID"),
   GOOGLE_CLIENT_SECRET: required("GOOGLE_CLIENT_SECRET"),
-  CREDIT_IDENTITY_KEY: required("CREDIT_IDENTITY_KEY").min(32),
+  CREDIT_IDENTITY_KEY: required("CREDIT_IDENTITY_KEY").min(
+    32,
+    "CREDIT_IDENTITY_KEY must be at least 32 characters",
+  ),
   RESEND_API_KEY: required("RESEND_API_KEY"),
   AUTH_EMAIL_FROM: required("AUTH_EMAIL_FROM"),
-  UPSTASH_REDIS_REST_URL: required("UPSTASH_REDIS_REST_URL").pipe(z.url()),
-  UPSTASH_REDIS_REST_TOKEN: required("UPSTASH_REDIS_REST_TOKEN"),
   TURNSTILE_SECRET_KEY: required("TURNSTILE_SECRET_KEY"),
   TURNSTILE_SITE_KEY: required("TURNSTILE_SITE_KEY"),
-  // Upstash Redis over TCP/TLS (not the REST URL): Generation locks, Stop
-  // signals, resumable-stream pub/sub and rate limits (ADR 0004).
-  REDIS_URL: required("REDIS_URL").regex(
-    /^rediss?:\/\/.+/,
-    "REDIS_URL must be a redis:// or rediss:// URL",
-  ),
-  // The Platform key: OpenRouter key that serves Replies paid with Credits.
-  OPENROUTER_API_KEY: required("OPENROUTER_API_KEY"),
 });
 
-export type Env = z.infer<typeof envSchema> & { BYOK_KEYRING: ByokKeyring };
+export type AuthEnv = z.infer<typeof authSchema>;
+
+// Upstash Redis over TCP/TLS (not its REST URL): auth storage, rate limits,
+// Generation locks, Stop signals and resumable-stream pub/sub (ADR 0004).
+const redisSchema = z
+  .object({
+    REDIS_URL: required("REDIS_URL").regex(
+      /^rediss?:\/\/.+/,
+      "REDIS_URL must be a redis:// or rediss:// URL",
+    ),
+  })
+  .transform((value) => value.REDIS_URL);
+
+// The Platform key: the OpenRouter key that serves Replies paid with Credits.
+const platformKeySchema = z
+  .object({ OPENROUTER_API_KEY: required("OPENROUTER_API_KEY") })
+  .transform((value) => value.OPENROUTER_API_KEY);
 
 export class EnvError extends Error {
   constructor(issues: readonly z.core.$ZodIssue[]) {
@@ -114,41 +122,39 @@ export class EnvError extends Error {
   }
 }
 
-function parse<T extends z.ZodType>(schema: T, source: EnvSource): z.output<T> {
-  const result = schema.safeParse(source);
-  if (!result.success) {
-    throw new EnvError(result.error.issues);
-  }
-  return result.data;
+/**
+ * A reader for one concern's variables. Called with a source it parses that
+ * source; called with none it parses process.env on first use and caches the
+ * result. Nothing is read until a caller needs it, so a route that does not use
+ * a concern works without its variables (and `next build` needs no secrets).
+ */
+function concern<T extends z.ZodType>(schema: T) {
+  let cached: z.output<T> | undefined;
+  return (source?: EnvSource): z.output<T> => {
+    const parse = (from: EnvSource) => {
+      const result = schema.safeParse(from);
+      if (!result.success) throw new EnvError(result.error.issues);
+      return result.data as z.output<T>;
+    };
+    if (source) return parse(source);
+    cached ??= parse(process.env);
+    return cached;
+  };
 }
 
-/** Parses every variable the app needs. Throws EnvError listing what is wrong. */
-export function parseEnv(source: EnvSource): Env {
-  const app = envSchema.safeParse(source);
-  const byok = byokSchema.safeParse(source);
-  if (!app.success || !byok.success) {
-    throw new EnvError([
-      ...(app.error?.issues ?? []),
-      ...(byok.error?.issues ?? []),
-    ]);
-  }
-  return { ...app.data, BYOK_KEYRING: byok.data };
-}
+/** DATABASE_URL, for the database client and the migration runner. */
+export const databaseUrl = concern(
+  databaseSchema.transform((value) => value.DATABASE_URL),
+);
 
-let cached: Env | null = null;
+/** Better Auth, OAuth, Resend, Turnstile and the Credit identity key. */
+export const authEnv = concern(authSchema);
 
-/** Validated process.env, parsed on first use so `next build` needs no secrets. */
-export function env(): Env {
-  cached ??= parseEnv(process.env);
-  return cached;
-}
+/** REDIS_URL, for lib/redis.ts. */
+export const redisUrl = concern(redisSchema);
 
-/** Only the database URL, for the migration runner. */
-export function databaseUrl(source: EnvSource = process.env): string {
-  return parse(z.object(databaseShape), source).DATABASE_URL;
-}
+/** OPENROUTER_API_KEY, for Replies paid with Credits. */
+export const platformKey = concern(platformKeySchema);
 
-/** Only the BYOK keyring, for lib/byok/crypto.ts. Throws EnvError. */
-export function byokKeyring(source: EnvSource): ByokKeyring {
-  return parse(byokSchema, source);
-}
+/** The BYOK keyring, for lib/byok/crypto.ts. */
+export const byokKeyring = concern(byokSchema);

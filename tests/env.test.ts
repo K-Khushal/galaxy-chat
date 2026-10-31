@@ -1,8 +1,14 @@
 import { expect, test } from "bun:test";
-import { byokKeyring, databaseUrl, EnvError, parseEnv } from "../lib/env";
+import {
+  authEnv,
+  byokKeyring,
+  databaseUrl,
+  EnvError,
+  platformKey,
+  redisUrl,
+} from "../lib/env";
 
-const valid = {
-  DATABASE_URL: "postgres://localhost/galaxy",
+const auth = {
   BETTER_AUTH_SECRET: "x".repeat(32),
   BETTER_AUTH_URL: "http://127.0.0.1:3000",
   GITHUB_CLIENT_ID: "client",
@@ -12,67 +18,73 @@ const valid = {
   CREDIT_IDENTITY_KEY: "x".repeat(32),
   RESEND_API_KEY: "secret",
   AUTH_EMAIL_FROM: "Galaxy <auth@example.com>",
-  UPSTASH_REDIS_REST_URL: "https://redis.example.com",
-  UPSTASH_REDIS_REST_TOKEN: "secret",
   TURNSTILE_SECRET_KEY: "secret",
   TURNSTILE_SITE_KEY: "public",
-  REDIS_URL: "rediss://default:password@redis.example:6379",
-  OPENROUTER_API_KEY: "platform-key",
+};
+const keyring = {
   BYOK_ENCRYPTION_KEYS_JSON: JSON.stringify({
     v1: Buffer.alloc(32, 1).toString("base64"),
   }),
   BYOK_ACTIVE_KEY_VERSION: "v1",
 };
 
-test("parses a complete environment", () => {
-  expect(parseEnv(valid).CREDIT_IDENTITY_KEY).toHaveLength(32);
-});
-
-test("names every missing or invalid variable in one error", () => {
-  const error = (() => {
-    try {
-      return parseEnv({
-        BETTER_AUTH_SECRET: "too-short",
-        BETTER_AUTH_URL: "no",
-      });
-    } catch (caught) {
-      return caught;
-    }
-  })();
-  expect(error).toBeInstanceOf(EnvError);
-  const message = (error as EnvError).message;
-  for (const name of [
-    "DATABASE_URL",
-    "BETTER_AUTH_SECRET",
-    "BETTER_AUTH_URL",
-    "GITHUB_CLIENT_ID",
-    "GITHUB_CLIENT_SECRET",
-    "REDIS_URL",
-    "OPENROUTER_API_KEY",
-    "BYOK_ENCRYPTION_KEYS_JSON",
-    "BYOK_ACTIVE_KEY_VERSION",
-  ]) {
-    expect(message).toContain(name);
+function thrown(run: () => unknown) {
+  try {
+    run();
+  } catch (caught) {
+    return caught;
   }
-});
+  throw new Error("expected an error");
+}
 
-test("databaseUrl needs only DATABASE_URL", () => {
+test("each concern reads only its own variables", () => {
+  expect(authEnv(auth).CREDIT_IDENTITY_KEY).toHaveLength(32);
   expect(databaseUrl({ DATABASE_URL: " postgres://db/x " })).toBe(
     "postgres://db/x",
   );
+  expect(
+    redisUrl({ REDIS_URL: "rediss://default:pw@redis.example:6379" }),
+  ).toBe("rediss://default:pw@redis.example:6379");
+  expect(platformKey({ OPENROUTER_API_KEY: "platform-key" })).toBe(
+    "platform-key",
+  );
+  expect(byokKeyring(keyring).active).toBe("v1");
+});
+
+test("a missing variable fails loudly, naming it, only for its concern", () => {
+  const error = thrown(() =>
+    authEnv({ BETTER_AUTH_SECRET: "too-short", BETTER_AUTH_URL: "no" }),
+  );
+  expect(error).toBeInstanceOf(EnvError);
+  const message = (error as EnvError).message;
+  for (const name of [
+    "BETTER_AUTH_SECRET",
+    "BETTER_AUTH_URL",
+    "GITHUB_CLIENT_ID",
+    "GOOGLE_CLIENT_SECRET",
+    "CREDIT_IDENTITY_KEY",
+    "RESEND_API_KEY",
+    "TURNSTILE_SECRET_KEY",
+  ]) {
+    expect(message).toContain(name);
+  }
+  for (const name of ["REDIS_URL", "OPENROUTER_API_KEY", "BYOK_", "DATABASE"]) {
+    expect(message).not.toContain(name);
+  }
   expect(() => databaseUrl({})).toThrow("DATABASE_URL is required");
+  expect(() => redisUrl({})).toThrow("REDIS_URL is required");
+  expect(() => platformKey({})).toThrow("OPENROUTER_API_KEY is required");
+  expect(() => byokKeyring({})).toThrow("BYOK_ENCRYPTION_KEYS_JSON");
 });
 
 test("validates the Redis URL and the BYOK keyring", () => {
-  const env = parseEnv(valid);
-  expect(env.BYOK_KEYRING.active).toBe("v1");
-  expect(env.BYOK_KEYRING.keys.get("v1")?.length).toBe(32);
-  expect(() =>
-    parseEnv({ ...valid, REDIS_URL: "https://redis.example" }),
-  ).toThrow("REDIS_URL must be a redis:// or rediss:// URL");
-  expect(() => parseEnv({ ...valid, BYOK_ACTIVE_KEY_VERSION: "v2" })).toThrow(
-    "BYOK_ACTIVE_KEY_VERSION must name a version",
+  expect(() => redisUrl({ REDIS_URL: "https://redis.example" })).toThrow(
+    "REDIS_URL must be a redis:// or rediss:// URL",
   );
+  expect(() =>
+    byokKeyring({ ...keyring, BYOK_ACTIVE_KEY_VERSION: "v2" }),
+  ).toThrow("BYOK_ACTIVE_KEY_VERSION must name a version");
+  expect(byokKeyring(keyring).keys.get("v1")?.length).toBe(32);
   for (const keys of [
     "not json",
     "[]",
@@ -82,7 +94,7 @@ test("validates the Redis URL and the BYOK keyring", () => {
     JSON.stringify({ "bad version!": Buffer.alloc(32).toString("base64") }),
   ]) {
     expect(() =>
-      byokKeyring({ ...valid, BYOK_ENCRYPTION_KEYS_JSON: keys }),
+      byokKeyring({ ...keyring, BYOK_ENCRYPTION_KEYS_JSON: keys }),
     ).toThrow("BYOK_ENCRYPTION_KEYS_JSON must map");
   }
 });

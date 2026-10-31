@@ -35,8 +35,8 @@ export type AppContext = {
   >;
   rateLimit: RateLimit;
   languageModel: LanguageModelFactory;
-  /** The Platform key, used only for Replies paid with Credits. */
-  platformKey: string;
+  /** The Platform key, read only when Credits pay for a Reply. */
+  platformKey: () => string;
   /** Holds the BYOK keyring variables. */
   byokEnv: EnvSource;
   testByokKey: (key: string) => Promise<boolean>;

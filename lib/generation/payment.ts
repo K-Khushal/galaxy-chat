@@ -15,14 +15,20 @@ export type Payment = { source: PaymentSource; apiKey: string };
 export async function takePayment(
   input: {
     db: Db;
-    platformKey: string;
+    platformKey: () => string;
     loadByokKey: (userId: string) => Promise<string | null>;
   },
   userId: string,
   model: ResolvedModel,
 ): Promise<Payment> {
   if (model.creditModel && (await spendCredit(input.db, userId))) {
-    return { source: "credits", apiKey: input.platformKey };
+    try {
+      return { source: "credits", apiKey: input.platformKey() };
+    } catch (error) {
+      // No key to pay with: the Reply never starts, so the credit comes back.
+      await refundCredit(input.db, userId);
+      throw error;
+    }
   }
   const key = await input.loadByokKey(userId);
   if (key) return { source: "byok", apiKey: key };

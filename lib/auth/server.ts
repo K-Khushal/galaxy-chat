@@ -14,10 +14,10 @@ import {
 } from "@/lib/credits";
 import { type Database, getDb } from "@/lib/db/client";
 import { account, authSchema, user } from "@/lib/db/schema";
-import { type Env, env } from "@/lib/env";
+import { type AuthEnv, authEnv } from "@/lib/env";
 
 export function createAuth(
-  config: Env,
+  config: AuthEnv,
   db: Database,
   services = authServices(config),
 ) {
@@ -152,6 +152,6 @@ export function createAuth(
 }
 let cached: ReturnType<typeof createAuth> | null = null;
 export function getAuth() {
-  cached ??= createAuth(env(), getDb());
+  cached ??= createAuth(authEnv(), getDb());
   return cached;
 }

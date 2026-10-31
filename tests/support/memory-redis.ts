@@ -30,6 +30,10 @@ export class MemoryRedis implements Kv, Publisher, Subscriber {
     return entry;
   }
 
+  clear() {
+    this.entries.clear();
+  }
+
   keys() {
     return [...this.entries.keys()].filter((key) => this.read(key));
   }
@@ -52,6 +56,16 @@ export class MemoryRedis implements Kv, Publisher, Subscriber {
       expiresAt: ttl === null ? null : this.now() + ttl,
     });
     return true;
+  }
+
+  async del(key: string) {
+    this.entries.delete(key);
+  }
+
+  async getDel(key: string) {
+    const value = this.read(key)?.value ?? null;
+    this.entries.delete(key);
+    return value;
   }
 
   async incr(key: string) {

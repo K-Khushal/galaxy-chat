@@ -14,9 +14,9 @@ import { errorResponse } from "@/lib/api/respond";
 import { requireAccess } from "@/lib/auth/access";
 import { testOpenRouterKey } from "@/lib/byok/store";
 import { getDb } from "@/lib/db/client";
-import { env } from "@/lib/env";
+import { platformKey } from "@/lib/env";
 import { redisRateLimit } from "@/lib/ratelimit";
-import { getRedis } from "@/lib/redis";
+import { getRedis, lazyKv } from "@/lib/redis";
 
 const languageModel: LanguageModelFactory = (modelId, apiKey, options) =>
   createOpenRouter({ apiKey, compatibility: "strict" }).chat(modelId, {
@@ -28,8 +28,7 @@ const languageModel: LanguageModelFactory = (modelId, apiKey, options) =>
 
 let streams: ResumableStreamContext | null = null;
 
-async function appContext(): Promise<AppContext> {
-  const config = env();
+async function streamContext(): Promise<ResumableStreamContext> {
   const redis = await getRedis();
   streams ??= createResumableStreamContext({
     publisher: redis.publisher,
@@ -37,13 +36,27 @@ async function appContext(): Promise<AppContext> {
     waitUntil: (promise) => after(() => promise),
     keyPrefix: "galaxy:generation",
   });
+  return streams;
+}
+
+/**
+ * Builds the request context without touching Redis, the Platform key or the
+ * BYOK keyring: each is read, and Redis connected, only when a route uses it.
+ */
+function appContext(): AppContext {
+  const kv = lazyKv();
   return {
     db: getDb(),
-    kv: redis.kv,
-    streams,
-    rateLimit: redisRateLimit(redis.kv),
+    kv,
+    streams: {
+      createNewResumableStream: async (...args) =>
+        (await streamContext()).createNewResumableStream(...args),
+      resumeExistingStream: async (...args) =>
+        (await streamContext()).resumeExistingStream(...args),
+    },
+    rateLimit: redisRateLimit(kv),
     languageModel,
-    platformKey: config.OPENROUTER_API_KEY,
+    platformKey: () => platformKey(),
     byokEnv: process.env,
     testByokKey: (key) => testOpenRouterKey(key),
     authenticate: async (request) =>
@@ -60,12 +73,10 @@ export function route(
   handler: (ctx: AppContext, request: Request, id: string) => Promise<Response>,
 ) {
   return async (request: Request, { params }: { params: Params }) => {
-    let ctx: AppContext;
     try {
-      ctx = await appContext();
+      return await handler(appContext(), request, (await params)?.id ?? "");
     } catch (error) {
       return errorResponse(error);
     }
-    return handler(ctx, request, (await params)?.id ?? "");
   };
 }

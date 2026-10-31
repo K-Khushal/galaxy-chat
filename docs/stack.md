@@ -1,6 +1,6 @@
 # Current stack
 
-What is checked in after the M0 teardown. Exact versions are in `package.json` and `bun.lock`. The rebuild plan is the `v1` roadmap issue; binding decisions are in [`adr/`](adr/).
+What is checked in. Exact versions are in `package.json` and `bun.lock`. The rebuild plan is the `v1` roadmap issue; binding decisions are in [`adr/`](adr/).
 
 | Area | Implementation |
 | --- | --- |
@@ -11,7 +11,8 @@ What is checked in after the M0 teardown. Exact versions are in `package.json` a
 | Persistence | Drizzle ORM and postgres.js; versioned SQL migrations in `drizzle/` |
 | Markdown | Streamdown, wrapped in `components/elements/response.tsx` |
 | Secrets | AES-256-GCM sealing for BYOK keys in `lib/byok/crypto.ts` |
-| Configuration | One zod schema in `lib/env.ts`, mirrored by `.env.example` |
+| Redis | One TCP/TLS connection (`REDIS_URL`, node-redis) from `lib/redis.ts`, created on first use, plus a second subscriber connection for resumable-stream pub/sub. It backs Better Auth `secondaryStorage` (sessions, sign-in codes), the fixed-window limits in `lib/ratelimit.ts` (email-code requests per IP and per address, Message sends, BYOK saves), Generation locks and Stop signals. No REST client |
+| Configuration | zod schemas in `lib/env.ts`, one per concern (database, auth, Redis, Platform key, BYOK keyring), each read on first use and mirrored by `.env.example`. A missing variable fails with its name when something uses it, not at startup |
 | Verification | Bun tests with PGlite, TypeScript, Biome; CI runs the same four checks |
 
-Not here yet, by design: AI SDK, model registry, chat, Credits and BYOK key storage. They arrive in M1–M8 on top of this foundation.
+Not here yet, by design: the chat UI, attachments and the rest of M4–M8. They arrive on top of this foundation.
