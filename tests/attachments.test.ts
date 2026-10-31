@@ -1368,3 +1368,15 @@ test("account route retries captured keys after the User cascade on storage fail
   expect(h.storage.objects.has(key)).toBe(false);
   expect(await h.db.select().from(attachmentTombstone)).toHaveLength(1);
 });
+
+test("expired presign tombstone drops on the first successful delete", async () => {
+  await setup();
+  const view = await pendingUpload();
+  await h.pg.query(
+    `UPDATE attachment SET presign_expires_at = now() - interval '1 second' WHERE id = $1`,
+    [view.id],
+  );
+  expect((await remove(view.id)).status).toBe(204);
+  expect(storedKeys()).toEqual([]);
+  expect(await h.db.select().from(attachmentTombstone)).toHaveLength(0);
+});

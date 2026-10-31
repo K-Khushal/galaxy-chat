@@ -11,7 +11,7 @@ export default async function ChatPage({
 }) {
   const { id } = await params;
   const response = await getChatRoute(
-    appContext(),
+    await appContext(),
     new Request("http://localhost/api/chats", { headers: await headers() }),
     id,
   );

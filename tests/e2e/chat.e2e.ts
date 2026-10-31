@@ -228,4 +228,114 @@ test("save Custom instructions and delete account", async ({ page }) => {
   await expect(page).toHaveURL(/\/sign-in/);
 });
 
-test.skip("attachments: upload, send, and reload a Message with an attachment (PR #85 redesign)", () => {});
+test("attachments upload offline, reach the mock, persist and delete with the Chat", async ({
+  page,
+}) => {
+  const image = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9WQAAAAASUVORK5CYII=",
+    "base64",
+  );
+  let putUrl = "";
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/test-e2e/storage?*", async (route) => {
+    if (route.request().method() === "PUT") {
+      putUrl = route.request().url();
+      await held;
+    }
+    await route.continue();
+  });
+  const uploaded = page.waitForResponse(
+    (r) =>
+      r.url().includes("/api/attachments") && r.request().method() === "POST",
+  );
+  await page
+    .locator('input[type="file"]')
+    .first()
+    .setInputFiles({ name: "star.png", mimeType: "image/png", buffer: image });
+  await uploaded;
+  await expect(
+    page.getByRole("progressbar", { name: "Uploading star.png" }),
+  ).toBeVisible();
+  release();
+  await expect(
+    page.getByRole("progressbar", { name: "Uploading star.png" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Remove star.png" }),
+  ).toBeVisible();
+  await composer(page).evaluate((element) => {
+    const transfer = new DataTransfer();
+    transfer.items.add(
+      new File(["offline attachment text"], "notes.txt", {
+        type: "text/plain",
+      }),
+    );
+    element.dispatchEvent(
+      new ClipboardEvent("paste", { bubbles: true, clipboardData: transfer }),
+    );
+  });
+  await expect(
+    page.getByRole("button", { name: "Remove notes.txt" }),
+  ).toBeVisible();
+  await expect(page.getByRole("progressbar")).toHaveCount(0);
+  await send(page, "[attachments] Read these files");
+  await complete(page);
+  await expect(
+    page
+      .getByRole("article", { name: "Reply", exact: true })
+      .getByText("A thoughtful Reply. Complete.", { exact: true }),
+  ).toBeVisible();
+  const saved = await view(page);
+  expect(
+    (
+      await page.request.put(putUrl, {
+        data: "offline attachment text",
+        headers: { "Content-Type": "text/plain" },
+      })
+    ).status(),
+  ).toBe(400);
+  expect(
+    (
+      await page.request.put(putUrl, {
+        data: "offline attachment text",
+        headers: { "Content-Type": "text/plain", "If-None-Match": "*" },
+      })
+    ).status(),
+  ).toBe(412);
+  const id = page.url().split("/").at(-1);
+  const urls: string[] = [];
+  for (const part of saved.messages[0].parts.filter(
+    (part: { type: string }) => part.type === "file",
+  )) {
+    const response = await page.request.get(part.url, { maxRedirects: 0 });
+    const url = response.headers().location;
+    urls.push(url);
+    expect((await page.request.head(url)).status()).toBe(200);
+    const range = await page.request.get(url, {
+      headers: { Range: "bytes=0-3" },
+    });
+    expect(range.status()).toBe(206);
+    expect((await range.body()).length).toBe(4);
+  }
+  expect(urls).toHaveLength(2);
+  await page.reload();
+  await expect(page.getByRole("img", { name: "star.png" })).toBeVisible();
+  await expect
+    .poll(() =>
+      page
+        .getByRole("img", { name: "star.png" })
+        .evaluate((img: HTMLImageElement) => img.naturalWidth),
+    )
+    .toBeGreaterThan(0);
+  await expect(page.getByRole("link", { name: "notes.txt" })).toBeVisible();
+  await page.getByRole("button", { name: /^Actions for/ }).click();
+  await page.getByRole("menuitem", { name: "Delete", exact: true }).click();
+  await page.getByRole("button", { name: "Delete Chat", exact: true }).click();
+  await expect(page).toHaveURL(/\/chat$/);
+  expect((await page.request.get(`/api/chats/${id}`)).status()).toBe(404);
+  for (const url of urls)
+    expect((await page.request.head(url)).status()).toBe(404);
+});

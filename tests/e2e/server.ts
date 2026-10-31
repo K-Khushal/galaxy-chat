@@ -1,3 +1,13 @@
+// Build test implementations separately; Next never bundles these runtime modules.
+const seams = await Bun.build({
+  entrypoints: ["./lib/testing/e2e-seams.ts"],
+  outdir: "./tests/e2e/.runtime",
+  naming: "seams.mjs",
+  target: "node",
+  conditions: ["react-server"],
+});
+if (!seams.success) throw new Error(String(seams.logs));
+
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +20,21 @@ const build = Bun.spawn(["bun", "run", "build"], {
   stderr: "inherit",
 });
 if (await build.exited) process.exit(1);
+// Fail CI if test implementations accidentally become production dependencies.
+const leakPattern =
+  /MockLanguageModelV4|e2e-byok-key-000|Mock did not receive image|const grants =/;
+const leaked: string[] = [];
+for await (const file of new Bun.Glob("**/*").scan({
+  cwd: ".next/server",
+  onlyFiles: true,
+})) {
+  if (leakPattern.test(await Bun.file(join(".next/server", file)).text()))
+    leaked.push(file);
+}
+if (leaked.length)
+  throw new Error(
+    `Test implementation leaked into production output: ${leaked.join(", ")}`,
+  );
 const directory = await mkdtemp(join(tmpdir(), "galaxy-e2e-"));
 const bindir = (await Bun.$`pg_config --bindir`.text()).trim();
 await Bun.$`${bindir}/initdb -D ${directory} -U postgres -A trust --no-locale`.quiet();
@@ -39,11 +64,11 @@ process.on("SIGTERM", cleanup);
 process.on("SIGINT", cleanup);
 for (let attempt = 0; ; attempt++) {
   const ready = Bun.spawn(
-    [`${bindir}/pg_isready`, "-h", "127.0.0.1", "-p", "5544"],
+    [`${bindir}/pg_isready`, "-h", "127.0.0.1", "-p", "5544", "-U", "postgres"],
     { stdout: "ignore", stderr: "ignore" },
   );
   if ((await ready.exited) === 0) break;
-  if (attempt === 50) {
+  if (attempt === 300) {
     cleanup();
     throw new Error("Local E2E PostgreSQL did not start");
   }

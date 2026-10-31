@@ -28,7 +28,15 @@ mock stream; only Messages containing [slow] get a 5-second Reply. BYOK
 validation accepts only the dummy key in the spec; encryption and persistence
 use the normal app path. Real Redis handles locks, Stop and resume coordination.
 Server fetch and browser routing reject external HTTP, including provider calls.
-Attachments remain explicitly skipped pending PR #85.
+Attachments use an in-memory object store with local capability URLs: conditional PUT,
+HEAD, and ranged GET stay offline. The attachment flow verifies image and text
+parts reach the mock, persist on reload, and are removed with the Chat.
+
+The harness bundles the model, dummy BYOK validator and storage into the ignored
+`tests/e2e/.runtime/seams.mjs` before starting Next. A guarded native dynamic import
+loads that file only in the test runtime; it is absent from Next deployment output.
+After each production build the harness scans `.next/server` for implementation
+identifiers and fails if any leaked.
 
 CI runs this as a separate informational job (branch protection is unchanged),
 caches Chromium, and retains traces, screenshots and the HTML report on failure.

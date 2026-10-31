@@ -120,10 +120,25 @@ function markDeleting(db: Db, userId: string, condition: SQL | undefined) {
   });
 }
 
+/** URLs already expired at deletion need no late-PUT retention. */
+async function settleExpired(db: Db, rows: AttachmentRow[]) {
+  if (!rows.length) return;
+  await db.delete(attachmentTombstone).where(
+    and(
+      inArray(
+        attachmentTombstone.id,
+        rows.map((row) => row.id),
+      ),
+      sql`${attachmentTombstone.purgeAfter} <= now()`,
+    ),
+  );
+}
+
 /** Early removal is useful, but the independent tombstone owns eventual purge. */
 async function finishDeleting(deps: AttachmentDeps, rows: AttachmentRow[]) {
   if (!rows.length) return;
   await deps.storage.remove(rows.map((row) => objectKey(row.userId, row.id)));
+  await settleExpired(deps.db, rows);
   await deps.db.delete(attachment).where(
     and(
       eq(attachment.status, "deleted"),
@@ -518,6 +533,7 @@ export async function deleteChatWithFiles(
       await deps.storage.remove(
         rows.map((row) => objectKey(row.userId, row.id)),
       );
+    await settleExpired(tx as unknown as Db, rows);
     await tx.delete(chat).where(eq(chat.id, chatId));
     return true;
   });
@@ -543,10 +559,18 @@ export async function deleteUserAttachments(
   for (const key of keys) {
     try {
       await deps.storage.remove([key]);
+      await deps.db
+        .delete(attachmentTombstone)
+        .where(
+          and(
+            eq(attachmentTombstone.key, key),
+            sql`${attachmentTombstone.purgeAfter} <= now()`,
+          ),
+        );
     } catch {
       failed = true;
     }
   }
-  // Retain all tombstones, including successful early deletes, for late PUTs.
+  // Unexpired presigns retain tombstones after early deletes for late PUTs.
   if (failed) throw new Error("attachment cleanup failed");
 }
