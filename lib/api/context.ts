@@ -41,6 +41,7 @@ export type AppContext = {
   byokEnv: EnvSource;
   testByokKey: (key: string) => Promise<boolean>;
   /** The signed-in User's ID; throws a 401/403 AppError otherwise. */
+  sessionCreatedAt: (request: Request) => Promise<Date>;
   authenticate: (request: Request) => Promise<string>;
   /** Keeps the function alive for background work (Next.js `after`). */
   waitUntil: (promise: Promise<unknown>) => void;

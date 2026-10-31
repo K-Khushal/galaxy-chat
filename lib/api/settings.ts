@@ -1,5 +1,5 @@
 import "server-only";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { deleteAccount } from "@/lib/account/delete";
 import { getSettings } from "@/lib/account/settings";
@@ -8,6 +8,7 @@ import { handle, json, readJson } from "@/lib/api/respond";
 import { getByokKeyStatus } from "@/lib/byok/store";
 import { getCredits } from "@/lib/credits";
 import { chat, message, user, userSettings } from "@/lib/db/schema";
+import { AppError } from "@/lib/errors";
 
 export function getSettingsRoute(ctx: AppContext, request: Request) {
   return handle(async () => {
@@ -52,7 +53,32 @@ export function saveSettingsRoute(ctx: AppContext, request: Request) {
 export function exportAccountRoute(ctx: AppContext, request: Request) {
   return handle(async () => {
     const id = await ctx.authenticate(request);
-    const [profile] = await ctx.db.select().from(user).where(eq(user.id, id));
+    // Check stored content size before loading the export into application memory.
+    const [size] = await ctx.db
+      .select({
+        bytes: sql<number>`coalesce(sum(octet_length(row_to_json(${message})::text)), 0)`,
+      })
+      .from(message)
+      .innerJoin(chat, eq(message.chatId, chat.id))
+      .where(eq(chat.userId, id));
+    const [chatSize] = await ctx.db
+      .select({
+        bytes: sql<number>`coalesce(sum(octet_length(row_to_json(${chat})::text)), 0)`,
+      })
+      .from(chat)
+      .where(eq(chat.userId, id));
+    if (Number(size.bytes) + Number(chatSize.bytes) > 10 * 1024 * 1024)
+      throw new AppError("export_too_large", 413);
+    const [profile] = await ctx.db
+      .select({
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        image: user.image,
+        createdAt: user.createdAt,
+      })
+      .from(user)
+      .where(eq(user.id, id));
     const chats = await ctx.db.select().from(chat).where(eq(chat.userId, id));
     const messages = await ctx.db
       .select({ message })
@@ -85,7 +111,25 @@ export function deleteAccountRoute(ctx: AppContext, request: Request) {
       request,
       z.strictObject({ confirmation: z.literal("DELETE") }),
     );
+    const createdAt = (await ctx.sessionCreatedAt(request)).getTime();
+    if (
+      !Number.isFinite(createdAt) ||
+      createdAt > Date.now() ||
+      Date.now() - createdAt > 24 * 60 * 60_000
+    ) {
+      throw new AppError("reauth_required", 403);
+    }
     await deleteAccount(ctx, id);
     return new Response(null, { status: 204 });
+  });
+}
+
+export function getCreditsRoute(ctx: AppContext, request: Request) {
+  return handle(async () => {
+    const id = await ctx.authenticate(request);
+    return json({
+      credits: await getCredits(ctx.db, id),
+      key: await getByokKeyStatus(ctx.db, id),
+    });
   });
 }

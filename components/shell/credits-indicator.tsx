@@ -4,7 +4,7 @@ export function CreditsIndicator() {
   const [data, setData] = useState<{ credits: number; key: unknown }>();
   useEffect(() => {
     const refresh = () => {
-      void fetch("/api/settings")
+      void fetch("/api/credits")
         .then((r) => (r.ok ? r.json() : null))
         .then((value) => {
           if (value) setData(value);
@@ -20,11 +20,19 @@ export function CreditsIndicator() {
     };
   }, []);
   if (!data) return null;
+  return <CreditsStatus data={data} />;
+}
+
+export function CreditsStatus({
+  data,
+}: {
+  data: { credits: number; key: unknown };
+}) {
   return (
     <p className="px-2 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
       {data.credits === 0 && data.key
         ? "Using your key"
-        : `${data.credits} credits left`}
+        : `${data.credits} Credits left`}
       {data.credits <= 2 && !data.key && (
         <span className="block">Add your key to keep chatting.</span>
       )}

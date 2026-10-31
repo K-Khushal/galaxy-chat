@@ -6,6 +6,7 @@ import { session as sessionTable } from "@/lib/db/schema";
 import { AppError, logErrorId } from "@/lib/errors";
 
 export type Access = {
+  sessionCreatedAt: Date;
   userId: string;
   name: string;
   email: string;
@@ -40,6 +41,7 @@ export async function requireAccess(headers: Headers): Promise<Access> {
   }
   const user = session.user as SessionUser;
   return {
+    sessionCreatedAt: new Date(session.session.createdAt),
     userId: user.id,
     name: user.name,
     email: user.email,

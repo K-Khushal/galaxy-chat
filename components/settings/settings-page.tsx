@@ -5,6 +5,7 @@ import { ByokDialog } from "@/components/chat/byok-dialog";
 import { ThemeSwitcher } from "@/components/shell/theme-switcher";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { authClient } from "@/lib/auth/client";
 
@@ -92,7 +93,7 @@ export function SettingsPage() {
                   }, "Custom instructions saved.");
                 }}
               >
-                <label htmlFor="about-you">About you</label>
+                <Label htmlFor="about-you">About you</Label>
                 <Textarea
                   id="about-you"
                   maxLength={2000}
@@ -104,9 +105,9 @@ export function SettingsPage() {
                     })
                   }
                 />
-                <label htmlFor="response-instructions">
+                <Label htmlFor="response-instructions">
                   How should Galaxy respond
-                </label>
+                </Label>
                 <Textarea
                   id="response-instructions"
                   maxLength={2000}
@@ -173,7 +174,7 @@ export function SettingsPage() {
             </section>
             <section className={section}>
               <h2 className="text-lg font-medium">Usage</h2>
-              <p>{data.credits} credits left</p>
+              <p>{data.credits} Credits left</p>
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm">
                   <caption className="text-left text-muted-foreground">
@@ -181,10 +182,10 @@ export function SettingsPage() {
                   </caption>
                   <thead>
                     <tr>
-                      <th>Date</th>
-                      <th>Model</th>
-                      <th>Tokens</th>
-                      <th>Cost</th>
+                      <th scope="col">Date</th>
+                      <th scope="col">Model</th>
+                      <th scope="col">Tokens</th>
+                      <th scope="col">Cost</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -259,17 +260,22 @@ export function SettingsPage() {
                   </Button>
                 </div>
               ))}
-              <a className="underline" href="/api/account/export" download>
-                Export account as JSON
-              </a>
+              <Button
+                variant="link"
+                render={
+                  <a href="/api/account/export" download>
+                    Export account as JSON
+                  </a>
+                }
+              />
               <h3>Delete account</h3>
               <p className="text-sm text-muted-foreground">
                 Permanently deletes your Chats, Messages, keys and settings. We
                 keep hashed grant records to prevent repeat sign-up Credits.
               </p>
-              <label htmlFor="delete-confirmation">
+              <Label htmlFor="delete-confirmation">
                 Type DELETE to confirm
-              </label>
+              </Label>
               <Input
                 id="delete-confirmation"
                 value={confirmation}
@@ -282,8 +288,11 @@ export function SettingsPage() {
                 onClick={() =>
                   void act(async () => {
                     await api("/api/account", { confirmation }, "DELETE");
-                    await authClient.signOut();
-                    window.location.assign("/sign-in");
+                    try {
+                      await authClient.signOut();
+                    } finally {
+                      window.location.assign("/sign-in");
+                    }
                   }, "Account deleted.")
                 }
               >

@@ -1,8 +1,7 @@
 "use client";
 
-import { ChevronsUpDown, LogOut, Settings, Sun } from "lucide-react";
+import { ChevronsUpDown, LogOut, Settings } from "lucide-react";
 import Link from "next/link";
-import { useTheme } from "next-themes";
 import { useSignOut } from "@/components/auth/use-sign-out";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -28,7 +27,6 @@ function initials(name: string) {
 
 export function AccountMenu({ user }: { user: AccountUser }) {
   const { pending, signOut } = useSignOut();
-  const { resolvedTheme, setTheme } = useTheme();
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -56,12 +54,6 @@ export function AccountMenu({ user }: { user: AccountUser }) {
         <DropdownMenuItem render={<Link href="/chat/settings" />}>
           <Settings />
           Settings
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
-        >
-          <Sun />
-          Toggle theme
         </DropdownMenuItem>
         <DropdownMenuItem
           disabled={pending}

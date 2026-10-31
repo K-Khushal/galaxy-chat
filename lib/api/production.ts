@@ -10,11 +10,11 @@ import {
   DEFAULT_TIMING,
   type LanguageModelFactory,
 } from "@/lib/api/context";
-import { errorResponse } from "@/lib/api/respond";
+import { errorResponse, requireSameOrigin } from "@/lib/api/respond";
 import { requireAccess } from "@/lib/auth/access";
 import { testOpenRouterKey } from "@/lib/byok/store";
 import { getDb } from "@/lib/db/client";
-import { platformKey } from "@/lib/env";
+import { appUrl, platformKey } from "@/lib/env";
 import { redisRateLimit } from "@/lib/ratelimit";
 import { getRedis, lazyKv } from "@/lib/redis";
 
@@ -61,6 +61,8 @@ export function appContext(): AppContext {
     testByokKey: (key) => testOpenRouterKey(key),
     authenticate: async (request) =>
       (await requireAccess(request.headers)).userId,
+    sessionCreatedAt: async (request) =>
+      (await requireAccess(request.headers)).sessionCreatedAt,
     waitUntil: (promise) => after(() => promise),
     timing: DEFAULT_TIMING,
   };
@@ -74,6 +76,7 @@ export function route(
 ) {
   return async (request: Request, { params }: { params: Params }) => {
     try {
+      requireSameOrigin(request, appUrl());
       return await handler(appContext(), request, (await params)?.id ?? "");
     } catch (error) {
       return errorResponse(error);

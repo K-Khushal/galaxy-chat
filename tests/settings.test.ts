@@ -44,7 +44,24 @@ test("export is owner scoped and never contains keys or sessions", async () => {
   expect(JSON.stringify(data)).not.toContain(bob);
   expect(JSON.stringify(data)).not.toContain("Bob private");
   expect(data.settings.aboutYou).toBe("Alice only");
-  expect(data.sessions).toBeUndefined();
+  expect(Object.keys(data.profile).sort()).toEqual([
+    "createdAt",
+    "email",
+    "id",
+    "image",
+    "name",
+  ]);
+  for (const forbidden of [
+    "ciphertext",
+    "nonce",
+    "token",
+    "accessToken",
+    "identityHash",
+    "sessions",
+    "accounts",
+  ]) {
+    expect(JSON.stringify(data)).not.toContain(`"${forbidden}":`);
+  }
 });
 test("settings reject unauthenticated access and excessive lengths", async () => {
   for (const handler of [
@@ -131,4 +148,45 @@ test("Custom instructions reach the mock model as system context", async () => {
   expect(JSON.stringify(h.state.calls)).toContain("I study astronomy");
   expect(JSON.stringify(h.state.calls)).toContain("Be concise");
   expect(JSON.stringify(h.state.calls)).toContain("system");
+});
+
+test("deletion rejects missing confirmation and stale sessions", async () => {
+  expect(
+    (await call(h, deleteAccountRoute, { user: "alice", body: {} })).status,
+  ).toBe(400);
+  h.ctx.sessionCreatedAt = async () => new Date(Date.now() - 25 * 60 * 60_000);
+  const response = await call(h, deleteAccountRoute, {
+    user: "alice",
+    body: { confirmation: "DELETE" },
+  });
+  expect(await response.json()).toEqual({ error: "reauth_required" });
+  expect(
+    (await h.pg.query('SELECT * FROM "user" WHERE id = $1', ["alice"])).rows,
+  ).toHaveLength(1);
+});
+
+test("storage failure is retried after database deletion", async () => {
+  const { attachmentCleanup } = await import("../lib/account/delete");
+  const original = attachmentCleanup.deleteUserAttachments;
+  let attempts = 0;
+  attachmentCleanup.deleteUserAttachments = async () => {
+    expect(
+      (await h.pg.query('SELECT id FROM "user" WHERE id = $1', ["alice"])).rows,
+    ).toHaveLength(0);
+    if (++attempts === 1) throw new Error("private storage details");
+  };
+  try {
+    expect(
+      (
+        await call(h, deleteAccountRoute, {
+          user: "alice",
+          body: { confirmation: "DELETE" },
+        })
+      ).status,
+    ).toBe(204);
+    await h.settle();
+    expect(attempts).toBe(2);
+  } finally {
+    attachmentCleanup.deleteUserAttachments = original;
+  }
 });

@@ -158,3 +158,12 @@ export const platformKey = concern(platformKeySchema);
 
 /** The BYOK keyring, for lib/byok/crypto.ts. */
 export const byokKeyring = concern(byokSchema);
+
+/** Canonical application URL for same-origin mutation protection. */
+export const appUrl = concern(
+  z
+    .object({
+      BETTER_AUTH_URL: required("BETTER_AUTH_URL").pipe(z.url()),
+    })
+    .transform((value) => value.BETTER_AUTH_URL),
+);

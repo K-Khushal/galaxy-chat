@@ -98,3 +98,18 @@ export function sseResponse(stream: ReadableStream<string>): Response {
     headers: UI_MESSAGE_STREAM_HEADERS,
   });
 }
+
+/** Reject browser mutations from any origin other than the configured app. */
+export function requireSameOrigin(request: Request, appUrl: string) {
+  if (["GET", "HEAD", "OPTIONS"].includes(request.method)) return;
+  const expected = new URL(appUrl).origin;
+  const origin = request.headers.get("origin");
+  if (origin !== null) {
+    if (origin !== expected) throw new AppError("cross_origin", 403);
+  } else if (
+    new URL(request.url).origin !== expected ||
+    request.headers.get("sec-fetch-site") !== "same-origin"
+  ) {
+    throw new AppError("cross_origin", 403);
+  }
+}

@@ -211,6 +211,7 @@ export async function createHarness(timing: Partial<GenerationTiming> = {}) {
     platformKey: () => PLATFORM_KEY,
     byokEnv: BYOK_ENV,
     testByokKey: async () => state.keyAccepted,
+    sessionCreatedAt: async () => new Date(),
     authenticate: async (request) => {
       const user = request.headers.get("x-test-user");
       if (!user) throw new AppError("unauthenticated", 401);

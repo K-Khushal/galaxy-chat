@@ -12,9 +12,13 @@ import {
   type MessageRow,
 } from "@/lib/chat/store";
 import { pathTo } from "@/lib/chat/tree";
-import { chat, message } from "@/lib/db/schema";
+import { chat, message, user } from "@/lib/db/schema";
 import { AppError, logErrorId } from "@/lib/errors";
-import { acquireGeneration, releaseGeneration } from "@/lib/generation/locks";
+import {
+  acquireGeneration,
+  isStopRequested,
+  releaseGeneration,
+} from "@/lib/generation/locks";
 import {
   choosePayment,
   type Payment,
@@ -215,6 +219,8 @@ export async function startGeneration(
           (entry) => ({ role: entry.role, parts: entry.parts }) as UIMessage,
         ),
     );
+    if (await isStopRequested(ctx.kv, generationId))
+      throw new AppError("generation_stopped", 409);
     const context = await customContext(ctx.db, userId);
     const stream = await runGeneration(ctx, {
       chatId: chatRow.id,
@@ -225,7 +231,7 @@ export async function startGeneration(
       payment,
       lease,
       messages: modelMessages,
-      system: context || undefined,
+      system: context,
       initialParts,
       titleFrom: chatRow.title === null ? firstUserText(steps.history) : null,
     });
@@ -295,6 +301,12 @@ async function recordReply(
 ): Promise<MessageParts> {
   const { steps, chatRow } = input;
   return ctx.db.transaction(async (tx) => {
+    const [owner] = await tx
+      .select({ id: user.id })
+      .from(user)
+      .where(eq(user.id, input.userId))
+      .for("update");
+    if (!owner) throw new AppError("unauthenticated", 401);
     if (!(await spendForReply(tx, input.userId, payment))) {
       throw new CreditsGone();
     }
