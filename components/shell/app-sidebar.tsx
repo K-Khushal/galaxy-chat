@@ -22,10 +22,16 @@ import {
 
 /**
  * The sidebar frame. `footer` is the slot for the account menu and the
- * Credits indicator; the chat list fills the "Chats" group in a later
- * milestone.
+ * Credits indicator; `chats` fills the "Chats" group.
  */
-export function AppSidebar({ footer }: { footer: ReactNode }) {
+export function AppSidebar({
+  footer,
+  chats,
+}: {
+  footer: ReactNode;
+  /** The Chat list. Defaults to an empty-state hint. */
+  chats?: ReactNode;
+}) {
   const pathname = usePathname();
   const { toggleSidebar, state } = useSidebar();
   const [searchOpen, setSearchOpen] = useState(false);
@@ -87,9 +93,11 @@ export function AppSidebar({ footer }: { footer: ReactNode }) {
           <SidebarGroup className="group-data-[collapsible=icon]:hidden">
             <SidebarGroupLabel>Chats</SidebarGroupLabel>
             <SidebarGroupContent>
-              <p className="px-2 py-1.5 text-sm text-muted-foreground">
-                Your chats will appear here.
-              </p>
+              {chats ?? (
+                <p className="px-2 py-1.5 text-sm text-muted-foreground">
+                  Your chats will appear here.
+                </p>
+              )}
             </SidebarGroupContent>
           </SidebarGroup>
         </SidebarContent>

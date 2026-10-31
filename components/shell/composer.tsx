@@ -1,6 +1,7 @@
 "use client";
 
 import { ArrowUp, Plus } from "lucide-react";
+import { useId } from "react";
 import { Button } from "@/components/ui/button";
 
 /**
@@ -8,17 +9,18 @@ import { Button } from "@/components/ui/button";
  * attachments and autosize behaviour are wired up when chat lands.
  */
 export function Composer() {
+  const inputId = useId();
   return (
     <form
       aria-label="Message Galaxy"
       className="flex w-full flex-col gap-1 rounded-3xl border border-input bg-card p-2 shadow-xs transition-[border-color,box-shadow] duration-150 ease-out focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/20"
       onSubmit={(event) => event.preventDefault()}
     >
-      <label htmlFor="composer-input" className="sr-only">
+      <label htmlFor={inputId} className="sr-only">
         Message
       </label>
       <textarea
-        id="composer-input"
+        id={inputId}
         rows={1}
         placeholder="Message Galaxy"
         className="field-sizing-content max-h-48 min-h-10 w-full resize-none bg-transparent px-3 py-2 text-message outline-none placeholder:text-muted-foreground"

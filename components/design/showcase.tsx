@@ -1,6 +1,7 @@
 "use client";
 
 import { ArrowUp, Bell, Download, Plus, Search, Trash2 } from "lucide-react";
+import { useId } from "react";
 import { Composer } from "@/components/shell/composer";
 import { StatePanel } from "@/components/shell/state-panel";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -70,6 +71,7 @@ const variants = [
 ] as const;
 
 export function Showcase() {
+  const uid = useId();
   return (
     <div className="flex flex-col gap-10">
       <Block title="Colour tokens">
@@ -195,40 +197,51 @@ export function Showcase() {
       <Block title="Fields">
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="d-input">Label</Label>
-            <Input id="d-input" placeholder="Placeholder" />
+            <Label htmlFor={`${uid}-d-input`}>Label</Label>
+            <Input id={`${uid}-d-input`} placeholder="Placeholder" />
           </div>
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="d-value">Filled</Label>
-            <Input id="d-value" defaultValue="sk-proj-…" />
+            <Label htmlFor={`${uid}-d-value`}>Filled</Label>
+            <Input id={`${uid}-d-value`} defaultValue="sk-proj-…" />
           </div>
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="d-focus">Focused (forced)</Label>
-            <Input id="d-focus" placeholder="Focused" className={focusRing} />
+            <Label htmlFor={`${uid}-d-focus`}>Focused (forced)</Label>
+            <Input
+              id={`${uid}-d-focus`}
+              placeholder="Focused"
+              className={focusRing}
+            />
           </div>
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="d-invalid">Invalid</Label>
-            <Input id="d-invalid" aria-invalid defaultValue="Not a key" />
+            <Label htmlFor={`${uid}-d-invalid`}>Invalid</Label>
+            <Input
+              id={`${uid}-d-invalid`}
+              aria-invalid
+              defaultValue="Not a key"
+            />
             <p className="text-xs text-destructive">
               Enter a key that starts with sk-.
             </p>
           </div>
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="d-disabled">Disabled</Label>
-            <Input id="d-disabled" disabled placeholder="Disabled" />
+            <Label htmlFor={`${uid}-d-disabled`}>Disabled</Label>
+            <Input id={`${uid}-d-disabled`} disabled placeholder="Disabled" />
           </div>
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="d-group">Input group</Label>
+            <Label htmlFor={`${uid}-d-group`}>Input group</Label>
             <InputGroup>
               <InputGroupAddon>
                 <Search />
               </InputGroupAddon>
-              <InputGroupInput id="d-group" placeholder="Search chats" />
+              <InputGroupInput
+                id={`${uid}-d-group`}
+                placeholder="Search chats"
+              />
             </InputGroup>
           </div>
           <div className="flex flex-col gap-1.5 sm:col-span-2">
-            <Label htmlFor="d-textarea">Textarea</Label>
-            <Textarea id="d-textarea" placeholder="Write something" />
+            <Label htmlFor={`${uid}-d-textarea`}>Textarea</Label>
+            <Textarea id={`${uid}-d-textarea`} placeholder="Write something" />
           </div>
         </div>
       </Block>
@@ -236,16 +249,16 @@ export function Showcase() {
       <Block title="Switch">
         <div className="flex flex-wrap items-center gap-6">
           <div className="flex items-center gap-2">
-            <Switch id="s-off" />
-            <Label htmlFor="s-off">Off</Label>
+            <Switch id={`${uid}-s-off`} />
+            <Label htmlFor={`${uid}-s-off`}>Off</Label>
           </div>
           <div className="flex items-center gap-2">
-            <Switch id="s-on" defaultChecked />
-            <Label htmlFor="s-on">On</Label>
+            <Switch id={`${uid}-s-on`} defaultChecked />
+            <Label htmlFor={`${uid}-s-on`}>On</Label>
           </div>
           <div className="flex items-center gap-2">
-            <Switch id="s-disabled" disabled />
-            <Label htmlFor="s-disabled">Disabled</Label>
+            <Switch id={`${uid}-s-disabled`} disabled />
+            <Label htmlFor={`${uid}-s-disabled`}>Disabled</Label>
           </div>
         </div>
       </Block>
