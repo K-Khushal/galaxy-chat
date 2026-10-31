@@ -16,6 +16,7 @@ import {
 } from "@/lib/chat/store";
 import { AppError } from "@/lib/errors";
 import { getActiveGeneration } from "@/lib/generation/locks";
+import { recoverRepliesQuietly } from "@/lib/generation/recover";
 import { resumeGeneration, stopGeneration } from "@/lib/generation/resume";
 import { startGeneration } from "@/lib/generation/start";
 import { DEFAULT_MODEL_ID, resolveModel } from "@/lib/models";
@@ -35,6 +36,9 @@ async function ownedChat(ctx: AppContext, userId: string, chatId: string) {
 }
 
 async function chatView(ctx: AppContext, row: ChatRow) {
+  // Settles credits of Generations that died before their first token, so
+  // the view shows those Replies as they ended.
+  await recoverRepliesQuietly(ctx, row.userId);
   const [messages, active] = await Promise.all([
     listMessages(ctx.db, row.id),
     getActiveGeneration(ctx.kv, row.id),

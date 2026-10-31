@@ -1,6 +1,6 @@
 import "server-only";
 import type { UIMessage } from "ai";
-import { and, asc, desc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import {
   latestLeaf,
   pathTo,
@@ -16,6 +16,7 @@ import {
   type PaymentSource,
 } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/types";
+import { refundReplyCredit } from "@/lib/generation/payment";
 
 export type ChatRow = typeof chat.$inferSelect;
 export type MessageRow = typeof message.$inferSelect;
@@ -176,6 +177,15 @@ export async function setTitleIfMissing(db: Db, chatId: string, title: string) {
     .where(and(eq(chat.id, chatId), isNull(chat.title)));
 }
 
+/** Whether a Reply has any text or reasoning. */
+export function hasContent(parts: MessageParts) {
+  return parts.some(
+    (part) =>
+      (part.type === "text" || part.type === "reasoning") &&
+      part.text.length > 0,
+  );
+}
+
 /** Marks every text and reasoning part as done, so stored parts never stream. */
 export function settleParts(parts: MessageParts): MessageParts {
   return parts.map((part) =>
@@ -185,36 +195,85 @@ export function settleParts(parts: MessageParts): MessageParts {
   );
 }
 
-/** Saves a running Reply's partial parts. Never touches its status. */
+/**
+ * The Generation writing a Reply. Every write below is fenced on it: once a
+ * newer Generation takes the Reply over, the old one's writes change nothing.
+ */
+export type ReplyOwner = { replyId: string; generationId: string };
+
+const owned = (owner: ReplyOwner) =>
+  and(
+    eq(message.id, owner.replyId),
+    eq(message.generationId, owner.generationId),
+  );
+
+/**
+ * Saves a running Reply's partial parts. Never touches its status. False when
+ * this Generation no longer owns the Reply.
+ */
 export async function checkpointReply(
   db: Db,
-  replyId: string,
+  owner: ReplyOwner,
   parts: MessageParts,
-) {
-  await db
+): Promise<boolean> {
+  const rows = await db
     .update(message)
     .set({ parts: settleParts(parts), updatedAt: new Date() })
-    .where(eq(message.id, replyId));
+    .where(owned(owner))
+    .returning({ id: message.id });
+  return rows.length > 0;
 }
 
+/** Records the first token; from then on the credit is never refunded. */
+export async function markFirstToken(
+  db: Db,
+  owner: ReplyOwner,
+): Promise<boolean> {
+  const rows = await db
+    .update(message)
+    .set({ firstTokenAt: sql`coalesce(${message.firstTokenAt}, now())` })
+    .where(owned(owner))
+    .returning({ id: message.id });
+  return rows.length > 0;
+}
+
+export type ReplyResult = {
+  parts: MessageParts;
+  status: MessageStatus;
+  usage: MessageUsage | null;
+  error: string | null;
+  /** Whether this Generation produced a token. */
+  firstToken: boolean;
+};
+
+/**
+ * Saves a Reply's final state. With `refundTo`, also gives back its credit in
+ * the same transaction, if one is still owed (see refundReplyCredit). False
+ * when this Generation no longer owns the Reply; nothing is written then.
+ */
 export async function finishReply(
   db: Db,
-  replyId: string,
-  result: {
-    parts: MessageParts;
-    status: MessageStatus;
-    usage: MessageUsage | null;
-    error: string | null;
-  },
-) {
-  await db
-    .update(message)
-    .set({
-      parts: settleParts(result.parts),
-      status: result.status,
-      usage: result.usage,
-      error: result.error,
-      updatedAt: new Date(),
-    })
-    .where(eq(message.id, replyId));
+  owner: ReplyOwner,
+  result: ReplyResult,
+  refundTo: string | null = null,
+): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    const rows = await tx
+      .update(message)
+      .set({
+        parts: settleParts(result.parts),
+        status: result.status,
+        usage: result.usage,
+        error: result.error,
+        updatedAt: new Date(),
+        ...(result.firstToken
+          ? { firstTokenAt: sql`coalesce(${message.firstTokenAt}, now())` }
+          : {}),
+      })
+      .where(owned(owner))
+      .returning({ id: message.id });
+    if (rows.length === 0) return false;
+    if (refundTo !== null) await refundReplyCredit(tx, owner, refundTo);
+    return true;
+  });
 }

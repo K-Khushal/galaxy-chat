@@ -33,6 +33,15 @@ CREATE TABLE "message" (
     CHECK ("status" IN ('complete', 'stopped', 'interrupted', 'failed')),
   "model" text,
   "payment" text CHECK ("payment" IN ('credits', 'byok')),
+  -- The Generation that owns this Reply, replaced by every start, regenerate
+  -- or continue. Checkpoints and final saves only apply while it matches, so
+  -- a producer that lost its lock can never overwrite a newer Generation.
+  "generation_id" text,
+  -- When the owning Generation produced its first token. A credit is only
+  -- refunded while this is null (ADR 0003: refund before the first token).
+  "first_token_at" timestamp,
+  -- Set once, in the same transaction that gives the credit back.
+  "credit_refunded" boolean NOT NULL DEFAULT false,
   -- { inputTokens, outputTokens, totalTokens, cost } where known.
   "usage" jsonb,
   "error" text,
@@ -43,6 +52,12 @@ CREATE TABLE "message" (
 
 CREATE INDEX "message_chat_parent_idx"
   ON "message" ("chat_id", "parent_id", "created_at");
+
+-- Replies paid with a credit that may still be owed back: recovery after a
+-- crash before the first token scans only these.
+CREATE INDEX "message_unsettled_credit_idx" ON "message" ("chat_id")
+  WHERE "payment" = 'credits' AND "first_token_at" IS NULL
+    AND NOT "credit_refunded" AND "status" = 'interrupted';
 
 ALTER TABLE "chat"
   ADD CONSTRAINT "chat_active_leaf_message_fk"

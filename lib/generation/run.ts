@@ -12,7 +12,10 @@ import type { AppContext } from "@/lib/api/context";
 import {
   checkpointReply,
   finishReply,
+  hasContent,
   type MessageParts,
+  markFirstToken,
+  type ReplyOwner,
 } from "@/lib/chat/store";
 import type { MessageStatus, MessageUsage } from "@/lib/db/schema";
 import { logErrorId } from "@/lib/errors";
@@ -22,7 +25,7 @@ import {
   releaseGeneration,
   renewGeneration,
 } from "@/lib/generation/locks";
-import { type Payment, refundPayment } from "@/lib/generation/payment";
+import type { Payment } from "@/lib/generation/payment";
 import { generateChatTitle } from "@/lib/generation/title";
 import {
   CREDIT_MAX_OUTPUT_TOKENS,
@@ -33,6 +36,7 @@ import {
 export type RunInput = {
   chatId: string;
   userId: string;
+  /** Unique per Generation; also the fencing token stored on the Reply. */
   generationId: string;
   replyId: string;
   model: ResolvedModel;
@@ -110,14 +114,6 @@ function observe(
   });
 }
 
-function hasContent(parts: MessageParts) {
-  return parts.some(
-    (part) =>
-      (part.type === "text" || part.type === "reasoning") &&
-      part.text.length > 0,
-  );
-}
-
 function usageFrom(event: {
   totalUsage: {
     inputTokens?: number;
@@ -154,14 +150,31 @@ export async function runGeneration(
     finished: false,
     error: null,
   };
-  let endReason: "stop" | "deadline" | null = null;
+  const owner: ReplyOwner = {
+    replyId: input.replyId,
+    generationId: input.generationId,
+  };
+  // "lost": this Generation no longer owns its locks or its Reply.
+  let endReason: "stop" | "deadline" | "lost" | null = null;
+  let ownershipLost = false;
   let usage: MessageUsage | null = null;
   let finished: Promise<void> | null = null;
 
-  const end = (reason: "stop" | "deadline") => {
+  const end = (reason: "stop" | "deadline" | "lost") => {
     if (observed.finished) return;
     endReason ??= reason;
     controller.abort();
+  };
+  /** Its lock expired or a newer Generation took the Reply: stop at once. */
+  const lost = () => {
+    if (ownershipLost) return;
+    ownershipLost = true;
+    logErrorId("generation_ownership_lost");
+    end("lost");
+    // Give the User's slot back now; the Chat lock may already be another's.
+    releaseGeneration(ctx.kv, input.lease).catch(() =>
+      logErrorId("lock_release_failed"),
+    );
   };
 
   const credit = input.payment.source === "credits";
@@ -197,16 +210,23 @@ export async function runGeneration(
       parts: input.initialParts,
     };
     let dirty = false;
+    let firstTokenSaved = false;
     let writes = Promise.resolve();
-    const write = (task: () => Promise<void>) => {
-      writes = writes.then(task).catch(() => logErrorId("reply_save_failed"));
+    // A fenced write that changes no row means a newer Generation owns the
+    // Reply: stop the model instead of writing over it.
+    const write = (task: () => Promise<boolean>) => {
+      writes = writes
+        .then(async () => {
+          if (!ownershipLost && !(await task())) lost();
+        })
+        .catch(() => logErrorId("reply_save_failed"));
     };
     const timers = [
       setInterval(() => {
         if (!dirty) return;
         dirty = false;
         const parts = latest.parts;
-        write(() => checkpointReply(ctx.db, input.replyId, parts));
+        write(() => checkpointReply(ctx.db, owner, parts));
       }, timing.checkpointMs),
       setInterval(() => {
         isStopRequested(ctx.kv, input.generationId)
@@ -214,9 +234,9 @@ export async function runGeneration(
           .catch(() => logErrorId("stop_poll_failed"));
       }, timing.stopPollMs),
       setInterval(() => {
-        renewGeneration(ctx.kv, input.lease, timing.lockTtlMs).catch(() =>
-          logErrorId("lock_renew_failed"),
-        );
+        renewGeneration(ctx.kv, input.lease, timing.lockTtlMs)
+          .then((held) => held || lost())
+          .catch(() => logErrorId("lock_renew_failed"));
       }, timing.renewMs),
     ];
     const deadline = setTimeout(() => end("deadline"), timing.deadlineMs);
@@ -228,6 +248,10 @@ export async function runGeneration(
       })) {
         latest = message;
         dirty = true;
+        if (observed.firstToken && !firstTokenSaved) {
+          firstTokenSaved = true;
+          write(() => markFirstToken(ctx.db, owner));
+        }
       }
     } catch {
       observed.error ??= "generation_failed";
@@ -242,27 +266,37 @@ export async function runGeneration(
     let error: string | null = null;
     if (endReason === "stop") {
       status = "stopped";
-    } else if (endReason === "deadline") {
+    } else if (endReason === "deadline" || endReason === "lost") {
       status = "interrupted";
     } else if (observed.finished && !observed.error) {
       status = "complete";
     } else {
       error = observed.error ?? "generation_failed";
       status = hasContent(latest.parts) ? "interrupted" : "failed";
-      if (!observed.firstToken) {
-        await refundPayment(ctx.db, input.userId, input.payment).catch(() =>
-          logErrorId("credit_refund_failed"),
-        );
-      }
     }
+    // A credit is refunded when no token arrived, unless the User stopped it.
+    const refund =
+      !observed.firstToken &&
+      endReason !== "stop" &&
+      status !== "complete" &&
+      input.payment.source === "credits";
 
+    // Fenced like every write: if a newer Generation owns the Reply, this
+    // saves nothing and refunds nothing (the new owner settles the credit).
+    let saved = false;
     try {
-      await finishReply(ctx.db, input.replyId, {
-        parts: latest.parts,
-        status,
-        usage,
-        error,
-      });
+      saved = await finishReply(
+        ctx.db,
+        owner,
+        {
+          parts: latest.parts,
+          status,
+          usage,
+          error,
+          firstToken: observed.firstToken,
+        },
+        refund ? input.userId : null,
+      );
     } catch {
       logErrorId("reply_save_failed");
     }
@@ -272,7 +306,7 @@ export async function runGeneration(
       logErrorId("lock_release_failed"),
     );
 
-    if (status === "complete" && input.titleFrom !== null) {
+    if (saved && status === "complete" && input.titleFrom !== null) {
       await generateChatTitle(ctx, {
         chatId: input.chatId,
         text: input.titleFrom,

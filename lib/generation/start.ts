@@ -14,9 +14,15 @@ import { pathTo } from "@/lib/chat/tree";
 import { chat, message } from "@/lib/db/schema";
 import { AppError, logErrorId } from "@/lib/errors";
 import { acquireGeneration, releaseGeneration } from "@/lib/generation/locks";
-import { refundPayment, takePayment } from "@/lib/generation/payment";
+import {
+  choosePayment,
+  type Payment,
+  refundReplyCredit,
+  spendForReply,
+} from "@/lib/generation/payment";
+import { recoverRepliesQuietly } from "@/lib/generation/recover";
 import { runGeneration } from "@/lib/generation/run";
-import { resolveModel } from "@/lib/models";
+import { type ResolvedModel, resolveModel } from "@/lib/models";
 
 export type TextPart = { type: "text"; text: string };
 
@@ -124,10 +130,20 @@ function firstUserText(history: Plan["history"]): string {
     .join("\n");
 }
 
+/** The last credit went to another Generation between choosing and spending. */
+class CreditsGone extends Error {}
+
+const isDuplicate = (error: unknown) =>
+  error instanceof Error &&
+  /duplicate key|unique/i.test(`${error.message} ${error.cause ?? ""}`);
+
 /**
- * Starts a Generation in a Chat the caller owns: takes the locks, charges
- * payment, stores the Messages and starts the model. Every failure before the
- * model starts undoes the charge and the locks.
+ * Starts a Generation in a Chat the caller owns: takes the locks, then in one
+ * transaction spends the credit (if Credits pay) and records the Messages, so
+ * a credit is never taken without a Reply that records it. The Reply is
+ * stamped with this Generation's ID; only this Generation may write it until
+ * another takes it over. Any failure after that transaction refunds through
+ * the same once-only path that crash recovery uses.
  */
 export async function startGeneration(
   ctx: AppContext,
@@ -135,19 +151,14 @@ export async function startGeneration(
   chatRow: ChatRow,
   request: StartRequest,
 ): Promise<{ messageId: string; stream: ReadableStream<string> }> {
+  await recoverRepliesQuietly(ctx, userId);
   const messages = await listMessages(ctx.db, chatRow.id);
   const steps = plan(chatRow, messages, request);
   const model = resolveModel(steps.modelId);
   if (!model) throw new AppError("unknown_model", 400);
-  const modelMessages = await convertToModelMessages(
-    steps.history
-      .filter((entry) =>
-        entry.parts.some((part) => part.type !== "text" || part.text !== ""),
-      )
-      .map((entry) => ({ role: entry.role, parts: entry.parts }) as UIMessage),
-  );
 
   const generationId = crypto.randomUUID();
+  const owner = { replyId: steps.replyId, generationId };
   const acquired = await acquireGeneration(
     ctx.kv,
     {
@@ -164,85 +175,45 @@ export async function startGeneration(
     );
   }
   const { lease } = acquired;
-
-  let payment: Awaited<ReturnType<typeof takePayment>>;
-  try {
-    payment = await takePayment(
-      {
-        db: ctx.db,
-        platformKey: ctx.platformKey,
-        loadByokKey: (id) => loadByokKey(ctx.db, ctx.byokEnv, id),
-      },
-      userId,
-      model,
-    );
-  } catch (error) {
-    await releaseGeneration(ctx.kv, lease);
-    throw error;
-  }
-
-  const undo = async () => {
-    await refundPayment(ctx.db, userId, payment).catch(() =>
-      logErrorId("credit_refund_failed"),
-    );
-    await releaseGeneration(ctx.kv, lease).catch(() =>
+  const release = () =>
+    releaseGeneration(ctx.kv, lease).catch(() =>
       logErrorId("lock_release_failed"),
     );
-  };
 
+  let payment: Payment;
+  let initialParts: MessageParts;
   try {
-    await ctx.db.transaction(async (tx) => {
-      if (steps.userMessage) {
-        await tx.insert(message).values({
-          ...steps.userMessage,
-          chatId: chatRow.id,
-          role: "user",
-          status: "complete",
-        });
-      }
-      const reply = {
-        model: model.id,
-        payment: payment.source,
-        status: "interrupted" as const,
-        error: null,
-      };
-      if (steps.continuing) {
-        await tx
-          .update(message)
-          .set(reply)
-          .where(eq(message.id, steps.replyId));
-      } else {
-        await tx.insert(message).values({
-          ...reply,
-          id: steps.replyId,
-          chatId: chatRow.id,
-          parentId: steps.replyParentId,
-          role: "assistant",
-          parts: [],
-        });
-      }
-      await tx
-        .update(chat)
-        .set({
-          activeLeafMessageId: steps.replyId,
-          model:
-            request.trigger === "continue-message" ? chatRow.model : model.id,
-          updatedAt: new Date(),
-        })
-        .where(eq(chat.id, chatRow.id));
-    });
+    ({ payment, initialParts } = await payAndRecord(ctx, {
+      userId,
+      chatRow,
+      request,
+      steps,
+      model,
+      generationId,
+    }));
   } catch (error) {
-    await undo();
-    if (
-      error instanceof Error &&
-      /duplicate key|unique/i.test(`${error.message} ${error.cause ?? ""}`)
-    ) {
-      throw new AppError("message_exists", 409);
-    }
+    // Nothing was spent or stored: the transaction rolled back.
+    await release();
+    if (isDuplicate(error)) throw new AppError("message_exists", 409);
     throw error;
   }
 
   try {
+    const history = steps.continuing
+      ? [
+          ...steps.history.slice(0, -1),
+          { role: "assistant" as const, parts: initialParts },
+        ]
+      : steps.history;
+    const modelMessages = await convertToModelMessages(
+      history
+        .filter((entry) =>
+          entry.parts.some((part) => part.type !== "text" || part.text !== ""),
+        )
+        .map(
+          (entry) => ({ role: entry.role, parts: entry.parts }) as UIMessage,
+        ),
+    );
     const stream = await runGeneration(ctx, {
       chatId: chatRow.id,
       userId,
@@ -252,21 +223,138 @@ export async function startGeneration(
       payment,
       lease,
       messages: modelMessages,
-      initialParts: (steps.continuing?.parts as MessageParts) ?? [],
+      initialParts,
       titleFrom: chatRow.title === null ? firstUserText(steps.history) : null,
     });
     return { messageId: steps.replyId, stream };
   } catch {
     logErrorId("generation_start_failed");
-    if (!steps.continuing) {
-      await finishReply(ctx.db, steps.replyId, {
-        parts: [],
-        status: "failed",
+    await finishReply(
+      ctx.db,
+      owner,
+      {
+        parts: initialParts,
+        status: steps.continuing ? "interrupted" : "failed",
         usage: null,
-        error: "generation_unavailable",
-      }).catch(() => logErrorId("reply_save_failed"));
-    }
-    await undo();
+        error: steps.continuing ? null : "generation_unavailable",
+        firstToken: false,
+      },
+      userId,
+    ).catch(() => logErrorId("reply_save_failed"));
+    await release();
     throw new AppError("generation_unavailable", 503);
   }
+}
+
+type RecordInput = {
+  userId: string;
+  chatRow: ChatRow;
+  request: StartRequest;
+  steps: Plan;
+  model: ResolvedModel;
+  generationId: string;
+};
+
+/**
+ * Chooses who pays, then records the Reply with the payment. A second pass
+ * runs only when the last credit was spent elsewhere in between: then the
+ * BYOK key pays, or the User has neither.
+ */
+async function payAndRecord(
+  ctx: AppContext,
+  input: RecordInput,
+): Promise<{ payment: Payment; initialParts: MessageParts }> {
+  const payer = {
+    db: ctx.db,
+    platformKey: ctx.platformKey,
+    loadByokKey: (id: string) => loadByokKey(ctx.db, ctx.byokEnv, id),
+  };
+  for (let attempt = 0; ; attempt++) {
+    const payment = await choosePayment(payer, input.userId, input.model);
+    try {
+      return { payment, initialParts: await recordReply(ctx, input, payment) };
+    } catch (error) {
+      if (!(error instanceof CreditsGone)) throw error;
+      if (attempt > 0) throw new AppError("no_credits", 402);
+    }
+  }
+}
+
+/**
+ * The payment transaction: spends the credit, inserts or takes over the
+ * Reply (stamping it with this Generation's ID and resetting its payment
+ * record) and moves the active leaf. Returns the Reply's starting parts.
+ */
+async function recordReply(
+  ctx: AppContext,
+  input: RecordInput,
+  payment: Payment,
+): Promise<MessageParts> {
+  const { steps, chatRow } = input;
+  return ctx.db.transaction(async (tx) => {
+    if (!(await spendForReply(tx, input.userId, payment))) {
+      throw new CreditsGone();
+    }
+    if (steps.userMessage) {
+      await tx.insert(message).values({
+        ...steps.userMessage,
+        chatId: chatRow.id,
+        role: "user",
+        status: "complete",
+      });
+    }
+    const reply = {
+      model: input.model.id,
+      payment: payment.source,
+      generationId: input.generationId,
+      firstTokenAt: null,
+      creditRefunded: false,
+      status: "interrupted" as const,
+      error: null,
+    };
+    let initialParts: MessageParts = [];
+    if (steps.continuing) {
+      // Locked and re-read here: the previous Generation may have saved more
+      // since the plan was made, and must not write once this one owns it.
+      const [current] = await tx
+        .select()
+        .from(message)
+        .where(eq(message.id, steps.replyId))
+        .for("update");
+      if (!current || current.status !== "interrupted") {
+        throw new AppError("not_continuable", 409);
+      }
+      // Settle the previous Generation's credit before its record is reused.
+      if (current.generationId) {
+        await refundReplyCredit(
+          tx,
+          { replyId: current.id, generationId: current.generationId },
+          input.userId,
+        );
+      }
+      initialParts = current.parts as MessageParts;
+      await tx.update(message).set(reply).where(eq(message.id, steps.replyId));
+    } else {
+      await tx.insert(message).values({
+        ...reply,
+        id: steps.replyId,
+        chatId: chatRow.id,
+        parentId: steps.replyParentId,
+        role: "assistant",
+        parts: [],
+      });
+    }
+    await tx
+      .update(chat)
+      .set({
+        activeLeafMessageId: steps.replyId,
+        model:
+          input.request.trigger === "continue-message"
+            ? chatRow.model
+            : input.model.id,
+        updatedAt: new Date(),
+      })
+      .where(eq(chat.id, chatRow.id));
+    return initialParts;
+  });
 }

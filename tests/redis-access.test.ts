@@ -1,14 +1,20 @@
-import { expect, test } from "bun:test";
+import { beforeAll, expect, test } from "bun:test";
 import { errorResponse } from "../lib/api/respond";
 import { redisSecondaryStorage } from "../lib/auth/services";
 import { getCredits } from "../lib/credits";
 import { EnvError } from "../lib/env";
-import { takePayment } from "../lib/generation/payment";
+import { choosePayment } from "../lib/generation/payment";
 import { resolveModel } from "../lib/models";
 import { RATE_LIMITS, redisRateLimit } from "../lib/ratelimit";
 import { lazyKv } from "../lib/redis";
-import { createHarness } from "./support/harness";
+import {
+  createHarness,
+  PGLITE_SETUP_TIMEOUT_MS,
+  warmDatabase,
+} from "./support/harness";
 import { MemoryRedis } from "./support/memory-redis";
+
+beforeAll(warmDatabase, PGLITE_SETUP_TIMEOUT_MS);
 
 test("secondary storage: values expire, are namespaced and are read once by getAndDelete", async () => {
   const redis = new MemoryRedis();
@@ -103,13 +109,13 @@ test("a missing environment variable is a 503 that names it and never a value", 
   expect(lines.join("")).toContain("REDIS_URL is required");
 });
 
-test("payment: Credits are given back when the Platform key is missing", async () => {
+test("payment: a missing Platform key fails before any credit is spent", async () => {
   const h = await createHarness();
   await h.addUser("alice", 3);
   const model = resolveModel("openai/gpt-6-luna");
   if (!model) throw new Error("credit model missing");
   await expect(
-    takePayment(
+    choosePayment(
       {
         db: h.db,
         platformKey: () => {
@@ -127,7 +133,7 @@ test("payment: Credits are given back when the Platform key is missing", async (
 
   // A BYOK payer never reads the Platform key at all.
   const key = "sk-or-v1-".padEnd(48, "k");
-  const payment = await takePayment(
+  const payment = await choosePayment(
     {
       db: h.db,
       platformKey: () => {
