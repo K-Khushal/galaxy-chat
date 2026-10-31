@@ -2,12 +2,16 @@ import "server-only";
 import { z } from "zod";
 import type { AppContext } from "@/lib/api/context";
 import { handle, json, readJson, sseResponse } from "@/lib/api/respond";
+import { MAX_FILES_PER_MESSAGE } from "@/lib/attachments/rules";
+import {
+  cleanupStaleAttachments,
+  deleteChatWithFiles,
+} from "@/lib/attachments/store";
 import {
   activePath,
   type ChatRow,
   chatSummary,
   createChat,
-  deleteChat,
   getOwnedChat,
   listChats,
   listMessages,
@@ -87,6 +91,7 @@ export function getChatRoute(
 ) {
   return handle(async () => {
     const userId = await ctx.authenticate(request);
+    await cleanupStaleAttachments(ctx, userId);
     return json(await chatView(ctx, await ownedChat(ctx, userId, chatId)));
   });
 }
@@ -116,7 +121,10 @@ export function updateChatRoute(
   });
 }
 
-/** DELETE /api/chats/[id]: stops any running Generation first. */
+/**
+ * DELETE /api/chats/[id]: stops any running Generation, then deletes the
+ * Chat's Attachment files. If storage fails the Chat stays, so a retry works.
+ */
 export function deleteChatRoute(
   ctx: AppContext,
   request: Request,
@@ -126,7 +134,7 @@ export function deleteChatRoute(
     const userId = await ctx.authenticate(request);
     await ownedChat(ctx, userId, chatId);
     await stopGeneration(ctx, chatId);
-    await deleteChat(ctx.db, userId, chatId);
+    await deleteChatWithFiles(ctx, userId, chatId);
     return new Response(null, { status: 204 });
   });
 }
@@ -135,7 +143,6 @@ const textParts = z
   .array(
     z.object({ type: z.literal("text"), text: z.string().min(1).max(100_000) }),
   )
-  .min(1)
   .max(20)
   .refine(
     (parts) =>
@@ -155,6 +162,8 @@ const startSchema = z.discriminatedUnion("trigger", [
     parentId: id.nullable(),
     messageId: id.optional(),
     parts: textParts,
+    /** Ready Attachments to send with the text; at most five. */
+    attachmentIds: z.array(id).max(MAX_FILES_PER_MESSAGE).default([]),
     model: modelId.optional(),
   }),
   z.object({
@@ -225,6 +234,7 @@ export function switchVersionRoute(
     const body = await readJson(request, z.strictObject({ messageId: id }));
     const leaf = await switchVersion(ctx.db, chatId, body.messageId);
     if (!leaf) throw new AppError("message_not_found", 404);
+    await cleanupStaleAttachments(ctx, userId);
     return json(await chatView(ctx, await ownedChat(ctx, userId, chatId)));
   });
 }

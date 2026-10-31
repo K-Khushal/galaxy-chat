@@ -6,6 +6,7 @@ import {
   EnvError,
   platformKey,
   redisUrl,
+  storageEnv,
 } from "../lib/env";
 
 const auth = {
@@ -97,4 +98,19 @@ test("validates the Redis URL and the BYOK keyring", () => {
       byokKeyring({ ...keyring, BYOK_ENCRYPTION_KEYS_JSON: keys }),
     ).toThrow("BYOK_ENCRYPTION_KEYS_JSON must map");
   }
+});
+
+test("storage needs every R2 variable and names the missing ones", () => {
+  expect(() => storageEnv({ R2_ACCOUNT_ID: "acct" })).toThrow(
+    "R2_ACCESS_KEY_ID is required",
+  );
+  expect(() => storageEnv({})).toThrow("R2_BUCKET is required");
+  expect(
+    storageEnv({
+      R2_ACCOUNT_ID: "acct",
+      R2_ACCESS_KEY_ID: "id",
+      R2_SECRET_ACCESS_KEY: "secret",
+      R2_BUCKET: "bucket",
+    }).R2_BUCKET,
+  ).toBe("bucket");
 });

@@ -32,6 +32,10 @@ _Avoid_: Conversation, thread, session
 One turn in a Chat, written either by the User or by the assistant. An assistant Message is also called a **Reply**.
 _Avoid_: Turn, completion, response (as a noun for stored content)
 
+**Attachment**:
+A file (an image, a PDF, or a text or code file) a User sends with a Message. It is stored privately and only the User's own Messages can use it.
+_Avoid_: Upload (for the stored file), media, document
+
 **Version**:
 One of several alternatives at the same point in a Chat. A new Version is created by editing a User Message or regenerating a Reply, and Versions are switched in place.
 _Avoid_: Branch, fork, variant

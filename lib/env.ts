@@ -118,6 +118,16 @@ const platformKeySchema = z
   .object({ OPENROUTER_API_KEY: required("OPENROUTER_API_KEY") })
   .transform((value) => value.OPENROUTER_API_KEY);
 
+// Cloudflare R2 through its S3 API: Attachments (M6).
+const storageSchema = z.object({
+  R2_ACCOUNT_ID: required("R2_ACCOUNT_ID"),
+  R2_ACCESS_KEY_ID: required("R2_ACCESS_KEY_ID"),
+  R2_SECRET_ACCESS_KEY: required("R2_SECRET_ACCESS_KEY"),
+  R2_BUCKET: required("R2_BUCKET"),
+});
+
+export type StorageEnv = z.infer<typeof storageSchema>;
+
 export class EnvError extends Error {
   constructor(issues: readonly z.core.$ZodIssue[]) {
     const lines = issues.map((issue) => `  - ${issue.message}`);
@@ -236,3 +246,6 @@ const e2eSchema = z
 
 /** Test-only auth and model seams; never enabled in production. */
 export const testE2eEnabled = concern(e2eSchema);
+
+/** The R2 account, credentials and bucket, for lib/attachments/storage.ts. */
+export const storageEnv = concern(storageSchema);

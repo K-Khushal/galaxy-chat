@@ -3,6 +3,14 @@ import { convertToModelMessages, type UIMessage } from "ai";
 import { eq } from "drizzle-orm";
 import { customContext } from "@/lib/account/settings";
 import type { AppContext } from "@/lib/api/context";
+import { resolveAttachments } from "@/lib/attachments/resolve";
+import { modelSupport, supportsKind } from "@/lib/attachments/rules";
+import {
+  type AttachmentRow,
+  claimForChat,
+  filePart,
+  loadForMessage,
+} from "@/lib/attachments/store";
 import { loadByokKey } from "@/lib/byok/store";
 import {
   type ChatRow,
@@ -40,6 +48,8 @@ export type StartRequest =
       /** Optional client-chosen ID for the new User Message. */
       messageId?: string;
       parts: TextPart[];
+      /** Ready Attachments sent with the text; at most five. */
+      attachmentIds?: string[];
       model?: string;
     }
   | {
@@ -59,7 +69,9 @@ type Plan = {
   userMessage: {
     id: string;
     parentId: string | null;
-    parts: TextPart[];
+    parts: MessageParts;
+    /** Attachments the Message uses; tied to the Chat when it is stored. */
+    attachmentIds: string[];
   } | null;
   /** Messages the model sees, oldest first. */
   history: { role: "user" | "assistant"; parts: MessageParts }[];
@@ -74,6 +86,7 @@ function plan(
   chatRow: ChatRow,
   messages: MessageRow[],
   request: StartRequest,
+  files: AttachmentRow[],
 ): Plan {
   const byId = new Map(messages.map((row) => [row.id, row]));
   const asHistory = (rows: MessageRow[]) =>
@@ -87,11 +100,21 @@ function plan(
     }
     const id = request.messageId ?? crypto.randomUUID();
     if (byId.has(id)) throw new AppError("message_exists", 409);
+    if (request.parts.length + files.length === 0) {
+      throw new AppError("invalid_request", 400);
+    }
+    // Files first, then the question, which is how models read them best.
+    const parts: MessageParts = [...files.map(filePart), ...request.parts];
     return {
-      userMessage: { id, parentId: request.parentId, parts: request.parts },
+      userMessage: {
+        id,
+        parentId: request.parentId,
+        parts,
+        attachmentIds: files.map((file) => file.id),
+      },
       history: [
         ...asHistory(pathTo(messages, request.parentId)),
-        { role: "user", parts: request.parts },
+        { role: "user", parts },
       ],
       replyId: crypto.randomUUID(),
       replyParentId: id,
@@ -133,9 +156,15 @@ function plan(
 
 function firstUserText(history: Plan["history"]): string {
   const first = history.find((entry) => entry.role === "user");
-  return (first?.parts ?? [])
+  const text = (first?.parts ?? [])
     .map((part) => (part.type === "text" ? part.text : ""))
     .join("\n");
+  if (text.trim()) return text;
+  // A first Message of only files is named after them.
+  return (first?.parts ?? [])
+    .map((part) => (part.type === "file" ? (part.filename ?? "") : ""))
+    .filter(Boolean)
+    .join(", ");
 }
 
 /** The last credit went to another Generation between choosing and spending. */
@@ -161,9 +190,33 @@ export async function startGeneration(
 ): Promise<{ messageId: string; stream: ReadableStream<string> }> {
   await recoverRepliesQuietly(ctx, userId);
   const messages = await listMessages(ctx.db, chatRow.id);
-  const steps = plan(chatRow, messages, request);
+  const files =
+    request.trigger === "submit-message"
+      ? await loadForMessage(
+          ctx.db,
+          userId,
+          chatRow.id,
+          request.attachmentIds ?? [],
+        )
+      : [];
+  const steps = plan(chatRow, messages, request, files);
   const model = resolveModel(steps.modelId);
   if (!model) throw new AppError("unknown_model", 400);
+  const support = modelSupport(
+    model.catalog?.capabilities ?? null,
+    model.catalog?.label ?? model.id,
+  );
+  if (files.some((file) => !supportsKind(support, file.kind))) {
+    throw new AppError("attachment_unsupported", 400);
+  }
+  // Read URLs and extracted text are made before anything is locked or
+  // spent, so a storage failure costs the User nothing. A regenerated,
+  // continued or resumed Reply resolves its history afresh.
+  const modelHistory = await resolveAttachments(
+    ctx,
+    { userId, model },
+    steps.history,
+  );
 
   const generationId = crypto.randomUUID();
   const owner = { replyId: steps.replyId, generationId };
@@ -209,10 +262,10 @@ export async function startGeneration(
   try {
     const history = steps.continuing
       ? [
-          ...steps.history.slice(0, -1),
+          ...modelHistory.slice(0, -1),
           { role: "assistant" as const, parts: initialParts },
         ]
-      : steps.history;
+      : modelHistory;
     const modelMessages = await convertToModelMessages(
       history
         .filter((entry) =>
@@ -314,8 +367,10 @@ async function recordReply(
       throw new CreditsGone();
     }
     if (steps.userMessage) {
+      const { attachmentIds, ...userMessage } = steps.userMessage;
+      await claimForChat(tx, input.userId, chatRow.id, attachmentIds);
       await tx.insert(message).values({
-        ...steps.userMessage,
+        ...userMessage,
         chatId: chatRow.id,
         role: "user",
         status: "complete",

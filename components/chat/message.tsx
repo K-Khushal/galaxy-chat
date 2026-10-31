@@ -6,6 +6,7 @@ import { Response } from "@/components/elements/response";
 import { Button } from "@/components/ui/button";
 import type { ChatMessage } from "@/lib/chat/store";
 import { textOf } from "./api";
+import { attachmentParts, MessageAttachments } from "./message-attachments";
 import { Reasoning } from "./reasoning";
 import { ReplyActions } from "./reply-actions";
 import { VersionSwitcher } from "./version-switcher";
@@ -44,6 +45,10 @@ export function Message({
     }
   }, [editing]);
   const user = message.role === "user";
+  // A Message of only files has no bubble to show.
+  const filesOnly =
+    user && !textOf(message) && attachmentParts(message.parts).length > 0;
+  const files = user ? <MessageAttachments parts={message.parts} /> : null;
   const reasoning = message.parts
     .filter((p) => p.type === "reasoning")
     .map((p) => p.text)
@@ -56,6 +61,7 @@ export function Message({
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: reduced ? 0 : 0.18 }}
     >
+      {files}
       {editing ? (
         <form
           className="grid w-full gap-2"
@@ -93,7 +99,7 @@ export function Message({
             </Button>
           </div>
         </form>
-      ) : (
+      ) : filesOnly ? null : (
         <div
           className={
             user

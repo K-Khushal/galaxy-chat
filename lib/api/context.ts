@@ -1,5 +1,6 @@
 import type { LanguageModel } from "ai";
 import type { ResumableStreamContext } from "resumable-stream";
+import type { ObjectStorage } from "@/lib/attachments/storage";
 import type { Db } from "@/lib/db/types";
 import type { EnvSource } from "@/lib/env";
 import type { ReasoningEffort } from "@/lib/models";
@@ -35,6 +36,8 @@ export type AppContext = {
   >;
   rateLimit: RateLimit;
   languageModel: LanguageModelFactory;
+  /** Attachment objects (Cloudflare R2), connected on first use. */
+  storage: ObjectStorage;
   /** The Platform key, read only when Credits pay for a Reply. */
   platformKey: () => string;
   /** Holds the BYOK keyring variables. */

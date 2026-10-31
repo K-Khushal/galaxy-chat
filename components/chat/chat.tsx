@@ -9,6 +9,7 @@ import {
   needsKey,
   textOf,
 } from "./api";
+import type { UploadedAttachment } from "./attachment-upload";
 import { ByokDialog } from "./byok-dialog";
 import { Composer } from "./composer";
 import { Message } from "./message";
@@ -16,11 +17,28 @@ import { MessageList } from "./message-list";
 import { ModelPicker } from "./model-picker";
 import { useByokKey } from "./use-byok-key";
 import { useGalaxyChat } from "./use-galaxy-chat";
+
+/** Files uploaded on the new-Chat page, carried over with its first Message. */
+function transferredAttachments(chatId: string): UploadedAttachment[] {
+  try {
+    const saved = JSON.parse(
+      sessionStorage.getItem(`galaxy:attach:${chatId}`) ?? "[]",
+    );
+    return Array.isArray(saved) ? saved : [];
+  } catch {
+    return [];
+  }
+}
 export function Chat({ initial }: { initial: ChatView }) {
   const [transfer] = useState(() =>
     typeof window === "undefined"
       ? undefined
       : (sessionStorage.getItem(`galaxy:send:${initial.chat.id}`) ?? undefined),
+  );
+  const [transferFiles] = useState(() =>
+    typeof window === "undefined"
+      ? undefined
+      : transferredAttachments(initial.chat.id),
   );
   const chat = useGalaxyChat(initial);
   const { hasKey, setHasKey } = useByokKey();
@@ -47,8 +65,9 @@ export function Chat({ initial }: { initial: ChatView }) {
     }
     wasBusy.current = chat.busy;
   }, [chat.busy, chat.messages]);
-  async function send(text: string) {
-    const ok = await chat.send(text);
+  async function send(text: string, files: UploadedAttachment[]) {
+    const ok = await chat.send(text, files);
+    if (ok) sessionStorage.removeItem(`galaxy:attach:${initial.chat.id}`);
     return ok;
   }
   return (
@@ -104,9 +123,11 @@ export function Chat({ initial }: { initial: ChatView }) {
         )}
         <Composer
           chatId={initial.chat.id}
+          model={chat.model}
           busy={chat.busy}
           onSend={send}
           autoSend={transfer !== undefined}
+          initialAttachments={transferFiles}
           initialDraft={transfer}
           onStop={() => void chat.stop()}
           picker={

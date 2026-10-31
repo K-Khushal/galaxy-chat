@@ -11,6 +11,7 @@ import {
   type LanguageModelFactory,
 } from "@/lib/api/context";
 import { errorResponse, requireSameOrigin } from "@/lib/api/respond";
+import { lazyStorage } from "@/lib/attachments/storage";
 import { requireAccess } from "@/lib/auth/access";
 import { testOpenRouterKey } from "@/lib/byok/store";
 import { getDb } from "@/lib/db/client";
@@ -56,6 +57,7 @@ export function appContext(): AppContext {
         (await streamContext()).resumeExistingStream(...args),
     },
     rateLimit: redisRateLimit(kv),
+    storage: lazyStorage(),
     languageModel: testE2eEnabled() ? e2eLanguageModel : languageModel,
     platformKey: () => platformKey(),
     byokEnv: process.env,

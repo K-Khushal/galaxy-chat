@@ -2,8 +2,32 @@
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, type UIMessage } from "ai";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { attachmentIdFromUrl, attachmentUrl } from "@/lib/attachments/rules";
 import type { ChatMessage } from "@/lib/chat/store";
 import { api, type ChatView } from "./api";
+import type { UploadedAttachment } from "./attachment-upload";
+
+type FilePart = {
+  type: "file";
+  mediaType: string;
+  filename?: string;
+  url: string;
+};
+
+const fileParts = (files: UploadedAttachment[]): FilePart[] =>
+  files.map((file) => ({
+    type: "file",
+    mediaType: file.contentType,
+    filename: file.filename,
+    url: attachmentUrl(file.id),
+  }));
+
+/** The stored file parts of a Message that point at Attachments. */
+const savedFileParts = (message: ChatMessage): FilePart[] =>
+  message.parts.filter(
+    (part): part is FilePart =>
+      part.type === "file" && attachmentIdFromUrl(part.url) !== null,
+  );
 
 export function useGalaxyChat(initial: ChatView) {
   const [view, setView] = useState(initial);
@@ -72,7 +96,7 @@ export function useGalaxyChat(initial: ChatView) {
     !!view.generation;
   async function perform(
     body: object,
-    text?: string,
+    sent?: { text: string; files: FilePart[] },
     parentId?: string | null,
     continuing = false,
   ) {
@@ -93,9 +117,17 @@ export function useGalaxyChat(initial: ChatView) {
     });
     async function execute() {
       try {
-        if (text !== undefined)
+        if (sent !== undefined)
           await chat.sendMessage(
-            { role: "user", parts: [{ type: "text", text }] },
+            {
+              role: "user",
+              parts: [
+                ...sent.files,
+                ...(sent.text
+                  ? [{ type: "text" as const, text: sent.text }]
+                  : []),
+              ],
+            },
             { body },
           );
         else if (continuing) await chat.sendMessage(undefined, { body });
@@ -122,25 +154,30 @@ export function useGalaxyChat(initial: ChatView) {
     setModel,
     busy,
     error: actionError ?? chat.error,
-    send: (text: string) =>
+    send: (text: string, files: UploadedAttachment[] = []) =>
       perform(
         {
           trigger: "submit-message",
           parentId: chat.messages.at(-1)?.id ?? null,
-          parts: [{ type: "text", text }],
+          parts: text ? [{ type: "text", text }] : [],
+          attachmentIds: files.map((file) => file.id),
           model,
         },
-        text,
+        { text, files: fileParts(files) },
       ),
+    // An edit keeps the Message's files.
     edit: (message: ChatMessage, text: string) =>
       perform(
         {
           trigger: "submit-message",
           parentId: message.parentId,
           parts: [{ type: "text", text }],
+          attachmentIds: savedFileParts(message).flatMap(
+            (part) => attachmentIdFromUrl(part.url) ?? [],
+          ),
           model,
         },
-        text,
+        { text, files: savedFileParts(message) },
         message.parentId,
       ),
     regenerate: (message: ChatMessage) =>
