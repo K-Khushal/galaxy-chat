@@ -1,59 +1,28 @@
-import type { Metadata } from "next";
-import { Footer } from "@/components/home/footer";
-import { Header } from "@/components/home/header";
-import { HeroSection } from "@/components/home/hero-section";
-import styles from "@/components/home/home.module.css";
-import { HomeSections } from "@/components/home/home-sections";
-import { publicSiteOrigin } from "@/lib/ui/public-site";
+import { headers } from "next/headers";
+import { redirect } from "next/navigation";
+import { SignOutButton } from "@/components/auth/sign-out-button";
+import { requireAccess } from "@/lib/auth/access";
+import { AppError } from "@/lib/errors";
 
-const origin = publicSiteOrigin(process.env.SITE_URL);
-const title = "Galaxy Chat — a clear space for complex thoughts";
-const description =
-  "Work through code, shape a plan, or explore a question in a calm AI chat workspace. Saved conversations, branching, and an explicit choice of funding.";
-
-export const metadata: Metadata = {
-  title,
-  description,
-  ...(origin ? { alternates: { canonical: origin } } : {}),
-  openGraph: {
-    title,
-    description,
-    type: "website",
-    siteName: "Galaxy Chat",
-    ...(origin
-      ? {
-          url: origin,
-          images: [
-            {
-              url: `${origin}/galaxy-social.png`,
-              width: 1200,
-              height: 630,
-              alt: "Galaxy Chat. A clear space for complex thoughts.",
-            },
-          ],
-        }
-      : {}),
-  },
-  twitter: {
-    card: origin ? "summary_large_image" : "summary",
-    title,
-    description,
-    ...(origin ? { images: [`${origin}/galaxy-social.png`] } : {}),
-  },
-};
-
-export default function Home() {
+// Temporary placeholder until the chat UI lands in M3.
+export default async function Home() {
+  const access = await requireAccess(await headers()).catch((error) => {
+    if (error instanceof AppError && error.status < 500) {
+      redirect(
+        error.id === "invite_required"
+          ? "/sign-in?notice=invite_required"
+          : "/sign-in",
+      );
+    }
+    throw error;
+  });
   return (
-    <div className={styles.site}>
-      <a className={styles.skipLink} href="#main">
-        Skip to content
-      </a>
-      <Header />
-      <main id="main">
-        <HeroSection />
-        <HomeSections />
-      </main>
-      <Footer />
-    </div>
+    <main className="flex min-h-dvh flex-col items-center justify-center gap-4 px-4 text-center">
+      <h1 className="text-2xl font-medium tracking-tight">Galaxy Chat</h1>
+      <p className="text-muted-foreground">
+        Signed in as {access.name}. Chat is being rebuilt.
+      </p>
+      <SignOutButton />
+    </main>
   );
 }

@@ -44,7 +44,3 @@ next-env.d.ts
 # agents
 .agents
 
-# local preview and worker build output
-/.f01-preview/
-/.open-next/
-/.wrangler/

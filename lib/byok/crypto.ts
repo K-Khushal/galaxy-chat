@@ -1,6 +1,6 @@
 import "server-only";
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import type { EnvSource } from "@/lib/auth/env";
+import type { EnvSource } from "@/lib/env";
 import { AppError } from "@/lib/errors";
 import type { ByokProvider } from "./contract";
 

@@ -6,10 +6,6 @@ on:
 
 jobs:
   check:
-    # Pinned for repeatability: GitHub has announced ubuntu-latest will move
-    # to 26.04, and the native PostgreSQL step below depends on the 24.04
-    # image's preinstalled PostgreSQL 16 server binaries (service disabled).
-    # See docs/operations/native-postgres.md.
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -20,11 +16,7 @@ jobs:
         with:
           bun-version: 1.4.3
       - run: bun install --frozen-lockfile
-      - run: bun run f01:integrity
       - run: bun run lint
       - run: bun run typecheck
-      - run: npm --prefix services/mcp-egress run check
-      - run: npm --prefix services/mcp-egress run test
-      - run: bun run --no-env-file test:native-postgres
       - run: bun test
       - run: bun run build

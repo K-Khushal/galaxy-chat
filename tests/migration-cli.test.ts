@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { PGLiteSocketServer } from "@electric-sql/pglite-socket";
 
-test("migration CLI loads Next env precedence and creates OAuth tables idempotently", async () => {
+test("migration CLI loads Next env precedence and creates the auth tables idempotently", async () => {
   const directory = mkdtempSync(join(tmpdir(), "galaxy-migrate-"));
   const database = await PGlite.create();
   const socket = new PGLiteSocketServer({
@@ -63,3 +63,27 @@ test("migration CLI loads Next env precedence and creates OAuth tables idempoten
     rmSync(directory, { recursive: true, force: true });
   }
 }, 15000);
+
+test("the starting migration creates only the Better Auth tables", async () => {
+  const files = readdirSync(resolve("drizzle")).filter((name) =>
+    name.endsWith(".sql"),
+  );
+  expect(files).toEqual(["0000_auth.sql"]);
+  const database = await PGlite.create();
+  try {
+    await database.exec(
+      await Bun.file(resolve("drizzle/0000_auth.sql")).text(),
+    );
+    const tables = await database.query<{ table_name: string }>(
+      "select table_name from information_schema.tables where table_schema = 'public' order by table_name",
+    );
+    expect(tables.rows.map((row) => row.table_name)).toEqual([
+      "account",
+      "session",
+      "user",
+      "verification",
+    ]);
+  } finally {
+    await database.close();
+  }
+});
