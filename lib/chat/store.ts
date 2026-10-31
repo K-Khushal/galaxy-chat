@@ -218,7 +218,15 @@ export async function checkpointReply(
 ): Promise<boolean> {
   const rows = await db
     .update(message)
-    .set({ parts: settleParts(parts), updatedAt: new Date() })
+    .set({
+      parts: settleParts(parts),
+      updatedAt: new Date(),
+      // A checkpoint with content also counts as the first token, so a failed
+      // markFirstToken write can never lead to refunding a Reply with text.
+      ...(parts.length > 0
+        ? { firstTokenAt: sql`coalesce(${message.firstTokenAt}, now())` }
+        : {}),
+    })
     .where(owned(owner))
     .returning({ id: message.id });
   return rows.length > 0;
