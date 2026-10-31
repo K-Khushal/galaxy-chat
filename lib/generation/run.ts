@@ -43,6 +43,7 @@ export type RunInput = {
   payment: Payment;
   lease: GenerationLease;
   messages: ModelMessage[];
+  system?: string;
   /** Parts the Reply already has: empty, or an Interrupted Reply's text. */
   initialParts: MessageParts;
   /** The first User Message's text when the Chat still needs a title. */
@@ -187,6 +188,7 @@ export async function runGeneration(
             : undefined,
       }),
       messages: input.messages,
+      system: input.system,
       maxOutputTokens: credit ? CREDIT_MAX_OUTPUT_TOKENS : undefined,
       abortSignal: controller.signal,
       // Never log provider errors: they can echo request content.

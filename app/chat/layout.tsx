@@ -4,6 +4,7 @@ import { RecentChats } from "@/components/chat/recent-chats";
 import { AccountMenu } from "@/components/shell/account-menu";
 import { AppSidebar } from "@/components/shell/app-sidebar";
 import { ChatHeader } from "@/components/shell/chat-header";
+import { CreditsIndicator } from "@/components/shell/credits-indicator";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { requireSignedIn } from "@/lib/auth/gate";
 
@@ -22,9 +23,12 @@ export default async function ChatLayout({
       <AppSidebar
         chats={<RecentChats />}
         footer={
-          <AccountMenu
-            user={{ name: user.name, email: user.email, image: user.image }}
-          />
+          <>
+            <CreditsIndicator />
+            <AccountMenu
+              user={{ name: user.name, email: user.email, image: user.image }}
+            />
+          </>
         }
       />
       <SidebarInset className="h-dvh min-w-0">

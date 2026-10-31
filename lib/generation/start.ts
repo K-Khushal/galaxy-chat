@@ -1,6 +1,7 @@
 import "server-only";
 import { convertToModelMessages, type UIMessage } from "ai";
 import { eq } from "drizzle-orm";
+import { customContext } from "@/lib/account/settings";
 import type { AppContext } from "@/lib/api/context";
 import { loadByokKey } from "@/lib/byok/store";
 import {
@@ -214,6 +215,7 @@ export async function startGeneration(
           (entry) => ({ role: entry.role, parts: entry.parts }) as UIMessage,
         ),
     );
+    const context = await customContext(ctx.db, userId);
     const stream = await runGeneration(ctx, {
       chatId: chatRow.id,
       userId,
@@ -223,6 +225,7 @@ export async function startGeneration(
       payment,
       lease,
       messages: modelMessages,
+      system: context || undefined,
       initialParts,
       titleFrom: chatRow.title === null ? firstUserText(steps.history) : null,
     });
