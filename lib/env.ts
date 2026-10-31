@@ -211,3 +211,28 @@ export const redisTestUrl = concern(
     })
     .transform((value) => value.REDIS_TEST_URL),
 );
+
+// Runtime source is intentional: Next replaces direct NODE_ENV reads at build time.
+const e2eSchema = z
+  .object({
+    GALAXY_TEST_E2E: z.enum(["1"]).optional(),
+    NODE_ENV: z.string().optional(),
+    VERCEL: z.string().optional(),
+    VERCEL_ENV: z.string().optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (
+      value.GALAXY_TEST_E2E &&
+      (value.NODE_ENV !== "test" || value.VERCEL || value.VERCEL_ENV)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "GALAXY_TEST_E2E requires NODE_ENV=test and cannot run on Vercel",
+      });
+    }
+  })
+  .transform((value) => value.GALAXY_TEST_E2E === "1");
+
+/** Test-only auth and model seams; never enabled in production. */
+export const testE2eEnabled = concern(e2eSchema);

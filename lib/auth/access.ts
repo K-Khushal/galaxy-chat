@@ -3,7 +3,9 @@ import { eq } from "drizzle-orm";
 import { getAuth } from "@/lib/auth/server";
 import { getDb } from "@/lib/db/client";
 import { session as sessionTable } from "@/lib/db/schema";
+import { testE2eEnabled } from "@/lib/env";
 import { AppError, logErrorId } from "@/lib/errors";
+import { e2eAccess } from "@/lib/testing/e2e-auth";
 
 export type Access = {
   sessionCreatedAt: Date;
@@ -30,6 +32,7 @@ async function revokeSessionToken(token: string) {
 
 /** Resolves the user behind a request, or throws a 401/403 AppError. */
 export async function requireAccess(headers: Headers): Promise<Access> {
+  if (testE2eEnabled()) return e2eAccess(headers);
   const session = await getAuth().api.getSession({ headers });
   if (!session?.user || !session.session) {
     throw new AppError("unauthenticated", 401);

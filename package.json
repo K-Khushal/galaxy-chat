@@ -14,7 +14,8 @@
     "typecheck": "tsc --noEmit --pretty false --incremental false",
     "test": "bun test",
     "test:ui": "NODE_ENV=test bun test ./tests/ui/chat-components.tsx",
-    "db:migrate": "bun --no-env-file scripts/db-migrate.ts"
+    "db:migrate": "bun --no-env-file scripts/db-migrate.ts",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@ai-sdk/react": "4.0.147",
