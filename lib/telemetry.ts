@@ -1,7 +1,7 @@
 import type { ErrorEvent } from "@sentry/nextjs";
 
 /** Allowlist only: provider errors and browser state may contain private Chat data. */
-export function scrubEvent<T extends ErrorEvent>(event: T): T {
+export function scrubEvent(event: ErrorEvent): ErrorEvent {
   return {
     event_id: event.event_id,
     timestamp: event.timestamp,
@@ -26,5 +26,5 @@ export function scrubEvent<T extends ErrorEvent>(event: T): T {
           })),
         }
       : undefined,
-  } as T;
+  };
 }

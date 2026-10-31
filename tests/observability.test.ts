@@ -92,7 +92,7 @@ test("production CSP has configured origins and production-only HSTS", () => {
     for (const mode of ["production", "development"]) {
       Object.assign(process.env, { NODE_ENV: mode });
       const response = proxy(new NextRequest("http://localhost/"));
-      const csp = response.headers.get("content-security-policy")!;
+      const csp = response.headers.get("content-security-policy") ?? "";
       expect(response.headers.has("strict-transport-security")).toBe(
         mode === "production",
       );
@@ -110,6 +110,7 @@ test("production CSP has configured origins and production-only HSTS", () => {
 });
 test("telemetry keeps only source-map frame coordinates", () => {
   const event = scrubEvent({
+    type: undefined,
     exception: {
       values: [
         {
