@@ -1,3 +1,4 @@
+import "server-only";
 import { eq } from "drizzle-orm";
 import { isInvitedLogin } from "@/lib/auth/invite";
 import { getAuth } from "@/lib/auth/server";

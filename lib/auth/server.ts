@@ -1,3 +1,4 @@
+import "server-only";
 import { drizzleAdapter } from "@better-auth/drizzle-adapter";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { betterAuth } from "better-auth/minimal";
