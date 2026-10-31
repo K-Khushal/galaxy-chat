@@ -6,20 +6,21 @@ import {
   applyVersionedMigrations,
   type MigrationExecutor,
 } from "../lib/db/migrate";
+import { databaseUrl } from "../lib/env";
 
 // Match next dev by default; operators can explicitly select production.
 // Run with Bun's automatic env loading disabled so Next's precedence wins.
 loadEnvConfig(process.cwd(), process.env.NODE_ENV !== "production");
 
-const databaseUrl = process.env.DATABASE_URL?.trim();
-if (!databaseUrl) {
-  process.stderr.write(
-    `${JSON.stringify({ level: "error", id: "persistence_unconfigured" })}\n`,
-  );
+let url: string;
+try {
+  url = databaseUrl();
+} catch (error) {
+  process.stderr.write(`${(error as Error).message}\n`);
   process.exit(1);
 }
 
-const sql = postgres(databaseUrl, { max: 1, prepare: false });
+const sql = postgres(url, { max: 1, prepare: false });
 
 const executor: MigrationExecutor = {
   transaction: (run) =>

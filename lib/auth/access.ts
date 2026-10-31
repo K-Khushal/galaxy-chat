@@ -1,11 +1,13 @@
+import "server-only";
 import { eq } from "drizzle-orm";
-import { isInvitedLogin, resolveAuthConfig } from "@/lib/auth/env";
+import { isInvitedLogin } from "@/lib/auth/invite";
 import { getAuth } from "@/lib/auth/server";
 import { getDb } from "@/lib/db/client";
 import { session as sessionTable } from "@/lib/db/schema";
+import { env } from "@/lib/env";
 import { AppError, logErrorId } from "@/lib/errors";
 
-export type ChatAccess = {
+export type Access = {
   userId: string;
   name: string;
   email: string;
@@ -23,26 +25,15 @@ type SessionUser = {
 
 async function revokeSessionToken(token: string) {
   try {
-    const db = getDb();
-    if (!db) {
-      return;
-    }
-    await db.delete(sessionTable).where(eq(sessionTable.token, token));
+    await getDb().delete(sessionTable).where(eq(sessionTable.token, token));
   } catch {
     logErrorId("session_revoke_failed");
   }
 }
 
-export async function requireChatAccess(headers: Headers): Promise<ChatAccess> {
-  const config = resolveAuthConfig(process.env);
-  if (!config) {
-    throw new AppError("auth_unconfigured", 503);
-  }
-  const auth = getAuth();
-  if (!auth) {
-    throw new AppError("auth_unconfigured", 503);
-  }
-  const session = await auth.api.getSession({ headers });
+/** Resolves the invited user behind a request, or throws a 401/403 AppError. */
+export async function requireAccess(headers: Headers): Promise<Access> {
+  const session = await getAuth().api.getSession({ headers });
   if (!session?.user || !session.session) {
     throw new AppError("unauthenticated", 401);
   }
@@ -54,7 +45,7 @@ export async function requireChatAccess(headers: Headers): Promise<ChatAccess> {
   const user = session.user as SessionUser;
   const githubLogin =
     typeof user.githubLogin === "string" ? user.githubLogin : null;
-  if (!isInvitedLogin(githubLogin, config.inviteLogins)) {
+  if (!isInvitedLogin(githubLogin, env().GITHUB_INVITE_LOGINS)) {
     await revokeSessionToken(session.session.token);
     throw new AppError("invite_required", 403);
   }
@@ -65,10 +56,4 @@ export async function requireChatAccess(headers: Headers): Promise<ChatAccess> {
     image: user.image ?? undefined,
     githubLogin: githubLogin ?? "",
   };
-}
-
-export function assertOwner(actorUserId: string, recordUserId: string) {
-  if (actorUserId !== recordUserId) {
-    throw new AppError("forbidden", 403);
-  }
 }

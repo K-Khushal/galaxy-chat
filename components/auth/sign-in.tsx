@@ -11,34 +11,20 @@ import { Button } from "@/components/ui/button";
 import { authClient } from "@/lib/auth/client";
 
 const notices: Record<string, string> = {
-  auth_unconfigured:
-    "Sign-in is not available on this instance yet. The server administrator needs to finish authentication setup.",
   unauthenticated: "Sign in to open your workspace.",
   invite_required:
     "This GitHub account does not have an invitation yet. Try an invited account or contact the person who invited you.",
 };
-export function SignInPanel({
-  configured,
-  notice,
-  onSignIn,
-}: {
-  configured: boolean;
-  notice?: string;
-  onSignIn?: () => void;
-}) {
+export function SignInPanel({ notice }: { notice?: string }) {
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState(false);
   async function signIn() {
-    if (onSignIn) {
-      onSignIn();
-      return;
-    }
     setPending(true);
     setFailure(false);
     try {
       const result = await authClient.signIn.social({
         provider: "github",
-        callbackURL: "/chat",
+        callbackURL: "/",
       });
       if (result.error) {
         setFailure(true);
@@ -65,13 +51,11 @@ export function SignInPanel({
       <div className="mt-8 rounded-2xl border bg-card p-6 shadow-xs">
         <p className="mb-5 text-sm leading-relaxed text-muted-foreground">
           {(notice && notices[notice]) ||
-            (configured
-              ? "Access is by invitation. Continue with your invited GitHub account."
-              : notices.auth_unconfigured)}
+            "Access is by invitation. Continue with your invited GitHub account."}
         </p>
         <Button
           className="w-full"
-          disabled={!configured || pending}
+          disabled={pending}
           aria-busy={pending}
           onClick={() => void signIn()}
         >
@@ -82,11 +66,6 @@ export function SignInPanel({
         {failure && (
           <p role="alert" className="mt-4 text-sm text-destructive">
             Sign-in could not start. Please try again.
-          </p>
-        )}
-        {!configured && (
-          <p className="mt-4 text-xs leading-relaxed text-muted-foreground">
-            No session is created until authentication is configured.
           </p>
         )}
       </div>

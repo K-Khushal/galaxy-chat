@@ -1,18 +1,13 @@
+import "server-only";
 import { drizzleAdapter } from "@better-auth/drizzle-adapter";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { betterAuth } from "better-auth/minimal";
 import { nextCookies } from "better-auth/next-js";
 import { eq } from "drizzle-orm";
-import {
-  isInvitedLogin,
-  parseInviteLogins,
-  resolveAuthConfig,
-} from "@/lib/auth/env";
-import { getDb } from "@/lib/db/client";
+import { isInvitedLogin } from "@/lib/auth/invite";
+import { type Database, getDb } from "@/lib/db/client";
 import { authSchema, user } from "@/lib/db/schema";
-
-type ResolvedAuth = NonNullable<ReturnType<typeof resolveAuthConfig>>;
-type Database = NonNullable<ReturnType<typeof getDb>>;
+import { type Env, env } from "@/lib/env";
 
 const BLOCKED_AUTH_PATHS = new Set([
   "/change-password",
@@ -34,16 +29,13 @@ async function invitedUser(db: Database, userId: string) {
     .where(eq(user.id, userId))
     .limit(1);
   const login = rows[0]?.githubLogin;
-  return isInvitedLogin(
-    login,
-    parseInviteLogins(process.env.GITHUB_INVITE_LOGINS),
-  );
+  return isInvitedLogin(login, env().GITHUB_INVITE_LOGINS);
 }
 
-function createAuth(config: ResolvedAuth, db: Database) {
+function createAuth(config: Env, db: Database) {
   return betterAuth({
-    baseURL: config.baseUrl,
-    secret: config.secret,
+    baseURL: config.BETTER_AUTH_URL,
+    secret: config.BETTER_AUTH_SECRET,
     databaseHooks: {
       session: {
         create: {
@@ -86,8 +78,8 @@ function createAuth(config: ResolvedAuth, db: Database) {
     },
     socialProviders: {
       github: {
-        clientId: config.githubClientId,
-        clientSecret: config.githubClientSecret,
+        clientId: config.GITHUB_CLIENT_ID,
+        clientSecret: config.GITHUB_CLIENT_SECRET,
         // Refresh existing rows too, including accounts created before the
         // provider username was persisted correctly.
         overrideUserInfoOnSignIn: true,
@@ -104,10 +96,7 @@ function createAuth(config: ResolvedAuth, db: Database) {
           source.oauth?.providerId !== "github" ||
           typeof login !== "string" ||
           incoming.githubLogin !== login ||
-          !isInvitedLogin(
-            login,
-            parseInviteLogins(process.env.GITHUB_INVITE_LOGINS),
-          )
+          !isInvitedLogin(login, config.GITHUB_INVITE_LOGINS)
         ) {
           return { error: "invite_required" };
         }
@@ -134,22 +123,7 @@ type AuthInstance = ReturnType<typeof createAuth>;
 
 let cached: AuthInstance | null = null;
 
-export function resetAuthCache() {
-  cached = null;
-}
-
-export function getAuth(): AuthInstance | null {
-  const config = resolveAuthConfig(process.env);
-  if (!config) {
-    return null;
-  }
-  if (cached) {
-    return cached;
-  }
-  const db = getDb();
-  if (!db) {
-    return null;
-  }
-  cached = createAuth(config, db);
+export function getAuth(): AuthInstance {
+  cached ??= createAuth(env(), getDb());
   return cached;
 }
