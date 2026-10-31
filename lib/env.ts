@@ -26,16 +26,15 @@ const envSchema = z.object({
   // Read and validated by lib/byok/crypto.ts when a key is sealed or opened.
   BYOK_ENCRYPTION_KEYS_JSON: z.string().optional(),
   BYOK_ACTIVE_KEY_VERSION: z.string().optional(),
-  // Comma-separated GitHub logins; an empty list invites nobody.
-  GITHUB_INVITE_LOGINS: z
-    .string()
-    .optional()
-    .transform((value) =>
-      (value ?? "")
-        .split(",")
-        .map((login) => login.trim().toLowerCase())
-        .filter((login) => login.length > 0),
-    ),
+  GOOGLE_CLIENT_ID: required("GOOGLE_CLIENT_ID"),
+  GOOGLE_CLIENT_SECRET: required("GOOGLE_CLIENT_SECRET"),
+  CREDIT_IDENTITY_KEY: required("CREDIT_IDENTITY_KEY").min(32),
+  RESEND_API_KEY: required("RESEND_API_KEY"),
+  AUTH_EMAIL_FROM: required("AUTH_EMAIL_FROM"),
+  UPSTASH_REDIS_REST_URL: required("UPSTASH_REDIS_REST_URL").pipe(z.url()),
+  UPSTASH_REDIS_REST_TOKEN: required("UPSTASH_REDIS_REST_TOKEN"),
+  TURNSTILE_SECRET_KEY: required("TURNSTILE_SECRET_KEY"),
+  TURNSTILE_SITE_KEY: required("TURNSTILE_SITE_KEY"),
 });
 
 export type Env = z.infer<typeof envSchema>;
