@@ -74,12 +74,13 @@ export async function createChat(
   return row;
 }
 
+/** Sidebar and Archived lists show at most 500 Chats; full history remains searchable. */
 export function listChats(db: Db, userId: string, archived: boolean) {
   return db
     .select()
     .from(chat)
     .where(and(eq(chat.userId, userId), eq(chat.archived, archived)))
-    .orderBy(desc(chat.pinned), desc(chat.updatedAt))
+    .orderBy(desc(chat.pinned), desc(chat.updatedAt), desc(chat.id))
     .limit(500);
 }
 

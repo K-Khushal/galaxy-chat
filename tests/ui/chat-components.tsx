@@ -387,3 +387,108 @@ test("rejected edit keeps its text available", async () => {
     "Keep edited text",
   );
 });
+
+test("Temporary chats keep drafts in memory without persisting or sending them", async () => {
+  const { TemporaryChat } = await import(
+    "../../components/chat/temporary-chat"
+  );
+  const original = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = Object.assign(
+    async (url: RequestInfo | URL) => {
+      if (String(url) === "/api/byok") return Response.json({ key: null });
+      calls++;
+      throw new Error("Unexpected server write");
+    },
+    { preconnect: original.preconnect },
+  );
+  localStorage.clear();
+  try {
+    const ui = render(<TemporaryChat />);
+    fireEvent.change(ui.getByRole("textbox"), {
+      target: { value: "Private draft" },
+    });
+    expect(localStorage.length).toBe(0);
+    expect(calls).toBe(0);
+    ui.unmount();
+    const fresh = render(<TemporaryChat />);
+    expect((fresh.getByRole("textbox") as HTMLTextAreaElement).value).toBe("");
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test("Temporary sends client history, Stop aborts fetch and remount clears Messages", async () => {
+  const { TemporaryChat } = await import(
+    "../../components/chat/temporary-chat"
+  );
+  const original = globalThis.fetch;
+  const bodies: {
+    messages: { role: string; content: string }[];
+    model: string;
+  }[] = [];
+  let signal: AbortSignal | undefined;
+  globalThis.fetch = Object.assign(
+    async (_url: RequestInfo | URL, options?: RequestInit) => {
+      if (String(_url) === "/api/byok") return Response.json({ key: null });
+      bodies.push(JSON.parse(String(options?.body)));
+      signal = options?.signal ?? undefined;
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(
+              new TextEncoder().encode(
+                `data: ${JSON.stringify({ type: "start", messageId: "temporary-reply" })}${String.fromCharCode(10).repeat(2)}`,
+              ),
+            );
+            signal?.addEventListener(
+              "abort",
+              () => controller.error(new DOMException("aborted", "AbortError")),
+              { once: true },
+            );
+          },
+        }),
+        {
+          headers: {
+            "content-type": "text/event-stream",
+            "x-vercel-ai-ui-message-stream": "v1",
+          },
+        },
+      );
+    },
+    { preconnect: original.preconnect },
+  );
+  localStorage.clear();
+  try {
+    const ui = render(<TemporaryChat />);
+    fireEvent.change(ui.getByRole("textbox"), {
+      target: { value: "Private question" },
+    });
+    await act(async () => {
+      fireEvent.click(ui.getByRole("button", { name: "Send message" }));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(bodies[0]?.messages).toEqual([
+      { role: "user", content: "Private question" },
+    ]);
+    expect(bodies[0]?.model).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(ui.getByRole("button", { name: "Stop Reply" }));
+    });
+    expect(signal?.aborted).toBe(true);
+    expect(localStorage.length).toBe(0);
+    fireEvent.change(ui.getByRole("textbox"), {
+      target: { value: "Another private draft" },
+    });
+    await act(async () => {
+      fireEvent.click(ui.getByRole("button", { name: "New Temporary chat" }));
+    });
+    expect(ui.queryByText("Private question")).toBeNull();
+    expect((ui.getByRole("textbox") as HTMLTextAreaElement).value).toBe("");
+    ui.unmount();
+    const fresh = render(<TemporaryChat />);
+    expect(fresh.queryByText("Private question")).toBeNull();
+  } finally {
+    globalThis.fetch = original;
+  }
+});

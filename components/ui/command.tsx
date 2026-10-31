@@ -34,10 +34,12 @@ function CommandDialog({
   title = "Command Palette",
   description = "Search for a command to run...",
   children,
+  shouldFilter,
   className,
   showCloseButton = false,
   ...props
 }: Omit<React.ComponentProps<typeof Dialog>, "children"> & {
+  shouldFilter?: boolean;
   title?: string;
   description?: string;
   className?: string;
@@ -57,7 +59,7 @@ function CommandDialog({
         )}
         showCloseButton={showCloseButton}
       >
-        <Command>{children}</Command>
+        <Command shouldFilter={shouldFilter}>{children}</Command>
       </DialogContent>
     </Dialog>
   );

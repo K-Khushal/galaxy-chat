@@ -51,7 +51,7 @@ async function chatView(ctx: AppContext, row: ChatRow) {
   };
 }
 
-/** GET /api/chats[?archived=true] */
+/** GET /api/chats[?archived=true]. Capped at 500, pinned then newest first. */
 export function listChatsRoute(ctx: AppContext, request: Request) {
   return handle(async () => {
     const userId = await ctx.authenticate(request);
