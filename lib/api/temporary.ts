@@ -1,6 +1,7 @@
 import "server-only";
 import { JsonToSseTransformStream, streamText, type UIMessageChunk } from "ai";
 import { z } from "zod";
+import { customContext } from "@/lib/account/settings";
 import type { AppContext } from "@/lib/api/context";
 import { handle, readJson, sseResponse } from "@/lib/api/respond";
 import { loadByokKey } from "@/lib/byok/store";
@@ -116,8 +117,10 @@ export function temporaryMessageRoute(ctx: AppContext, request: Request) {
           .catch(stop);
       }, ctx.timing.renewMs);
       deadline = setTimeout(stop, ctx.timing.deadlineMs);
+      const system = await customContext(ctx.db, userId);
       const source = streamText({
         ...replyModelSettings(ctx, model, payment),
+        system,
         messages: body.messages,
         abortSignal: abort.signal,
         onError: () => {},
