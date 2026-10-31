@@ -1,6 +1,9 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
+@import "katex/dist/katex.min.css";
+
+@source "../node_modules/streamdown/dist/**/*.js";
 
 /* `[data-pane=light]` lets /design show a light panel inside a dark page. */
 @custom-variant dark (&:is(.dark *):not(:is([data-pane=light] *)));

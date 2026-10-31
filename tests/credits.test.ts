@@ -1,4 +1,4 @@
-import { beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
@@ -30,6 +30,10 @@ beforeEach(async () => {
     await client.exec(await Bun.file(resolve("drizzle", file)).text());
   }
   db = drizzle(client, { schema }) as unknown as CreditsDb;
+});
+
+afterEach(async () => {
+  await client?.close();
 });
 
 test("new identity gets the sign-up Credits once", async () => {
