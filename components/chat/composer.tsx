@@ -50,11 +50,8 @@ export function Composer({
       // Persist the restored draft before consuming the one-shot transfer.
       if (persistDraft && transferredDraft.current !== undefined) {
         localStorage.setItem(`galaxy:draft:${chatId}`, restored);
-        if (
-          localStorage.getItem("galaxy:draft:new")?.trim() ===
-          transferredDraft.current.trim()
-        )
-          localStorage.removeItem("galaxy:draft:new");
+        // The new-Chat draft was handed off to this Chat; never let it return.
+        localStorage.removeItem("galaxy:draft:new");
         sessionStorage.removeItem(`galaxy:send:${chatId}`);
       }
     } catch {}

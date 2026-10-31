@@ -506,6 +506,23 @@ for (const status of ["failed", "interrupted"] as const) {
     expect(ui.queryByRole("button", { name: "Copy Reply" })).toBeNull();
   });
 }
+test("a transferred draft clears the new-Chat draft even after it was edited", async () => {
+  localStorage.clear();
+  sessionStorage.clear();
+  localStorage.setItem("galaxy:draft:new", "Original, then edited");
+  sessionStorage.setItem("galaxy:send:edited", "Original");
+  render(
+    <Composer
+      chatId="edited"
+      initialDraft="Original"
+      autoSend
+      onSend={async () => false}
+      onStop={() => {}}
+    />,
+  );
+  await act(async () => {});
+  expect(localStorage.getItem("galaxy:draft:new")).toBeNull();
+});
 test("restoring a transferred draft consumes auto-send even when rejected", async () => {
   localStorage.clear();
   sessionStorage.clear();
