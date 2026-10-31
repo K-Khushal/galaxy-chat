@@ -12,6 +12,7 @@ import { message } from "../lib/db/schema";
 import { recoverReplies } from "../lib/generation/recover";
 import {
   call,
+  closeHarnesses,
   createHarness,
   type Harness,
   PGLITE_SETUP_TIMEOUT_MS,
@@ -23,9 +24,7 @@ let h: Harness;
 
 beforeAll(warmDatabase, PGLITE_SETUP_TIMEOUT_MS);
 
-afterEach(async () => {
-  await h.settle();
-});
+afterEach(closeHarnesses);
 
 /** How many of the next Generations die before their model starts. */
 let crashes = 0;

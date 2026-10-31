@@ -19,6 +19,7 @@ import {
 import { getCredits } from "../lib/credits";
 import {
   call,
+  closeHarnesses,
   createHarness,
   type Harness,
   PGLITE_SETUP_TIMEOUT_MS,
@@ -37,9 +38,7 @@ beforeEach(async () => {
   await h.addUser("mallory");
 });
 
-afterEach(async () => {
-  await h.settle();
-});
+afterEach(closeHarnesses);
 
 async function newChat(user = "alice", body: Record<string, unknown> = {}) {
   const response = await call(h, createChatRoute, { user, body });

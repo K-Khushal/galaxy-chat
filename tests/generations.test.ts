@@ -12,6 +12,7 @@ import { message } from "../lib/db/schema";
 import { acquireGeneration } from "../lib/generation/locks";
 import {
   call,
+  closeHarnesses,
   createHarness,
   type Harness,
   PGLITE_SETUP_TIMEOUT_MS,
@@ -31,9 +32,7 @@ beforeEach(async () => {
   await h.addUser("alice");
 });
 
-afterEach(async () => {
-  await h.settle();
-});
+afterEach(closeHarnesses);
 
 const words = (count: number) =>
   Array.from({ length: count }, (_, index) => `w${index} `);

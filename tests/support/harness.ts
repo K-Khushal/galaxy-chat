@@ -136,6 +136,22 @@ async function migratedDatabase() {
   return (await (await template).clone()) as PGlite;
 }
 
+/** Harnesses not yet closed; each holds a PGlite instance in memory. */
+const open = new Set<{ settle: () => Promise<void>; pg: PGlite }>();
+
+/**
+ * Waits for every open harness's Generations, then closes its database. Call
+ * from `afterEach`: the whole suite runs in one process, and unclosed PGlite
+ * instances add up to gigabytes.
+ */
+export async function closeHarnesses() {
+  for (const harness of [...open]) {
+    open.delete(harness);
+    await harness.settle();
+    await harness.pg.close();
+  }
+}
+
 export async function createHarness(timing: Partial<GenerationTiming> = {}) {
   const pg = await migratedDatabase();
   const db = drizzle(pg, { schema }) as unknown as Db;
@@ -236,6 +252,7 @@ export async function createHarness(timing: Partial<GenerationTiming> = {}) {
     }
   }
 
+  open.add({ settle, pg });
   return { ctx, db, pg, redis, state, addUser, settle };
 }
 

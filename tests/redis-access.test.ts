@@ -1,4 +1,4 @@
-import { beforeAll, expect, test } from "bun:test";
+import { afterEach, beforeAll, expect, test } from "bun:test";
 import { errorResponse } from "../lib/api/respond";
 import { redisSecondaryStorage } from "../lib/auth/services";
 import { getCredits } from "../lib/credits";
@@ -8,6 +8,7 @@ import { resolveModel } from "../lib/models";
 import { RATE_LIMITS, redisRateLimit } from "../lib/ratelimit";
 import { lazyKv } from "../lib/redis";
 import {
+  closeHarnesses,
   createHarness,
   PGLITE_SETUP_TIMEOUT_MS,
   warmDatabase,
@@ -15,6 +16,7 @@ import {
 import { MemoryRedis } from "./support/memory-redis";
 
 beforeAll(warmDatabase, PGLITE_SETUP_TIMEOUT_MS);
+afterEach(closeHarnesses);
 
 test("secondary storage: values expire, are namespaced and are read once by getAndDelete", async () => {
   const redis = new MemoryRedis();
