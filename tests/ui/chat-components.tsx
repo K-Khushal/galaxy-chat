@@ -12,6 +12,7 @@ for (const key of [
   "MutationObserver",
   "getComputedStyle",
   "localStorage",
+  "sessionStorage",
 ])
   Object.defineProperty(globalThis, key, {
     value:
@@ -491,4 +492,55 @@ test("Temporary sends client history, Stop aborts fetch and remount clears Messa
   } finally {
     globalThis.fetch = original;
   }
+});
+
+for (const status of ["failed", "interrupted"] as const) {
+  test(`empty ${status} Reply has no Copy action`, () => {
+    const ui = render(
+      <ReplyActions
+        message={{ ...message, status, parts: [] }}
+        disabled={false}
+        onRegenerate={() => {}}
+      />,
+    );
+    expect(ui.queryByRole("button", { name: "Copy Reply" })).toBeNull();
+  });
+}
+test("restoring a transferred draft consumes auto-send even when rejected", async () => {
+  localStorage.clear();
+  sessionStorage.clear();
+  localStorage.setItem("galaxy:draft:new", "Original");
+  sessionStorage.setItem("galaxy:send:transfer", "Original");
+  let calls = 0;
+  const send = async () => {
+    calls++;
+    return false;
+  };
+  const ui = render(
+    <Composer
+      chatId="transfer"
+      initialDraft="Original"
+      autoSend
+      onSend={send}
+      onStop={() => {}}
+    />,
+  );
+  await act(async () => {});
+  expect(calls).toBe(1);
+  expect(sessionStorage.getItem("galaxy:send:transfer")).toBeNull();
+  expect(localStorage.getItem("galaxy:draft:new")).toBeNull();
+  fireEvent.change(ui.getByRole("textbox"), { target: { value: "Edited" } });
+  ui.unmount();
+  const fresh = render(
+    <Composer
+      chatId="transfer"
+      autoSend={!!sessionStorage.getItem("galaxy:send:transfer")}
+      onSend={send}
+      onStop={() => {}}
+    />,
+  );
+  expect((fresh.getByRole("textbox") as HTMLTextAreaElement).value).toBe(
+    "Edited",
+  );
+  expect(calls).toBe(1);
 });

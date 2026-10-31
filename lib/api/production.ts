@@ -14,7 +14,7 @@ import { errorResponse, requireSameOrigin } from "@/lib/api/respond";
 import { requireAccess } from "@/lib/auth/access";
 import { testOpenRouterKey } from "@/lib/byok/store";
 import { getDb } from "@/lib/db/client";
-import { appUrl, platformKey } from "@/lib/env";
+import { appOrigins, platformKey } from "@/lib/env";
 import { redisRateLimit } from "@/lib/ratelimit";
 import { getRedis, lazyKv } from "@/lib/redis";
 
@@ -76,7 +76,7 @@ export function route(
 ) {
   return async (request: Request, { params }: { params: Params }) => {
     try {
-      requireSameOrigin(request, appUrl());
+      requireSameOrigin(request, appOrigins());
       return await handler(appContext(), request, (await params)?.id ?? "");
     } catch (error) {
       return errorResponse(error);

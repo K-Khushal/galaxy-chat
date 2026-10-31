@@ -116,7 +116,10 @@ function plan(
     };
   }
   if (target.status !== "interrupted") {
-    throw new AppError("not_continuable", 409);
+    throw new AppError(
+      target.status === "failed" ? "reply_recovered" : "not_continuable",
+      409,
+    );
   }
   return {
     userMessage: null,
@@ -337,7 +340,10 @@ async function recordReply(
         .where(eq(message.id, steps.replyId))
         .for("update");
       if (!current || current.status !== "interrupted") {
-        throw new AppError("not_continuable", 409);
+        throw new AppError(
+          current?.status === "failed" ? "reply_recovered" : "not_continuable",
+          409,
+        );
       }
       // Settle the previous Generation's credit before its record is reused.
       if (current.generationId) {

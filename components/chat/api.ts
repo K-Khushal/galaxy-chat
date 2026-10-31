@@ -26,6 +26,12 @@ export async function api<T>(
   return response.status === 204 ? (undefined as T) : response.json();
 }
 const errors: Record<string, string> = {
+  reply_recovered:
+    "This Reply ended before producing text. Regenerate it to try again.",
+  cross_origin:
+    "This address is not allowed to make changes. Open Galaxy at its configured address and try again.",
+  export_too_large:
+    "Your export is too large to download. Delete unneeded Chats and try again.",
   reauth_required: "Please sign in again before deleting your account.",
   no_credits:
     "Your Credits are used up. Add your OpenRouter key to keep chatting.",

@@ -40,13 +40,23 @@ export function Composer({
   const id = useId();
   useEffect(() => {
     try {
-      setDraft(
+      const restored =
         (persistDraft
           ? localStorage.getItem(`galaxy:draft:${chatId}`)
           : null) ??
-          transferredDraft.current ??
-          "",
-      );
+        transferredDraft.current ??
+        "";
+      setDraft(restored);
+      // Persist the restored draft before consuming the one-shot transfer.
+      if (persistDraft && transferredDraft.current !== undefined) {
+        localStorage.setItem(`galaxy:draft:${chatId}`, restored);
+        if (
+          localStorage.getItem("galaxy:draft:new")?.trim() ===
+          transferredDraft.current.trim()
+        )
+          localStorage.removeItem("galaxy:draft:new");
+        sessionStorage.removeItem(`galaxy:send:${chatId}`);
+      }
     } catch {}
     setLoaded(true);
   }, [chatId, persistDraft]);

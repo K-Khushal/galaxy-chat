@@ -206,3 +206,20 @@ test("BYOK pays after Credits run out without Postgres writes", async () => {
   expect(h.state.calls[0]?.maxOutputTokens).toBeUndefined();
   expect(await getCredits(h.db, "empty")).toBe(0);
 });
+
+test("Custom instructions reach the Temporary-chat system prompt", async () => {
+  await h.pg.exec(
+    `INSERT INTO user_settings (user_id, about_you, response_instructions) VALUES ('alice', 'Astronomy', 'Be brief')`,
+  );
+  await (await send()).text();
+  expect(h.state.calls[0]?.prompt).toContain("Astronomy");
+  expect(h.state.calls[0]?.prompt).toContain("Be brief");
+});
+
+test("a settings-read failure refunds Credits before calling the provider", async () => {
+  await h.pg.exec("DROP TABLE user_settings");
+  expect((await send()).status).toBe(500);
+  expect(await getCredits(h.db, "alice")).toBe(10);
+  expect(h.state.calls).toHaveLength(0);
+  await assertSlotsReleased();
+});

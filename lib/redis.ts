@@ -56,7 +56,7 @@ return count`;
 const newClient = (url: string) => createClient({ url });
 type RedisClient = ReturnType<typeof newClient>;
 
-function kvFor(client: RedisClient): Kv {
+export function kvFor(client: RedisClient): Kv {
   return {
     get: (key) => client.get(key),
     set: async (key, value, { px, nx } = {}) =>

@@ -17,6 +17,11 @@ import { ModelPicker } from "./model-picker";
 import { useByokKey } from "./use-byok-key";
 import { useGalaxyChat } from "./use-galaxy-chat";
 export function Chat({ initial }: { initial: ChatView }) {
+  const [transfer] = useState(() =>
+    typeof window === "undefined"
+      ? undefined
+      : (sessionStorage.getItem(`galaxy:send:${initial.chat.id}`) ?? undefined),
+  );
   const chat = useGalaxyChat(initial);
   const { hasKey, setHasKey } = useByokKey();
   const [keyOpen, setKeyOpen] = useState(false);
@@ -44,17 +49,6 @@ export function Chat({ initial }: { initial: ChatView }) {
   }, [chat.busy, chat.messages]);
   async function send(text: string) {
     const ok = await chat.send(text);
-    if (ok) {
-      const transferred = sessionStorage.getItem(
-        `galaxy:send:${initial.chat.id}`,
-      );
-      if (
-        transferred &&
-        localStorage.getItem("galaxy:draft:new")?.trim() === transferred.trim()
-      )
-        localStorage.removeItem("galaxy:draft:new");
-      sessionStorage.removeItem(`galaxy:send:${initial.chat.id}`);
-    }
     return ok;
   }
   return (
@@ -112,16 +106,8 @@ export function Chat({ initial }: { initial: ChatView }) {
           chatId={initial.chat.id}
           busy={chat.busy}
           onSend={send}
-          autoSend={
-            typeof window !== "undefined" &&
-            !!sessionStorage.getItem(`galaxy:send:${initial.chat.id}`)
-          }
-          initialDraft={
-            typeof window === "undefined"
-              ? undefined
-              : (sessionStorage.getItem(`galaxy:send:${initial.chat.id}`) ??
-                undefined)
-          }
+          autoSend={transfer !== undefined}
+          initialDraft={transfer}
           onStop={() => void chat.stop()}
           picker={
             <ModelPicker
