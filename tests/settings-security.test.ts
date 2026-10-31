@@ -65,3 +65,58 @@ test("M6 must replace the no-op attachment cleanup when attachments land", () =>
     );
   }
 });
+
+test("origin configuration includes explicit aliases and preview hosts only on previews", async () => {
+  const { appOrigins } = await import("../lib/env");
+  const config = {
+    BETTER_AUTH_URL: "https://galaxy.example",
+    APP_ORIGINS: " https://www.galaxy.example, http://localhost:3001",
+    VERCEL_ENV: "preview",
+    VERCEL_URL: "deploy.vercel.app",
+    VERCEL_BRANCH_URL: "branch.vercel.app",
+  };
+  expect(appOrigins(config)).toEqual([
+    "https://galaxy.example",
+    "https://www.galaxy.example",
+    "http://localhost:3001",
+    "https://deploy.vercel.app",
+    "https://branch.vercel.app",
+  ]);
+  expect(appOrigins({ ...config, VERCEL_ENV: "production" })).not.toContain(
+    "https://deploy.vercel.app",
+  );
+  for (const APP_ORIGINS of [
+    "*",
+    "null",
+    "https://example.com/path",
+    "https://user:pass@example.com",
+    "https://example.com,",
+  ])
+    expect(() => appOrigins({ ...config, APP_ORIGINS })).toThrow();
+  requireSameOrigin(
+    new Request("https://www.galaxy.example/api", {
+      method: "POST",
+      headers: { origin: "https://www.galaxy.example" },
+    }),
+    appOrigins(config),
+  );
+});
+
+test("route returns 403 for a cross-origin mutation before creating its context", async () => {
+  process.env.BETTER_AUTH_URL = "https://galaxy.example";
+  const { route } = await import("../lib/api/production");
+  let called = false;
+  const response = await route(async () => {
+    called = true;
+    return new Response();
+  })(
+    new Request("https://galaxy.example/api", {
+      method: "POST",
+      headers: { origin: "https://evil.example" },
+    }),
+    { params: Promise.resolve({}) },
+  );
+  expect(response.status).toBe(403);
+  expect(await response.json()).toEqual({ error: "cross_origin" });
+  expect(called).toBe(false);
+});

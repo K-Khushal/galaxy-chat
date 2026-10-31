@@ -33,7 +33,7 @@ Do not reintroduce removed subsystems (MCP, sandbox, browser, durable jobs, plat
 ## Working rules
 
 - Package manager is **Bun**. Never use npm/yarn/pnpm for installs.
-- Before every push, run and pass, in this order: `bun run lint`, `bun run typecheck`, `bun test`, `bun run build`. Paste the pass/fail summary in the PR body. A PR without this evidence will not be merged.
+- Before every push, run and pass, in this order: `bun run lint`, `bun run typecheck`, `bun test`, `bun run test:ui`, `bun run build`. Paste the pass/fail summary in the PR body. A PR without this evidence will not be merged.
 - One milestone (or one sub-task) per branch and PR, named `m<N>/<slug>`, targeting `main`. Keep PRs reviewable; prefer several focused commits.
 - Prefer deleting code to adding flags. No feature flags for v1 features; fail loudly with a clear error when required config is missing.
 - Validate all env vars in one place (zod) and keep `.env.example` in sync with it.

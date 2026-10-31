@@ -23,22 +23,24 @@ export function ReplyActions({
   const [error, setError] = useState(false);
   return (
     <>
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        aria-label={copied ? "Copied Reply" : "Copy Reply"}
-        onClick={async () => {
-          try {
-            await navigator.clipboard.writeText(textOf(message));
-            setCopied(true);
-            setError(false);
-          } catch {
-            setError(true);
-          }
-        }}
-      >
-        {copied ? <Check /> : <Copy />}
-      </Button>
+      {textOf(message).trim() && (
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label={copied ? "Copied Reply" : "Copy Reply"}
+          onClick={async () => {
+            try {
+              await navigator.clipboard.writeText(textOf(message));
+              setCopied(true);
+              setError(false);
+            } catch {
+              setError(true);
+            }
+          }}
+        >
+          {copied ? <Check /> : <Copy />}
+        </Button>
+      )}
       <Button
         variant="ghost"
         size="icon-sm"

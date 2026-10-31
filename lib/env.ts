@@ -82,6 +82,10 @@ const authSchema = z.object({
   BETTER_AUTH_URL: required("BETTER_AUTH_URL").pipe(
     z.url("BETTER_AUTH_URL must be a URL"),
   ),
+  APP_ORIGINS: z.string().optional(),
+  VERCEL_ENV: z.enum(["production", "preview", "development"]).optional(),
+  VERCEL_URL: z.string().optional(),
+  VERCEL_BRANCH_URL: z.string().optional(),
   GITHUB_CLIENT_ID: required("GITHUB_CLIENT_ID"),
   GITHUB_CLIENT_SECRET: required("GITHUB_CLIENT_SECRET"),
   GOOGLE_CLIENT_ID: required("GOOGLE_CLIENT_ID"),
@@ -159,11 +163,51 @@ export const platformKey = concern(platformKeySchema);
 /** The BYOK keyring, for lib/byok/crypto.ts. */
 export const byokKeyring = concern(byokSchema);
 
-/** Canonical application URL for same-origin mutation protection. */
-export const appUrl = concern(
+/** Exact HTTP(S) origins shared by mutation protection and Better Auth. */
+const origin = z
+  .string()
+  .trim()
+  .refine((value) => {
+    try {
+      const url = new URL(value);
+      return ["http:", "https:"].includes(url.protocol) && url.origin === value;
+    } catch {
+      return false;
+    }
+  }, "APP_ORIGINS entries must be exact HTTP(S) origins");
+
+export const appOrigins = concern(
   z
     .object({
       BETTER_AUTH_URL: required("BETTER_AUTH_URL").pipe(z.url()),
+      APP_ORIGINS: z.string().optional(),
+      VERCEL_ENV: z.enum(["production", "preview", "development"]).optional(),
+      VERCEL_URL: z.string().optional(),
+      VERCEL_BRANCH_URL: z.string().optional(),
     })
-    .transform((value) => value.BETTER_AUTH_URL),
+    .transform((value) => [
+      new URL(value.BETTER_AUTH_URL).origin,
+      ...(value.APP_ORIGINS
+        ? value.APP_ORIGINS.split(",").map((entry) => entry.trim())
+        : []),
+      ...(value.VERCEL_ENV === "preview"
+        ? [value.VERCEL_URL, value.VERCEL_BRANCH_URL]
+            .filter((host): host is string => !!host)
+            .map((host) => `https://${host}`)
+        : []),
+    ])
+    .pipe(z.array(origin))
+    .transform((origins) => [...new Set(origins)]),
+);
+
+/** Optional disposable Redis instance for opt-in integration tests. */
+export const redisTestUrl = concern(
+  z
+    .object({
+      REDIS_TEST_URL: required("REDIS_TEST_URL").regex(
+        /^rediss?:\/\/.+/,
+        "REDIS_TEST_URL must be a Redis URL",
+      ),
+    })
+    .transform((value) => value.REDIS_TEST_URL),
 );

@@ -14,7 +14,7 @@ import {
 } from "@/lib/credits";
 import { type Database, getDb } from "@/lib/db/client";
 import { account, authSchema, user } from "@/lib/db/schema";
-import { type AuthEnv, authEnv } from "@/lib/env";
+import { type AuthEnv, appOrigins, authEnv } from "@/lib/env";
 
 export function createAuth(
   config: AuthEnv,
@@ -43,6 +43,7 @@ export function createAuth(
   }
   return betterAuth({
     baseURL: config.BETTER_AUTH_URL,
+    trustedOrigins: appOrigins(config),
     secret: config.BETTER_AUTH_SECRET,
     database: drizzleAdapter(db, { provider: "pg", schema: authSchema }),
     emailAndPassword: { enabled: false },

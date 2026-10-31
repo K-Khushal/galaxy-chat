@@ -162,6 +162,12 @@ test("a stale Generation's final save changes nothing", async () => {
 
 test("a failed lock renewal aborts the model and frees the User's slot", async () => {
   await setup({ renewMs: 20 });
+  const deleteIfOwned = h.ctx.kv.delIfEquals.bind(h.ctx.kv);
+  let abortsAtRelease = -1;
+  h.ctx.kv.delIfEquals = async (key, value) => {
+    if (key.startsWith("galaxy:user:alice:")) abortsAtRelease = h.state.aborts;
+    return deleteIfOwned(key, value);
+  };
   h.state.script = { words: words(400), delayMs: 5 };
   const chatId = await newChat();
   const response = await send(chatId, "Go");
@@ -180,6 +186,7 @@ test("a failed lock renewal aborts the model and frees the User's slot", async (
   expect(textOfRow(reply).length).toBeLessThan(words(400).join("").length);
   expect(h.state.aborts).toBe(1);
   expect(userSlots()).toEqual([]);
+  expect(abortsAtRelease).toBe(1);
   // It had produced tokens, so the credit stays spent.
   expect(await getCredits(h.db, "alice")).toBe(9);
 });
@@ -320,4 +327,92 @@ test("request bodies over the limit are rejected before they are parsed", async 
     body: { model: "openai/gpt-6-luna", extra: true },
   });
   expect(unknown.status).toBe(400);
+});
+
+test.skipIf(!process.env.REDIS_TEST_URL)(
+  "real Redis lease expiry fences stale renewal, release and Reply writes",
+  async () => {
+    const { createClient } = await import("redis");
+    const { kvFor } = await import("../lib/redis");
+    const { redisTestUrl } = await import("../lib/env");
+    const {
+      acquireGeneration,
+      releaseGeneration,
+      renewGeneration,
+      getActiveGeneration,
+    } = await import("../lib/generation/locks");
+    const client = createClient({ url: redisTestUrl() });
+    client.on("error", () => {});
+    await client.connect();
+    const kv = kvFor(client);
+    const id = crypto.randomUUID();
+    const leases = [];
+    try {
+      await setup();
+      const chatId = await newChat();
+      await (await send(chatId)).text();
+      await h.settle();
+      const reply = await replyRow(chatId);
+      if (!reply) throw new Error("missing Reply");
+      const take = (generationId: string, ttl: number) =>
+        acquireGeneration(
+          kv,
+          {
+            chatId: id,
+            userId: id,
+            active: { generationId, messageId: reply.id },
+          },
+          ttl,
+        );
+      const old = await take(`${id}-old`, 50);
+      if (!old.ok) throw new Error("missing old lease");
+      leases.push(old.lease);
+      await sleep(100);
+      const next = await take(`${id}-new`, 10000);
+      if (!next.ok) throw new Error("missing new lease");
+      leases.push(next.lease);
+      await h.db
+        .update(message)
+        .set({ generationId: next.lease.generationId })
+        .where(eq(message.id, reply.id));
+      expect(await renewGeneration(kv, old.lease, 10000)).toBe(false);
+      await releaseGeneration(kv, old.lease);
+      expect((await getActiveGeneration(kv, id))?.generationId).toBe(
+        next.lease.generationId,
+      );
+      expect(
+        await finishReply(
+          h.db,
+          { replyId: reply.id, generationId: old.lease.generationId },
+          {
+            parts: [],
+            status: "failed",
+            usage: null,
+            error: null,
+            firstToken: false,
+          },
+          "alice",
+        ),
+      ).toBe(false);
+      expect(await getCredits(h.db, "alice")).toBe(9);
+    } finally {
+      for (const lease of leases) await releaseGeneration(kv, lease);
+      await client.quit();
+    }
+  },
+);
+
+test("continuing an empty recovered Reply explains that it must be regenerated", async () => {
+  await setup();
+  const chatId = await crashAfterDebit();
+  const reply = await replyRow(chatId);
+  h.redis.advance(h.ctx.timing.lockTtlMs + 1);
+  const response = await call(h, sendMessageRoute, {
+    user: "alice",
+    id: chatId,
+    body: { trigger: "continue-message", messageId: reply?.id },
+  });
+  expect(response.status).toBe(409);
+  expect(await response.json()).toEqual({ error: "reply_recovered" });
+  expect(await getCredits(h.db, "alice")).toBe(10);
 });

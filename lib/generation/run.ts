@@ -157,10 +157,6 @@ export async function runGeneration(
     ownershipLost = true;
     logErrorId("generation_ownership_lost");
     end("lost");
-    // Give the User's slot back now; the Chat lock may already be another's.
-    releaseGeneration(ctx.kv, input.lease).catch(() =>
-      logErrorId("lock_release_failed"),
-    );
   };
 
   const makeSource = () =>

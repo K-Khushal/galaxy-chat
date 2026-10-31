@@ -2,6 +2,9 @@ import { expect, test } from "bun:test";
 import { errorCopy, needsKey } from "../components/chat/api";
 
 for (const code of [
+  "cross_origin",
+  "export_too_large",
+  "reply_recovered",
   "no_credits",
   "needs_byok_key",
   "provider_key_rejected",
