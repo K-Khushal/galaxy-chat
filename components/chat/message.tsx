@@ -21,7 +21,7 @@ export function Message({
   message: ChatMessage;
   busy: boolean;
   streaming: boolean;
-  onEdit: (text: string) => void;
+  onEdit: (text: string) => boolean | Promise<boolean>;
   onRegenerate: () => void;
   onContinue: () => void;
   onSwitch: (id: string) => void;
@@ -29,9 +29,19 @@ export function Message({
   const reduced = useReducedMotion();
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(textOf(message));
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const restoreFocus = useRef(false);
+  function closeEdit() {
+    restoreFocus.current = true;
+    setEditing(false);
+  }
   const editRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
     if (editing) editRef.current?.focus();
+    else if (restoreFocus.current) {
+      buttonRef.current?.focus();
+      restoreFocus.current = false;
+    }
   }, [editing]);
   const user = message.role === "user";
   const reasoning = message.parts
@@ -52,8 +62,12 @@ export function Message({
           onSubmit={(e) => {
             e.preventDefault();
             if (text.trim()) {
-              onEdit(text.trim());
-              setEditing(false);
+              const result = onEdit(text.trim());
+              if (typeof result !== "boolean")
+                void result.then((ok) => {
+                  if (ok) closeEdit();
+                });
+              else if (result) closeEdit();
             }
           }}
         >
@@ -66,16 +80,12 @@ export function Message({
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Escape") setEditing(false);
+              if (e.key === "Escape") closeEdit();
             }}
             className="min-h-28 rounded-xl border bg-card p-3 text-message outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
           <div className="flex justify-end gap-2">
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => setEditing(false)}
-            >
+            <Button type="button" variant="ghost" onClick={closeEdit}>
               Cancel
             </Button>
             <Button type="submit" disabled={!text.trim() || busy}>
@@ -119,7 +129,9 @@ export function Message({
         <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
           <span>
             {message.status === "failed"
-              ? "Could not write this Reply. Try regenerating it."
+              ? message.payment === "byok"
+                ? "Something went wrong before Galaxy could reply. No Credits were used; check OpenRouter for any provider charges."
+                : "Something went wrong before Galaxy could reply. You weren’t charged."
               : message.status === "stopped"
                 ? "Stopped"
                 : "Interrupted"}
@@ -141,9 +153,11 @@ export function Message({
           <Button
             variant="ghost"
             size="icon-sm"
+            ref={buttonRef}
             aria-label="Edit Message"
-            disabled={busy}
+            aria-disabled={busy}
             onClick={() => {
+              if (busy) return;
               setText(textOf(message));
               setEditing(true);
             }}

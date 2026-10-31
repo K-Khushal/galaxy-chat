@@ -1,6 +1,13 @@
 "use client";
 import { ArrowUp, Plus, Square } from "lucide-react";
-import { type ReactNode, useEffect, useId, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from "react";
 import { Button } from "@/components/ui/button";
 import {
   Popover,
@@ -13,19 +20,29 @@ export function Composer({
   onSend,
   onStop,
   picker,
+  initialDraft,
+  autoSend = false,
 }: {
   chatId: string;
   busy?: boolean;
-  onSend: (text: string) => void;
+  onSend: (text: string) => Promise<boolean>;
+  initialDraft?: string;
+  autoSend?: boolean;
   onStop: () => void;
   picker?: ReactNode;
 }) {
   const [draft, setDraft] = useState("");
   const [loaded, setLoaded] = useState(false);
+  const sending = useRef(false);
+  const transferredDraft = useRef(initialDraft);
   const id = useId();
   useEffect(() => {
     try {
-      setDraft(localStorage.getItem(`galaxy:draft:${chatId}`) ?? "");
+      setDraft(
+        localStorage.getItem(`galaxy:draft:${chatId}`) ??
+          transferredDraft.current ??
+          "",
+      );
     } catch {}
     setLoaded(true);
   }, [chatId]);
@@ -35,11 +52,27 @@ export function Composer({
         localStorage.setItem(`galaxy:draft:${chatId}`, draft);
       } catch {}
   }, [chatId, draft, loaded]);
-  function send() {
-    if (busy || !draft.trim()) return;
-    onSend(draft.trim());
-    setDraft("");
-  }
+  const send = useCallback(async () => {
+    if (busy || sending.current || !draft.trim()) return;
+    sending.current = true;
+    const submitted = draft;
+    try {
+      if (await onSend(submitted.trim())) {
+        setDraft((current) => (current === submitted ? "" : current));
+      }
+    } catch {
+      /* Keep the draft available for retry. */
+    } finally {
+      sending.current = false;
+    }
+  }, [busy, draft, onSend]);
+  const started = useRef(false);
+  useEffect(() => {
+    if (loaded && autoSend && !started.current) {
+      started.current = true;
+      void send();
+    }
+  }, [loaded, autoSend, send]);
   return (
     <form
       aria-label="Message Galaxy"

@@ -1,6 +1,6 @@
 "use client";
 import { useChat } from "@ai-sdk/react";
-import { DefaultChatTransport } from "ai";
+import { DefaultChatTransport, type UIMessage } from "ai";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChatMessage } from "@/lib/chat/store";
 import { api, type ChatView } from "./api";
@@ -12,10 +12,24 @@ export function useGalaxyChat(initial: ChatView) {
   const [model, setModel] = useState(initial.chat.model);
   const id = initial.chat.id;
   const reloadRef = useRef<() => Promise<void>>(async () => {});
+  const accepted = useRef(false);
+  const accept = useRef<((ok: boolean) => void) | undefined>(undefined);
+  const performing = useRef(false);
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
         api: `/api/chats/${id}/messages`,
+        fetch: Object.assign(
+          async (url: RequestInfo | URL, options?: RequestInit) => {
+            const response = await fetch(url, options);
+            if (options?.method === "POST" && response.ok) {
+              accepted.current = true;
+              accept.current?.(true);
+            }
+            return response;
+          },
+          { preconnect: fetch.preconnect },
+        ),
         prepareSendMessagesRequest: ({ body }) => ({ body: body ?? {} }),
         prepareReconnectToStreamRequest: () => ({
           api: `/api/chats/${id}/stream`,
@@ -23,7 +37,7 @@ export function useGalaxyChat(initial: ChatView) {
       }),
     [id],
   );
-  const chat = useChat({
+  const chat = useChat<UIMessage>({
     id,
     messages: initial.messages,
     transport,
@@ -61,7 +75,9 @@ export function useGalaxyChat(initial: ChatView) {
     parentId?: string | null,
     continuing = false,
   ) {
-    if (busy) return;
+    if (busy || performing.current) return false;
+    performing.current = true;
+    accepted.current = false;
     setActionError(undefined);
     chat.clearError();
     setPending(true);
@@ -71,17 +87,32 @@ export function useGalaxyChat(initial: ChatView) {
         parentId === null ? -1 : before.findIndex((m) => m.id === parentId);
       setMessages(before.slice(0, index + 1));
     }
-    try {
-      if (text !== undefined) await chat.sendMessage({ text }, { body });
-      else if (continuing) await chat.sendMessage(undefined, { body });
-      else await chat.regenerate({ body });
-      await reload();
-    } catch (error) {
-      setActionError(error as Error);
-      await reload();
-    } finally {
-      setPending(false);
+    const acceptance = new Promise<boolean>((resolve) => {
+      accept.current = resolve;
+    });
+    async function execute() {
+      try {
+        if (text !== undefined)
+          await chat.sendMessage(
+            { role: "user", parts: [{ type: "text", text }] },
+            { body },
+          );
+        else if (continuing) await chat.sendMessage(undefined, { body });
+        else await chat.regenerate({ body });
+        if (accepted.current) await reload();
+        else setMessages(before);
+      } catch (error) {
+        setActionError(error as Error);
+        if (accepted.current) await reload();
+        else setMessages(before);
+      } finally {
+        setPending(false);
+        performing.current = false;
+        accept.current = undefined;
+      }
+      return accepted.current;
     }
+    return Promise.race([execute(), acceptance]);
   }
   return {
     messages: chat.messages,

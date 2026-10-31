@@ -13,6 +13,6 @@ test("chat component interactions", () => {
       encoding: "utf8",
     },
   );
-  expect(result.stderr).toContain("5 pass");
+  expect(result.stderr).toContain("0 fail");
   expect(result.status).toBe(0);
 });

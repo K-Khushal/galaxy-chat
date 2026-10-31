@@ -1,21 +1,17 @@
 "use client";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { DEFAULT_MODEL_ID } from "@/lib/models";
 import { api, errorCopy } from "./api";
 import { ByokDialog } from "./byok-dialog";
 import { Composer } from "./composer";
 import { ModelPicker } from "./model-picker";
+import { useByokKey } from "./use-byok-key";
 export function NewChat() {
   const router = useRouter();
   const [model, setModel] = useState(DEFAULT_MODEL_ID);
-  const [hasKey, setHasKey] = useState(false);
+  const { hasKey, setHasKey } = useByokKey();
   const [keyOpen, setKeyOpen] = useState(false);
-  useEffect(() => {
-    api<{ key: unknown }>("/api/byok")
-      .then((data) => setHasKey(!!data.key))
-      .catch(() => {});
-  }, []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Error>();
   return (
@@ -48,9 +44,11 @@ export function NewChat() {
               sessionStorage.setItem(`galaxy:send:${chat.id}`, text);
               window.dispatchEvent(new Event("galaxy:chats"));
               router.push(`/chat/${chat.id}`);
+              return false; // Retain the new-Chat draft until its first send is accepted.
             } catch (error) {
               setError(error as Error);
               setBusy(false);
+              return false;
             }
           }}
         />

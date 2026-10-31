@@ -8,6 +8,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import type { ChatMessage } from "@/lib/chat/store";
+import { MODELS } from "@/lib/models";
 import { textOf } from "./api";
 export function ReplyActions({
   message,
@@ -59,7 +60,11 @@ export function ReplyActions({
           <dl className="grid gap-2">
             <div>
               <dt>Model</dt>
-              <dd>{message.model ?? "Not available"}</dd>
+              <dd>
+                {MODELS.find((model) => model.id === message.model)?.label ??
+                  message.model ??
+                  "Not available"}
+              </dd>
             </div>
             <div>
               <dt>Tokens</dt>
