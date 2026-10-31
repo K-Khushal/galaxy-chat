@@ -1,56 +1,47 @@
 import "server-only";
-import { Ratelimit } from "@upstash/ratelimit";
-import { Redis } from "@upstash/redis";
 import { Resend } from "resend";
 import { hashGrantIdentity } from "@/lib/credits";
-import type { Env } from "@/lib/env";
+import type { AuthEnv } from "@/lib/env";
+import { redisRateLimit } from "@/lib/ratelimit";
+import { type Kv, lazyKv } from "@/lib/redis";
 
-export function authServices(config: Env) {
-  const redis = new Redis({
-    url: config.UPSTASH_REDIS_REST_URL,
-    token: config.UPSTASH_REDIS_REST_TOKEN,
-    automaticDeserialization: false,
-  });
-  const limiter = new Ratelimit({
-    redis,
-    limiter: Ratelimit.slidingWindow(3, "1 m"),
-    prefix: "galaxy:otp",
-    analytics: false,
-    timeout: 0,
-  });
-  const key = (value: string) => `galaxy:auth:${value}`;
+const storageKey = (key: string) => `galaxy:auth:${key}`;
+
+/**
+ * Better Auth's secondary storage (sessions, OTPs, its own rate limits) on the
+ * shared Redis. `getAndDelete` and `increment` stay atomic so a code can be
+ * spent once and attempts counted under concurrent requests.
+ */
+export function redisSecondaryStorage(kv: Kv) {
   return {
-    secondaryStorage: {
-      get: (k: string) => redis.get<string>(key(k)),
-      getAndDelete: (k: string) => redis.getdel(key(k)),
-      async set(k: string, value: string, ttl?: number) {
-        if (ttl === undefined) await redis.set(key(k), value);
-        else await redis.set(key(k), value, { ex: ttl });
-      },
-      async delete(k: string) {
-        await redis.del(key(k));
-      },
-      async increment(k: string, ttl: number) {
-        return Number(
-          await redis.eval(
-            "local n = redis.call('INCR', KEYS[1]); if n == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end; return n",
-            [key(k)],
-            [ttl],
-          ),
-        );
-      },
+    get: (key: string) => kv.get(storageKey(key)),
+    getAndDelete: (key: string) => kv.getDel(storageKey(key)),
+    async set(key: string, value: string, ttl?: number) {
+      await kv.set(storageKey(key), value, {
+        ...(ttl ? { px: ttl * 1000 } : {}),
+      });
     },
+    delete: (key: string) => kv.del(storageKey(key)),
+    increment: (key: string, ttl: number) =>
+      kv.incrWindow(storageKey(key), ttl * 1000),
+  };
+}
+
+export function authServices(
+  config: AuthEnv,
+  kv: Kv = lazyKv(),
+  now: () => number = Date.now,
+) {
+  const rateLimit = redisRateLimit(kv, now);
+  return {
+    secondaryStorage: redisSecondaryStorage(kv),
     protection: {
       hash: (email: string) =>
         hashGrantIdentity(
           { kind: "email", value: email },
           config.CREDIT_IDENTITY_KEY,
         ),
-      async limit(k: string) {
-        const result = await limiter.limit(k);
-        await result.pending;
-        return result.success;
-      },
+      limit: rateLimit,
       async verify(token: string) {
         const response = await fetch(
           "https://challenges.cloudflare.com/turnstile/v0/siteverify",

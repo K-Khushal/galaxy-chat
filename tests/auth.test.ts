@@ -5,12 +5,13 @@ import { protectEmailCode } from "../lib/auth/abuse";
 import { type CreditsDb, getCredits } from "../lib/credits";
 import type { Database } from "../lib/db/client";
 import * as schema from "../lib/db/schema";
-import { parseEnv } from "../lib/env";
+import { authEnv } from "../lib/env";
+import { MemoryRedis } from "./support/memory-redis";
 
 mock.module("server-only", () => ({}));
 const { createAuth } = await import("../lib/auth/server");
-const config = parseEnv({
-  DATABASE_URL: "postgres://unused",
+const { authServices } = await import("../lib/auth/services");
+const config = authEnv({
   BETTER_AUTH_SECRET: "x".repeat(32),
   BETTER_AUTH_URL: "http://localhost:3000",
   GITHUB_CLIENT_ID: "test",
@@ -20,8 +21,6 @@ const config = parseEnv({
   CREDIT_IDENTITY_KEY: "k".repeat(32),
   RESEND_API_KEY: "test",
   AUTH_EMAIL_FROM: "auth@example.com",
-  UPSTASH_REDIS_REST_URL: "https://unused.example",
-  UPSTASH_REDIS_REST_TOKEN: "test",
   TURNSTILE_SITE_KEY: "test",
   TURNSTILE_SECRET_KEY: "test",
 });
@@ -34,50 +33,21 @@ for (const file of [
   await client.exec(await Bun.file(`drizzle/${file}`).text());
 const db = drizzle(client, { schema });
 afterAll(() => client.close());
-const values = new Map<string, { value: string; expires: number }>();
+// The real auth services over an in-memory Redis. The rate-limit clock is
+// frozen so a test never straddles a window boundary; only Turnstile and the
+// mail transport are stubbed.
+const redis = new MemoryRedis();
 let code = "";
 let mails = 0;
-// Same three-per-minute contract as authServices; independent buckets per key.
-const buckets = new Map<string, number[]>();
 const sendCode = mock(async (_email: string, otp: string) => {
   code = otp;
   mails++;
 });
+const services = authServices(config, redis, () => 0);
 const auth = createAuth(config, db as unknown as Database, {
-  secondaryStorage: {
-    async get(k) {
-      const row = values.get(k);
-      return row && row.expires > Date.now() ? row.value : null;
-    },
-    async set(k, value, ttl) {
-      values.set(k, {
-        value,
-        expires: ttl ? Date.now() + ttl * 1000 : Infinity,
-      });
-    },
-    async delete(k) {
-      values.delete(k);
-    },
-    async getAndDelete(k) {
-      const value = values.get(k)?.value ?? null;
-      values.delete(k);
-      return value;
-    },
-    async increment(k, ttl) {
-      const n = Number(values.get(k)?.value ?? 0) + 1;
-      values.set(k, { value: String(n), expires: Date.now() + ttl * 1000 });
-      return n;
-    },
-  },
+  ...services,
   protection: {
-    hash: (email) => email,
-    limit: async (key) => {
-      const now = Date.now();
-      const recent = (buckets.get(key) ?? []).filter((at) => at > now - 60_000);
-      recent.push(now);
-      buckets.set(key, recent);
-      return recent.length <= 3;
-    },
+    ...services.protection,
     verify: async (token) => token === "valid",
   },
   sendCode,
@@ -133,8 +103,7 @@ test("email code sign-up grants 10, persisted session, deletion and returning em
   ).toBe(0);
 });
 test("one IP cannot request codes for more than three emails", async () => {
-  buckets.clear();
-  values.clear();
+  redis.clear();
   sendCode.mockClear();
   for (let i = 0; i < 3; i++) {
     expect(
@@ -167,8 +136,7 @@ test("one IP cannot request codes for more than three emails", async () => {
 });
 
 test("one email cannot request codes from more than three IPs", async () => {
-  buckets.clear();
-  values.clear();
+  redis.clear();
   sendCode.mockClear();
   for (let i = 0; i < 3; i++) {
     expect(
@@ -201,8 +169,7 @@ test("one email cannot request codes from more than three IPs", async () => {
 });
 
 test("disposable email rejection runs before mail", async () => {
-  values.clear();
-  buckets.clear();
+  redis.clear();
   const before = mails;
   expect(
     (
@@ -216,8 +183,7 @@ test("disposable email rejection runs before mail", async () => {
 });
 
 test("exhausting OTP attempts invalidates the correct code", async () => {
-  buckets.clear();
-  values.clear();
+  redis.clear();
   const email = "attempts@example.com";
   expect(
     (
@@ -246,8 +212,7 @@ test("exhausting OTP attempts invalidates the correct code", async () => {
 });
 
 test("a successful sign-in consumes the OTP", async () => {
-  buckets.clear();
-  values.clear();
+  redis.clear();
   const email = "replay@example.com";
   expect(
     (
@@ -285,7 +250,7 @@ test("Turnstile and Redis failures fail closed", async () => {
 });
 
 test("password reset routes cannot send mail", async () => {
-  values.clear();
+  redis.clear();
   const before = mails;
   expect(
     (
@@ -380,8 +345,7 @@ async function oauth(
 
 for (const provider of ["github", "google"] as const) {
   test(`${provider}: verified email links without extra Credits; returning provider ID gets 0 after deletion and changed email`, async () => {
-    buckets.clear();
-    values.clear();
+    redis.clear();
     const email = `link-${provider}@example.com`;
     expect(
       (
@@ -430,8 +394,7 @@ for (const provider of ["github", "google"] as const) {
   });
 
   test(`${provider}: unverified provider email cannot link to an existing account`, async () => {
-    buckets.clear();
-    values.clear();
+    redis.clear();
     const email = `unverified-${provider}@example.com`;
     expect(
       (

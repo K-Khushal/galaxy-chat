@@ -6,7 +6,7 @@ Read [`GLOSSARY.md`](GLOSSARY.md) for the vocabulary, [`docs/adr/`](docs/adr/) f
 
 ## Local setup
 
-Requires Node.js 22+, Bun, PostgreSQL, GitHub and Google OAuth apps, Resend, Upstash Redis and Cloudflare Turnstile.
+Requires Node.js 22+, Bun, PostgreSQL, GitHub and Google OAuth apps, Resend, a Redis server (for Upstash, its TCP `rediss://` URL) and Cloudflare Turnstile.
 
 1. `bun install --frozen-lockfile`
 2. Copy `.env.example` to `.env.local` and fill it in. `lib/env.ts` validates it and reports every missing value.

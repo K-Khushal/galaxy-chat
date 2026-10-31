@@ -1,6 +1,6 @@
 import "server-only";
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import type { EnvSource } from "@/lib/env";
+import { type ByokKeyring, byokKeyring, type EnvSource } from "@/lib/env";
 import { AppError } from "@/lib/errors";
 import type { ByokProvider } from "./contract";
 
@@ -10,31 +10,10 @@ export type SealedKey = {
   ciphertext: string;
 };
 type Binding = { userId: string; provider: ByokProvider; revision: string };
-export function keyring(env: EnvSource) {
+/** The validated keyring (see lib/env.ts), or a 503 when it is misconfigured. */
+export function keyring(env: EnvSource): ByokKeyring {
   try {
-    const raw = env.BYOK_ENCRYPTION_KEYS_JSON ?? "";
-    if (raw.length > 4000) throw new Error();
-    const parsed: unknown = JSON.parse(raw);
-    const active = env.BYOK_ACTIVE_KEY_VERSION ?? "";
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
-      throw new Error();
-    const entries = Object.entries(parsed);
-    if (!entries.length || entries.length > 16) throw new Error();
-    const keys = new Map<string, Buffer>();
-    for (const [version, value] of entries) {
-      if (
-        !/^[a-zA-Z0-9_-]{1,40}$/.test(version) ||
-        typeof value !== "string" ||
-        !/^[A-Za-z0-9+/]{43}=$/.test(value)
-      )
-        throw new Error();
-      const bytes = Buffer.from(value, "base64");
-      if (bytes.length !== 32 || bytes.toString("base64") !== value)
-        throw new Error();
-      keys.set(version, bytes);
-    }
-    if (!keys.has(active)) throw new Error();
-    return { keys, active };
+    return byokKeyring(env);
   } catch {
     throw new AppError("byok_encryption_unavailable", 503);
   }
