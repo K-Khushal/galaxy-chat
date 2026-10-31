@@ -34,6 +34,8 @@ export type Script = {
   failAt?: number;
   /** HTTP status of the provider failure. */
   failStatus?: number;
+  /** Hang before emitting this word until the request is aborted. */
+  hangAt?: number;
 };
 
 export type ModelCall = {
@@ -63,6 +65,11 @@ function scriptedStream(script: Script, abortSignal?: AbortSignal) {
         controller.enqueue({ type: "text-start", id: "t1" });
       }
       await sleep(script.delayMs);
+      if (script.hangAt === index && abortSignal && !abortSignal.aborted) {
+        await new Promise((done) =>
+          abortSignal.addEventListener("abort", done, { once: true }),
+        );
+      }
       if (abortSignal?.aborted) {
         controller.error(new DOMException("aborted", "AbortError"));
         return;
@@ -105,6 +112,17 @@ export type Harness = Awaited<ReturnType<typeof createHarness>>;
 
 let template: Promise<PGlite> | null = null;
 
+/** A cold PGlite start and migration can take several seconds on CI. */
+export const PGLITE_SETUP_TIMEOUT_MS = 60_000;
+
+/**
+ * Builds the migrated template database once per file. Call from `beforeAll`
+ * with PGLITE_SETUP_TIMEOUT_MS so the first test never pays for it.
+ */
+export async function warmDatabase() {
+  await migratedDatabase();
+}
+
 /** A migrated database, created once per test file and cloned per test. */
 async function migratedDatabase() {
   template ??= (async () => {
@@ -131,6 +149,8 @@ export async function createHarness(timing: Partial<GenerationTiming> = {}) {
     script: { words: ["Hello", " there", "!"], delayMs: 1 } as Script,
     title: "A friendly greeting",
     calls: [] as ModelCall[],
+    /** Model requests that saw their abort signal. */
+    aborts: 0,
     rateLimited: new Set<RateLimitKind>(),
     keyAccepted: true,
   };
@@ -155,6 +175,13 @@ export async function createHarness(timing: Partial<GenerationTiming> = {}) {
         doStream: async (request) => {
           call.maxOutputTokens = request.maxOutputTokens;
           call.prompt = JSON.stringify(request.prompt);
+          request.abortSignal?.addEventListener(
+            "abort",
+            () => {
+              state.aborts++;
+            },
+            { once: true },
+          );
           return { stream: scriptedStream(script, request.abortSignal) };
         },
         doGenerate: async () => ({

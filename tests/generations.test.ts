@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeAll, beforeEach, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 import {
   createChatRoute,
@@ -14,13 +14,17 @@ import {
   call,
   createHarness,
   type Harness,
+  PGLITE_SETUP_TIMEOUT_MS,
   PLATFORM_KEY,
   parseSse,
   sleep,
   textOf,
+  warmDatabase,
 } from "./support/harness";
 
 let h: Harness;
+
+beforeAll(warmDatabase, PGLITE_SETUP_TIMEOUT_MS);
 
 beforeEach(async () => {
   h = await createHarness();

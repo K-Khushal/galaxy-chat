@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeAll, beforeEach, expect, test } from "bun:test";
 import {
   deleteByokRoute,
   getByokRoute,
@@ -21,11 +21,15 @@ import {
   call,
   createHarness,
   type Harness,
+  PGLITE_SETUP_TIMEOUT_MS,
   PLATFORM_KEY,
+  warmDatabase,
 } from "./support/harness";
 
 let h: Harness;
 const USER_KEY = "sk-or-v1-".padEnd(60, "u");
+
+beforeAll(warmDatabase, PGLITE_SETUP_TIMEOUT_MS);
 
 beforeEach(async () => {
   h = await createHarness();
