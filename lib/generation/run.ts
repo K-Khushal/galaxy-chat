@@ -1,6 +1,5 @@
 import "server-only";
 import {
-  APICallError,
   JsonToSseTransformStream,
   type ModelMessage,
   readUIMessageStream,
@@ -25,13 +24,10 @@ import {
   releaseGeneration,
   renewGeneration,
 } from "@/lib/generation/locks";
+import { errorId, replyModelSettings } from "@/lib/generation/model";
 import type { Payment } from "@/lib/generation/payment";
 import { generateChatTitle } from "@/lib/generation/title";
-import {
-  CREDIT_MAX_OUTPUT_TOKENS,
-  CREDIT_REASONING_EFFORT,
-  type ResolvedModel,
-} from "@/lib/models";
+import type { ResolvedModel } from "@/lib/models";
 
 export type RunInput = {
   chatId: string;
@@ -55,17 +51,6 @@ type Observed = {
   finished: boolean;
   error: string | null;
 };
-
-/** Maps a provider failure to an error ID that is safe to store and show. */
-function errorId(error: unknown): string {
-  if (APICallError.isInstance(error)) {
-    if (error.statusCode === 401 || error.statusCode === 403)
-      return "provider_key_rejected";
-    if (error.statusCode === 402) return "provider_payment_required";
-    if (error.statusCode === 429) return "provider_rate_limited";
-  }
-  return "generation_failed";
-}
 
 /**
  * Wraps the Reply's UI stream so it always ends cleanly (a provider error
@@ -178,18 +163,11 @@ export async function runGeneration(
     );
   };
 
-  const credit = input.payment.source === "credits";
   const makeSource = () =>
     streamText({
-      model: ctx.languageModel(input.model.id, input.payment.apiKey, {
-        reasoningEffort:
-          credit && input.model.catalog?.capabilities.reasoningEffort
-            ? CREDIT_REASONING_EFFORT
-            : undefined,
-      }),
+      ...replyModelSettings(ctx, input.model, input.payment),
       messages: input.messages,
       system: input.system,
-      maxOutputTokens: credit ? CREDIT_MAX_OUTPUT_TOKENS : undefined,
       abortSignal: controller.signal,
       // Never log provider errors: they can echo request content.
       onError: () => {},
