@@ -395,7 +395,8 @@ test("Temporary chats keep drafts in memory without persisting or sending them",
   const original = globalThis.fetch;
   let calls = 0;
   globalThis.fetch = Object.assign(
-    async () => {
+    async (url: RequestInfo | URL) => {
+      if (String(url) === "/api/byok") return Response.json({ key: null });
       calls++;
       throw new Error("Unexpected server write");
     },
@@ -429,6 +430,7 @@ test("Temporary sends client history, Stop aborts fetch and remount clears Messa
   let signal: AbortSignal | undefined;
   globalThis.fetch = Object.assign(
     async (_url: RequestInfo | URL, options?: RequestInit) => {
+      if (String(_url) === "/api/byok") return Response.json({ key: null });
       bodies.push(JSON.parse(String(options?.body)));
       signal = options?.signal ?? undefined;
       return new Response(
@@ -475,6 +477,14 @@ test("Temporary sends client history, Stop aborts fetch and remount clears Messa
     });
     expect(signal?.aborted).toBe(true);
     expect(localStorage.length).toBe(0);
+    fireEvent.change(ui.getByRole("textbox"), {
+      target: { value: "Another private draft" },
+    });
+    await act(async () => {
+      fireEvent.click(ui.getByRole("button", { name: "New Temporary chat" }));
+    });
+    expect(ui.queryByText("Private question")).toBeNull();
+    expect((ui.getByRole("textbox") as HTMLTextAreaElement).value).toBe("");
     ui.unmount();
     const fresh = render(<TemporaryChat />);
     expect(fresh.queryByText("Private question")).toBeNull();

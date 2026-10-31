@@ -1,6 +1,13 @@
 "use client";
 
-import { PanelLeft, Plus, Search, Settings, Sparkles } from "lucide-react";
+import {
+  PanelLeft,
+  Plus,
+  Search,
+  Settings,
+  Shield,
+  Sparkles,
+} from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { type ReactNode, useState } from "react";
@@ -75,6 +82,16 @@ export function AppSidebar({
                   >
                     <Plus />
                     <span>New chat</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    tooltip="New Temporary chat"
+                    isActive={pathname === "/chat/temporary"}
+                    render={<Link href="/chat/temporary" />}
+                  >
+                    <Shield />
+                    <span>New Temporary chat</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
                 <SidebarMenuItem>

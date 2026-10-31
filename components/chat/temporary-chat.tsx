@@ -3,14 +3,18 @@ import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import { DEFAULT_MODEL_ID } from "@/lib/models";
-import { errorCopy } from "./api";
+import { errorCopy, needsKey } from "./api";
+import { ByokDialog } from "./byok-dialog";
+import { Composer } from "./composer";
 import { ModelPicker } from "./model-picker";
+import { useByokKey } from "./use-byok-key";
 
 /** Draft, history and streamed Replies live only in this page's memory. */
 export function TemporaryChat() {
-  const [draft, setDraft] = useState("");
+  const { hasKey, setHasKey } = useByokKey();
+  const [keyOpen, setKeyOpen] = useState(false);
+  const [revision, setRevision] = useState(0);
   const [model, setModel] = useState(DEFAULT_MODEL_ID);
   const transport = useMemo(
     () =>
@@ -40,10 +44,8 @@ export function TemporaryChat() {
     [stop],
   );
   const busy = chat.status === "submitted" || chat.status === "streaming";
-  async function send() {
-    if (busy || !draft.trim()) return;
-    const text = draft.trim();
-    setDraft("");
+  async function send(text: string) {
+    if (busy) return false;
     await chat.sendMessage(
       {
         text,
@@ -54,6 +56,7 @@ export function TemporaryChat() {
       },
       { body: { model } },
     );
+    return true;
   }
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-4 p-4">
@@ -81,46 +84,44 @@ export function TemporaryChat() {
         ))}
       </div>
       {chat.error && <p role="alert">{errorCopy(chat.error)}</p>}
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          void send();
+      <Button
+        variant="outline"
+        disabled={busy}
+        onClick={() => {
+          chat.setMessages([]);
+          chat.clearError();
+          setRevision((value) => value + 1);
         }}
-        className="flex flex-col gap-2"
       >
-        <ModelPicker
-          model={model}
-          onChange={setModel}
-          disabled={busy}
-          hasKey={true}
-          addKey={() => {}}
-        />
-        <Textarea
-          aria-label="Temporary Message draft"
-          placeholder="Message Galaxy"
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (
-              event.key === "Enter" &&
-              !event.shiftKey &&
-              !event.nativeEvent.isComposing
-            ) {
-              event.preventDefault();
-              void send();
-            }
-          }}
-        />
-        {busy ? (
-          <Button type="button" onClick={() => void stop()}>
-            Stop Reply
-          </Button>
-        ) : (
-          <Button type="submit" disabled={!draft.trim()}>
-            Send message
-          </Button>
-        )}
-      </form>
+        New Temporary chat
+      </Button>
+      {chat.error && needsKey(chat.error) && (
+        <Button variant="link" onClick={() => setKeyOpen(true)}>
+          Add your OpenRouter key
+        </Button>
+      )}
+      <Composer
+        key={revision}
+        chatId="temporary"
+        persistDraft={false}
+        busy={busy}
+        onSend={send}
+        onStop={() => void stop()}
+        picker={
+          <ModelPicker
+            model={model}
+            onChange={setModel}
+            disabled={busy}
+            hasKey={hasKey}
+            addKey={() => setKeyOpen(true)}
+          />
+        }
+      />
+      <ByokDialog
+        open={keyOpen}
+        onOpenChange={setKeyOpen}
+        onSaved={() => setHasKey(true)}
+      />
     </div>
   );
 }

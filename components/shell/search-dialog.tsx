@@ -40,7 +40,7 @@ export function SearchDialog({
       return;
     }
     let active = true;
-    setChats([]);
+    if (!query.trim()) setChats([]);
     setStatus(query.trim() ? "Searching…" : "");
     const timer = setTimeout(() => {
       if (!query.trim()) return;
@@ -98,21 +98,32 @@ export function SearchDialog({
           ))}
         </CommandGroup>
         <CommandGroup heading="Actions">
-          <CommandItem onSelect={() => navigate("/chat")}>New chat</CommandItem>
-          <CommandItem onSelect={() => navigate("/chat/temporary")}>
-            New Temporary chat
-          </CommandItem>
-          <CommandItem
-            onSelect={() => {
-              setTheme(resolvedTheme === "dark" ? "light" : "dark");
-              onOpenChange(false);
-            }}
-          >
-            Toggle theme
-          </CommandItem>
-          <CommandItem onSelect={() => navigate("/chat/settings")}>
-            Open Settings
-          </CommandItem>
+          {[
+            { label: "New chat", action: () => navigate("/chat") },
+            {
+              label: "New Temporary chat",
+              action: () => navigate("/chat/temporary"),
+            },
+            {
+              label: "Toggle theme",
+              action: () => {
+                setTheme(resolvedTheme === "dark" ? "light" : "dark");
+                onOpenChange(false);
+              },
+            },
+            {
+              label: "Open Settings",
+              action: () => navigate("/chat/settings"),
+            },
+          ]
+            .filter(({ label }) =>
+              label.toLowerCase().includes(query.trim().toLowerCase()),
+            )
+            .map(({ label, action }) => (
+              <CommandItem key={label} value={label} onSelect={action}>
+                {label}
+              </CommandItem>
+            ))}
         </CommandGroup>
       </CommandList>
     </CommandDialog>

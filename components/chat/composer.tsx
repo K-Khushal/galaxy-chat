@@ -22,8 +22,10 @@ export function Composer({
   picker,
   initialDraft,
   autoSend = false,
+  persistDraft = true,
 }: {
   chatId: string;
+  persistDraft?: boolean;
   busy?: boolean;
   onSend: (text: string) => Promise<boolean>;
   initialDraft?: string;
@@ -39,19 +41,21 @@ export function Composer({
   useEffect(() => {
     try {
       setDraft(
-        localStorage.getItem(`galaxy:draft:${chatId}`) ??
+        (persistDraft
+          ? localStorage.getItem(`galaxy:draft:${chatId}`)
+          : null) ??
           transferredDraft.current ??
           "",
       );
     } catch {}
     setLoaded(true);
-  }, [chatId]);
+  }, [chatId, persistDraft]);
   useEffect(() => {
-    if (loaded)
+    if (loaded && persistDraft)
       try {
         localStorage.setItem(`galaxy:draft:${chatId}`, draft);
       } catch {}
-  }, [chatId, draft, loaded]);
+  }, [chatId, draft, loaded, persistDraft]);
   const send = useCallback(async () => {
     if (busy || sending.current || !draft.trim()) return;
     sending.current = true;

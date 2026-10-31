@@ -37,6 +37,7 @@ export function RecentChats() {
   const [deleting, setDeleting] = useState<ChatSummary>();
   const [pending, setPending] = useState<string>();
   const mutating = useRef(false);
+  const cancelledRename = useRef(false);
   const pathname = usePathname();
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
@@ -127,7 +128,8 @@ export function RecentChats() {
                       className="min-w-0 flex-1"
                       onSubmit={(event) => {
                         event.preventDefault();
-                        if (title.trim()) {
+                        if (!cancelledRename.current && title.trim()) {
+                          cancelledRename.current = true;
                           setEditing(undefined);
                           void mutate(chat, { title: title.trim() });
                         }
@@ -140,9 +142,20 @@ export function RecentChats() {
                         value={title}
                         onChange={(event) => setTitle(event.target.value)}
                         onKeyDown={(event) => {
-                          if (event.key === "Escape") setEditing(undefined);
+                          if (event.key === "Escape") {
+                            cancelledRename.current = true;
+                            setEditing(undefined);
+                          }
                         }}
-                        onBlur={() => setEditing(undefined)}
+                        onBlur={() => {
+                          setEditing(undefined);
+                          if (
+                            !cancelledRename.current &&
+                            title.trim() &&
+                            title.trim() !== chat.title
+                          )
+                            void mutate(chat, { title: title.trim() });
+                        }}
                       />
                     </form>
                   ) : (
@@ -173,7 +186,9 @@ export function RecentChats() {
                     </DropdownMenuTrigger>
                     <DropdownMenuContent>
                       <DropdownMenuItem
+                        disabled={!!pending}
                         onClick={() => {
+                          cancelledRename.current = false;
                           setEditing(chat.id);
                           setTitle(chat.title ?? "");
                         }}
@@ -182,6 +197,7 @@ export function RecentChats() {
                         Rename
                       </DropdownMenuItem>
                       <DropdownMenuItem
+                        disabled={!!pending}
                         onClick={() =>
                           void mutate(chat, { pinned: !chat.pinned })
                         }
@@ -190,12 +206,16 @@ export function RecentChats() {
                         {chat.pinned ? "Unpin" : "Pin"}
                       </DropdownMenuItem>
                       <DropdownMenuItem
+                        disabled={!!pending}
                         onClick={() => void mutate(chat, { archived: true })}
                       >
                         <Archive />
                         Archive
                       </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => setDeleting(chat)}>
+                      <DropdownMenuItem
+                        disabled={!!pending}
+                        onClick={() => setDeleting(chat)}
+                      >
                         <Trash />
                         Delete
                       </DropdownMenuItem>
@@ -207,6 +227,11 @@ export function RecentChats() {
           })}
         </SidebarMenu>
       </LayoutGroup>
+      {chats.length === 500 && (
+        <p className="px-2 py-1.5 text-sm text-muted-foreground">
+          Showing 500 Chats. Search to find older Chats.
+        </p>
+      )}
       {!chats.length && !error && (
         <p className="px-2 py-1.5 text-sm text-muted-foreground">
           Your chats will appear here.
