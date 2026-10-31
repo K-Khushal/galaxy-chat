@@ -7,15 +7,19 @@ const valid = {
   BETTER_AUTH_URL: "http://127.0.0.1:3000",
   GITHUB_CLIENT_ID: "client",
   GITHUB_CLIENT_SECRET: "secret",
+  GOOGLE_CLIENT_ID: "client",
+  GOOGLE_CLIENT_SECRET: "secret",
+  CREDIT_IDENTITY_KEY: "x".repeat(32),
+  RESEND_API_KEY: "secret",
+  AUTH_EMAIL_FROM: "Galaxy <auth@example.com>",
+  UPSTASH_REDIS_REST_URL: "https://redis.example.com",
+  UPSTASH_REDIS_REST_TOKEN: "secret",
+  TURNSTILE_SECRET_KEY: "secret",
+  TURNSTILE_SITE_KEY: "public",
 };
 
-test("parses a complete environment and normalizes the invite list", () => {
-  const env = parseEnv({
-    ...valid,
-    GITHUB_INVITE_LOGINS: " Octocat, hubot ,,",
-  });
-  expect(env.GITHUB_INVITE_LOGINS).toEqual(["octocat", "hubot"]);
-  expect(parseEnv(valid).GITHUB_INVITE_LOGINS).toEqual([]);
+test("parses a complete environment", () => {
+  expect(parseEnv(valid).CREDIT_IDENTITY_KEY).toHaveLength(32);
 });
 
 test("names every missing or invalid variable in one error", () => {

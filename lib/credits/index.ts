@@ -42,13 +42,13 @@ export async function grantSignupCredits(
   identityHashes: string[],
 ): Promise<number> {
   return db.transaction(async (tx) => {
+    // Serialize identity claims, including overlapping email/provider sets.
+    await tx.execute(sql`LOCK TABLE credit_grant_identity IN EXCLUSIVE MODE`);
     const existing = await tx
       .select({ userId: creditBalance.userId })
       .from(creditBalance)
       .where(eq(creditBalance.userId, userId));
-    if (existing.length > 0) {
-      return 0;
-    }
+
     const seen =
       identityHashes.length === 0
         ? []
@@ -64,6 +64,7 @@ export async function grantSignupCredits(
         .values(identityHashes.map((identityHash) => ({ identityHash })))
         .onConflictDoNothing();
     }
+    if (existing.length > 0) return 0;
     await tx
       .insert(creditBalance)
       .values({ userId, remaining: granted })

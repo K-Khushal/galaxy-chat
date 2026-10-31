@@ -84,3 +84,32 @@ test("no identities means no Credits", async () => {
   expect(await grantSignupCredits(db, "u1", [])).toBe(0);
   expect(await getCredits(db, "u1")).toBe(0);
 });
+
+test("linking retains provider identities without another grant", async () => {
+  await addUser("u1");
+  const email = hashGrantIdentity(
+    { kind: "email", value: "one@example.com" },
+    KEY,
+  );
+  const provider = hashGrantIdentity(
+    { kind: "github", value: "linked-id" },
+    KEY,
+  );
+  await grantSignupCredits(db, "u1", [email]);
+  expect(await grantSignupCredits(db, "u1", [email, provider])).toBe(0);
+  expect(await getCredits(db, "u1")).toBe(10);
+  await client.query('DELETE FROM "user" WHERE id = $1', ["u1"]);
+  await addUser("u2");
+  expect(await grantSignupCredits(db, "u2", [provider])).toBe(0);
+});
+
+test("concurrent grants of the same identity award only once", async () => {
+  await addUser("u1");
+  await addUser("u2");
+  const hash = hashGrantIdentity({ kind: "google", value: "shared-id" }, KEY);
+  const grants = await Promise.all([
+    grantSignupCredits(db, "u1", [hash]),
+    grantSignupCredits(db, "u2", [hash]),
+  ]);
+  expect(grants.sort()).toEqual([0, 10]);
+});

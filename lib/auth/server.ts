@@ -3,76 +3,128 @@ import { drizzleAdapter } from "@better-auth/drizzle-adapter";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { betterAuth } from "better-auth/minimal";
 import { nextCookies } from "better-auth/next-js";
+import { emailOTP } from "better-auth/plugins";
 import { eq } from "drizzle-orm";
-import { isInvitedLogin } from "@/lib/auth/invite";
+import { protectEmailCode } from "@/lib/auth/abuse";
+import { authServices } from "@/lib/auth/services";
+import {
+  type GrantIdentity,
+  grantSignupCredits,
+  hashGrantIdentity,
+} from "@/lib/credits";
 import { type Database, getDb } from "@/lib/db/client";
-import { authSchema, user } from "@/lib/db/schema";
+import { account, authSchema, user } from "@/lib/db/schema";
 import { type Env, env } from "@/lib/env";
 
-const BLOCKED_AUTH_PATHS = new Set([
-  "/change-password",
-  "/forget-password",
-  "/magic-link/verify",
-  "/request-password-reset",
-  "/reset-password",
-  "/sign-in/email",
-  "/sign-in/magic-link",
-  "/sign-in/username",
-  "/sign-up/email",
-  "/sign-up/username",
-]);
-
-async function invitedUser(db: Database, userId: string) {
-  const rows = await db
-    .select({ githubLogin: user.githubLogin })
-    .from(user)
-    .where(eq(user.id, userId))
-    .limit(1);
-  const login = rows[0]?.githubLogin;
-  return isInvitedLogin(login, env().GITHUB_INVITE_LOGINS);
-}
-
-function createAuth(config: Env, db: Database) {
+export function createAuth(
+  config: Env,
+  db: Database,
+  services = authServices(config),
+) {
+  async function grant(userId: string, extra?: GrantIdentity) {
+    const [u] = await db.select().from(user).where(eq(user.id, userId));
+    if (!u?.emailVerified) return;
+    const accounts = await db
+      .select()
+      .from(account)
+      .where(eq(account.userId, userId));
+    const identities: GrantIdentity[] = [{ kind: "email", value: u.email }];
+    for (const a of accounts)
+      if (a.providerId === "github" || a.providerId === "google")
+        identities.push({ kind: a.providerId, value: a.accountId });
+    if (extra) identities.push(extra);
+    await grantSignupCredits(db, userId, [
+      ...new Set(
+        identities.map((identity) =>
+          hashGrantIdentity(identity, config.CREDIT_IDENTITY_KEY),
+        ),
+      ),
+    ]);
+  }
   return betterAuth({
     baseURL: config.BETTER_AUTH_URL,
     secret: config.BETTER_AUTH_SECRET,
+    database: drizzleAdapter(db, { provider: "pg", schema: authSchema }),
+    emailAndPassword: { enabled: false },
+    secondaryStorage: services.secondaryStorage,
+    session: { storeSessionInDatabase: true },
+    rateLimit: { enabled: true, storage: "secondary-storage" },
+    account: {
+      accountLinking: {
+        enabled: true,
+        trustedProviders: [],
+        requireLocalEmailVerified: true,
+      },
+    },
     databaseHooks: {
       session: {
         create: {
           before: async (session) => {
-            const userId = session.userId;
-            if (typeof userId !== "string" || userId.length === 0) {
-              return false;
-            }
-            try {
-              const allowed = await invitedUser(db, userId);
-              if (!allowed) {
-                return false;
-              }
-            } catch {
-              return false;
-            }
+            await grant(session.userId);
             return { data: session };
           },
         },
       },
+      user: {
+        create: {
+          after: async (u, ctx) => {
+            // OAuth must wait for account insertion so provider IDs participate.
+            if (ctx?.path === "/sign-in/email-otp") await grant(u.id);
+          },
+        },
+        update: {
+          after: async (u, ctx) => {
+            if (
+              !ctx?.path?.startsWith("/callback/") &&
+              ctx?.path !== "/sign-in/social"
+            )
+              await grant(u.id);
+          },
+        },
+      },
+      account: {
+        create: {
+          after: async (a) => {
+            await grant(
+              a.userId,
+              a.providerId === "github" || a.providerId === "google"
+                ? { kind: a.providerId, value: a.accountId }
+                : undefined,
+            );
+          },
+        },
+      },
     },
-    emailAndPassword: { enabled: false },
     hooks: {
       before: createAuthMiddleware(async (ctx) => {
-        const path = ctx.path.split("?")[0] ?? ctx.path;
-        if (BLOCKED_AUTH_PATHS.has(path)) {
-          throw new APIError("FORBIDDEN", { message: "invite_required" });
-        }
-        // Better Auth shares provider-field parsing with browser profile edits.
-        // Only the verified GitHub profile may set this authorization field.
         if (
-          path === "/update-user" &&
-          Object.hasOwn(ctx.body ?? {}, "githubLogin")
+          ctx.path.includes("password") ||
+          (ctx.path === "/email-otp/send-verification-otp" &&
+            ctx.body.type !== "sign-in")
         ) {
           throw new APIError("FORBIDDEN", {
-            message: "github_login_read_only",
+            message: "Use a sign-in code or OAuth.",
           });
+        }
+        if (ctx.path === "/email-otp/send-verification-otp") {
+          try {
+            await protectEmailCode(
+              ctx.body.email,
+              ctx.headers?.get("x-real-ip") ?? "unknown",
+              ctx.headers?.get("x-turnstile-token") ?? "",
+              services.protection,
+            );
+          } catch (error) {
+            throw new APIError(
+              error instanceof Error && error.message === "rate_limited"
+                ? "TOO_MANY_REQUESTS"
+                : "BAD_REQUEST",
+              {
+                message:
+                  "Unable to send code. Check verification or try again later.",
+              },
+            );
+          }
         }
       }),
     },
@@ -80,50 +132,26 @@ function createAuth(config: Env, db: Database) {
       github: {
         clientId: config.GITHUB_CLIENT_ID,
         clientSecret: config.GITHUB_CLIENT_SECRET,
-        // Refresh existing rows too, including accounts created before the
-        // provider username was persisted correctly.
-        overrideUserInfoOnSignIn: true,
-        mapProfileToUser: (profile: { login?: string }) => ({
-          githubLogin: profile.login ?? null,
-        }),
+      },
+      google: {
+        clientId: config.GOOGLE_CLIENT_ID,
+        clientSecret: config.GOOGLE_CLIENT_SECRET,
       },
     },
-    user: {
-      validateUserInfo: ({ user: incoming, source }) => {
-        const login = source.oauth?.profile?.login;
-        if (
-          source.method !== "oauth" ||
-          source.oauth?.providerId !== "github" ||
-          typeof login !== "string" ||
-          incoming.githubLogin !== login ||
-          !isInvitedLogin(login, config.GITHUB_INVITE_LOGINS)
-        ) {
-          return { error: "invite_required" };
-        }
-      },
-      additionalFields: {
-        githubLogin: {
-          type: "string",
-          required: false,
-          // input:false also strips fields supplied by OAuth providers in
-          // Better Auth 1.7. Browser writes are blocked in the hook above.
-          input: true,
-        },
-      },
-    },
-    database: drizzleAdapter(db, {
-      provider: "pg",
-      schema: authSchema,
-    }),
-    plugins: [nextCookies()],
+    plugins: [
+      emailOTP({
+        otpLength: 6,
+        expiresIn: 300,
+        storeOTP: "hashed",
+        sendVerificationOTP: async ({ email, otp }) =>
+          services.sendCode(email, otp),
+      }),
+      nextCookies(),
+    ],
   });
 }
-
-type AuthInstance = ReturnType<typeof createAuth>;
-
-let cached: AuthInstance | null = null;
-
-export function getAuth(): AuthInstance {
+let cached: ReturnType<typeof createAuth> | null = null;
+export function getAuth() {
   cached ??= createAuth(env(), getDb());
   return cached;
 }

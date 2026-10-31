@@ -1,75 +1,169 @@
 "use client";
-import {
-  ArrowRight,
-  Github,
-  Loader2,
-  LockKeyhole,
-  Sparkles,
-} from "lucide-react";
-import { useState } from "react";
+import Link from "next/link";
+import Script from "next/script";
+import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { authClient } from "@/lib/auth/client";
 
-const notices: Record<string, string> = {
-  unauthenticated: "Sign in to open your workspace.",
-  invite_required:
-    "This GitHub account does not have an invitation yet. Try an invited account or contact the person who invited you.",
-};
-export function SignInPanel({ notice }: { notice?: string }) {
+declare global {
+  interface Window {
+    turnstile: {
+      render(element: HTMLElement, options: Record<string, unknown>): string;
+      reset(id: string): void;
+    };
+  }
+}
+export function SignInPanel({ siteKey }: { siteKey: string }) {
+  const widget = useRef<HTMLDivElement>(null);
+  const widgetId = useRef<string>(null);
+  const [token, setToken] = useState("");
+  const [email, setEmail] = useState("");
+  const [otp, setOtp] = useState("");
+  const [sent, setSent] = useState(false);
   const [pending, setPending] = useState(false);
-  const [failure, setFailure] = useState(false);
-  async function signIn() {
+  const [error, setError] = useState("");
+  async function perform(action: () => Promise<{ error?: unknown }>) {
     setPending(true);
-    setFailure(false);
+    setError("");
     try {
-      const result = await authClient.signIn.social({
-        provider: "github",
-        callbackURL: "/chat",
-      });
-      if (result.error) {
-        setFailure(true);
-        setPending(false);
-      }
+      const result = await action();
+      if (result.error) throw new Error();
     } catch {
-      setFailure(true);
+      setError("Sign-in failed. Check your code or try again later.");
+    } finally {
       setPending(false);
     }
   }
   return (
-    <section className="w-full max-w-md">
-      <div className="mb-10 flex items-center gap-2.5">
-        <Sparkles aria-hidden="true" className="size-6 text-primary" />
-        <span className="text-lg font-semibold tracking-tight">Galaxy</span>
-      </div>
-      <h1 className="text-3xl font-medium tracking-tight">Sign in to Galaxy</h1>
-      <p className="mt-4 text-base leading-relaxed text-muted-foreground">
-        Sign in to keep your conversations together and pick up where you left
-        off.
+    <section className="w-full max-w-sm space-y-6 text-center">
+      <h1 className="text-4xl font-semibold tracking-tight">Galaxy</h1>
+      <p className="text-muted-foreground">
+        Your favourite AI models, together in one Chat.
       </p>
-      <div className="mt-8 rounded-2xl border bg-card p-6 shadow-xs">
-        <p className="mb-5 text-sm leading-relaxed text-muted-foreground">
-          {(notice && notices[notice]) ||
-            "Access is by invitation. Continue with your invited GitHub account."}
-        </p>
+      <div className="space-y-3">
+        {(["github", "google"] as const).map((provider) => (
+          <Button
+            key={provider}
+            className="w-full"
+            variant="outline"
+            disabled={pending}
+            onClick={() =>
+              void perform(() =>
+                authClient.signIn.social({ provider, callbackURL: "/chat" }),
+              )
+            }
+          >
+            Continue with {provider === "github" ? "GitHub" : "Google"}
+          </Button>
+        ))}
+      </div>
+      <form
+        className="space-y-3 text-left"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void perform(async () => {
+            if (sent) {
+              const result = await authClient.signIn.emailOtp({ email, otp });
+              if (!result.error) window.location.assign("/chat");
+              return result;
+            }
+            try {
+              const result = await authClient.emailOtp.sendVerificationOtp({
+                email,
+                type: "sign-in",
+                fetchOptions: { headers: { "x-turnstile-token": token } },
+              });
+              if (!result.error) setSent(true);
+              return result;
+            } finally {
+              setToken("");
+              if (widgetId.current) window.turnstile.reset(widgetId.current);
+            }
+          });
+        }}
+      >
+        <label className="text-sm" htmlFor="email">
+          Email
+        </label>
+        <input
+          className="flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-2 focus-visible:outline-ring"
+          id="email"
+          type="email"
+          autoComplete="email"
+          required
+          value={email}
+          disabled={sent || pending}
+          onChange={(e) => setEmail(e.target.value)}
+        />
+        {sent && (
+          <>
+            <label className="text-sm" htmlFor="otp">
+              Six-digit code
+            </label>
+            <input
+              className="flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-2 focus-visible:outline-ring"
+              id="otp"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              pattern="[0-9]{6}"
+              maxLength={6}
+              required
+              value={otp}
+              onChange={(e) => setOtp(e.target.value)}
+            />
+            <p className="text-sm text-muted-foreground">
+              Check your email. The code expires in 5 minutes.
+            </p>
+          </>
+        )}
+        <div ref={widget} hidden={sent} />
+        <Script
+          src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"
+          onReady={() => {
+            if (widget.current && !widgetId.current)
+              widgetId.current = window.turnstile.render(widget.current, {
+                sitekey: siteKey,
+                callback: (value: string) => setToken(value),
+                "expired-callback": () => setToken(""),
+                "error-callback": () => setToken(""),
+              });
+          }}
+        />
         <Button
           className="w-full"
-          disabled={pending}
-          aria-busy={pending}
-          onClick={() => void signIn()}
+          type="submit"
+          disabled={pending || (!sent && !token)}
         >
-          {pending ? <Loader2 className="animate-spin" /> : <Github />}Continue
-          with GitHub
-          <ArrowRight className="ml-auto" />
+          {pending ? "Please wait…" : sent ? "Sign in" : "Email me a code"}
         </Button>
-        {failure && (
-          <p role="alert" className="mt-4 text-sm text-destructive">
-            Sign-in could not start. Please try again.
-          </p>
+        {sent && (
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => {
+              setSent(false);
+              setOtp("");
+            }}
+          >
+            Use another email or request a new code
+          </Button>
         )}
-      </div>
-      <p className="mt-6 flex items-center gap-2 text-xs text-muted-foreground">
-        <LockKeyhole aria-hidden="true" className="size-3.5" />
-        Conversations are private to your account.
+      </form>
+      {error && (
+        <p role="alert" className="text-sm text-destructive">
+          {error}
+        </p>
+      )}
+      <p className="text-xs text-muted-foreground">
+        By continuing, you agree to our{" "}
+        <Link className="underline" href="/terms">
+          Terms
+        </Link>{" "}
+        and{" "}
+        <Link className="underline" href="/privacy">
+          Privacy Policy
+        </Link>
+        .
       </p>
     </section>
   );
