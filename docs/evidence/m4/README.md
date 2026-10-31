@@ -27,3 +27,23 @@ Next.js in production mode.
 Known API limitation: M3 does not persist reasoning duration. While observing
 reasoning live the UI shows “Thought for Ns”; a freshly loaded saved Reply
 shows “Thought process” rather than inventing a duration.
+
+Review follow-up verification (rebased on M3 `82948dd`): the runner also checks
+`no_credits`, `needs_byok_key`, 413 and generic errors, verifying the draft remains
+and that only payment/key errors show the key action. Each viewport/theme includes
+empty and Failed Reply screenshots. The Failed fixture has no text and was paid
+with Credits; component tests also cover BYOK wording. Version screenshots hover
+the controls, and picker screenshots wait 400ms for the open transition to settle.
+
+Keyboard-only checks Tab to the composer, send with Enter, open inline editing
+with Enter, Escape back to the Edit Message button, reach Reply actions and the
+Version switcher with Tab, change Version with Enter, and close the picker with
+Escape, restoring its trigger focus. The live region is empty on initial load
+and announces Reply text when a Generation ends.
+
+The runner additionally exercises a rejected first send after creating a Chat:
+`galaxy:draft:new` and `galaxy:send:<id>` remain, the composer restores the text,
+and a successful retry clears both records on server acceptance. Component/hook
+regressions cover Credit/key errors, 413, network failure, busy refusal, pending
+acceptance with newer typing, accepted headers before streaming ends, edit
+rejection, focus restoration and Failed Replies. No real provider is called.
