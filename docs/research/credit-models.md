@@ -47,3 +47,7 @@ All entries existed in the fetched snapshot; exclude `:free`, `:batch`, image-ou
 Reproduce the table with `curl -fsSL https://openrouter.ai/api/v1/models`; select exact IDs from `.data`, inspect `.architecture.input_modalities`, `.supported_parameters`, `.reasoning`, `.context_length`, and `.pricing`. The live API is the source of all table cells, not provider-name assumptions.
 
 Snapshot provenance: fetched with curl during this research on 2026-10-31 UTC; raw payload SHA-256 `aa0fd20f5d4075b005484b628313bc0b408b9eda01fe7feeaac8d9beebe7aced`. Tables intentionally retain selected fields only; the API is mutable, so a later fetch may differ. Typical Reply arithmetic is `1_500 × prompt_price_per_token + 600 × completion_price_per_token`.
+
+## Decision (2026-10-31, orchestrator, per the owner's delegation)
+
+Credit models: `openai/gpt-6-luna` (the default for new users), `anthropic/claude-haiku-5.5` and `google/gemini-2.5-flash-lite`. All three advertise vision and file input. GPT-6 Luna is the default instead of the slightly cheaper Flash-Lite because first-Reply quality matters more than about $0.00006 per Reply. Credit Replies cap output at 4,096 tokens and use low or no reasoning effort, so ten Credits stay well under $0.05 per account. The owner can override this.
