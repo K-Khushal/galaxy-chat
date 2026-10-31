@@ -7,7 +7,28 @@ import { scriptedStream } from "../../tests/support/mock-model";
 export const e2eLanguageModel: LanguageModelFactory = (modelId) =>
   new MockLanguageModelV4({
     modelId,
+    supportedUrls: {
+      "image/*": [/^http:\/\/127\.0\.0\.1:3008\/api\/test-e2e\/storage\?/],
+    },
     doStream: async (request) => {
+      const prompt = JSON.stringify(request.prompt);
+      if (prompt.includes("[attachments]")) {
+        if (
+          !request.prompt.some(
+            (message) =>
+              message.role === "user" &&
+              message.content.some(
+                (part) =>
+                  part.type === "file" && part.mediaType.startsWith("image/"),
+              ),
+          ) ||
+          !prompt.includes("offline attachment text")
+        ) {
+          throw new Error(
+            "Mock did not receive image and text attachment parts",
+          );
+        }
+      }
       const slow = JSON.stringify(request.prompt).includes("[slow]");
       return {
         stream: scriptedStream(

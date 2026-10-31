@@ -19,7 +19,7 @@ import { appOrigins, platformKey, testE2eEnabled } from "@/lib/env";
 import { observeRequest } from "@/lib/logger";
 import { redisRateLimit } from "@/lib/ratelimit";
 import { getRedis, lazyKv } from "@/lib/redis";
-import { e2eLanguageModel } from "@/lib/testing/e2e-model";
+import { loadE2eSeams } from "@/lib/testing/load-e2e";
 
 const languageModel: LanguageModelFactory = (modelId, apiKey, options) =>
   createOpenRouter({ apiKey, compatibility: "strict" }).chat(modelId, {
@@ -46,7 +46,8 @@ async function streamContext(): Promise<ResumableStreamContext> {
  * Builds the request context without touching Redis, the Platform key or the
  * BYOK keyring: each is read, and Redis connected, only when a route uses it.
  */
-export function appContext(): AppContext {
+export async function appContext(): Promise<AppContext> {
+  const seams = testE2eEnabled() ? await loadE2eSeams() : null;
   const kv = lazyKv();
   return {
     db: getDb(),
@@ -58,16 +59,11 @@ export function appContext(): AppContext {
         (await streamContext()).resumeExistingStream(...args),
     },
     rateLimit: redisRateLimit(kv),
-    storage: lazyStorage(),
-    languageModel: testE2eEnabled() ? e2eLanguageModel : languageModel,
+    storage: seams?.storage ?? lazyStorage(),
+    languageModel: seams?.e2eLanguageModel ?? languageModel,
     platformKey: () => platformKey(),
     byokEnv: process.env,
-    testByokKey: (key) =>
-      testE2eEnabled()
-        ? Promise.resolve(
-            key === "e2e-byok-key-00000000000000000000000000000000",
-          )
-        : testOpenRouterKey(key),
+    testByokKey: seams?.testByokKey ?? testOpenRouterKey,
     authenticate: async (request) =>
       (await requireAccess(request.headers)).userId,
     sessionCreatedAt: async (request) =>
@@ -87,7 +83,7 @@ export function route(
     return observeRequest(request, async () => {
       try {
         requireSameOrigin(request, appOrigins());
-        return await handler(appContext(), request, (await params)?.id ?? "");
+        return await handler(await appContext(), request, (await params)?.id ?? "");
       } catch (error) {
         return errorResponse(error);
       }
