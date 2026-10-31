@@ -1,6 +1,8 @@
 import {
   boolean,
+  index,
   integer,
+  jsonb,
   pgTable,
   text,
   timestamp,
@@ -72,4 +74,76 @@ export const creditBalance = pgTable("credit_balance", {
 export const creditGrantIdentity = pgTable("credit_grant_identity", {
   identityHash: text("identity_hash").primaryKey(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export type MessageStatus = "complete" | "stopped" | "interrupted" | "failed";
+export type MessageRole = "user" | "assistant";
+export type PaymentSource = "credits" | "byok";
+export type MessageUsage = {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  /** USD, as reported by OpenRouter. */
+  cost?: number;
+};
+
+/** Chats. Mirrors drizzle/0002_chat.sql. */
+export const chat = pgTable(
+  "chat",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    title: text("title"),
+    pinned: boolean("pinned").notNull().default(false),
+    archived: boolean("archived").notNull().default(false),
+    model: text("model").notNull(),
+    activeLeafMessageId: text("active_leaf_message_id"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [index("chat_user_updated_idx").on(table.userId, table.updatedAt)],
+);
+
+/** Messages: a tree through parentId. Mirrors drizzle/0002_chat.sql. */
+export const message = pgTable(
+  "message",
+  {
+    id: text("id").primaryKey(),
+    chatId: text("chat_id")
+      .notNull()
+      .references(() => chat.id, { onDelete: "cascade" }),
+    parentId: text("parent_id"),
+    role: text("role").$type<MessageRole>().notNull(),
+    parts: jsonb("parts").$type<unknown[]>().notNull().default([]),
+    status: text("status").$type<MessageStatus>().notNull(),
+    model: text("model"),
+    payment: text("payment").$type<PaymentSource>(),
+    usage: jsonb("usage").$type<MessageUsage>(),
+    error: text("error"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("message_chat_parent_idx").on(
+      table.chatId,
+      table.parentId,
+      table.createdAt,
+    ),
+  ],
+);
+
+/** Encrypted BYOK keys. Mirrors drizzle/0002_chat.sql. */
+export const byokKey = pgTable("byok_key", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => user.id, { onDelete: "cascade" }),
+  provider: text("provider").$type<"openrouter">().notNull(),
+  revision: text("revision").notNull(),
+  keyVersion: text("key_version").notNull(),
+  nonce: text("nonce").notNull(),
+  ciphertext: text("ciphertext").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
