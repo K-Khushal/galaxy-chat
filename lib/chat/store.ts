@@ -79,8 +79,7 @@ export function listChats(db: Db, userId: string, archived: boolean) {
     .select()
     .from(chat)
     .where(and(eq(chat.userId, userId), eq(chat.archived, archived)))
-    .orderBy(desc(chat.pinned), desc(chat.updatedAt))
-    .limit(500);
+    .orderBy(desc(chat.pinned), desc(chat.updatedAt));
 }
 
 /** The Chat when `userId` owns it; null otherwise, so callers answer 404. */

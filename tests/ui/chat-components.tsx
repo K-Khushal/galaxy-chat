@@ -387,3 +387,33 @@ test("rejected edit keeps its text available", async () => {
     "Keep edited text",
   );
 });
+
+test("Temporary chats keep drafts in memory and make no server requests", async () => {
+  const { TemporaryChat } = await import(
+    "../../components/chat/temporary-chat"
+  );
+  const original = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = Object.assign(
+    async () => {
+      calls++;
+      throw new Error("Unexpected server write");
+    },
+    { preconnect: original.preconnect },
+  );
+  localStorage.clear();
+  try {
+    const ui = render(<TemporaryChat />);
+    fireEvent.change(ui.getByRole("textbox"), {
+      target: { value: "Private draft" },
+    });
+    fireEvent.keyDown(ui.getByRole("textbox"), { key: "Enter" });
+    expect(localStorage.length).toBe(0);
+    expect(calls).toBe(0);
+    ui.unmount();
+    const fresh = render(<TemporaryChat />);
+    expect((fresh.getByRole("textbox") as HTMLTextAreaElement).value).toBe("");
+  } finally {
+    globalThis.fetch = original;
+  }
+});
