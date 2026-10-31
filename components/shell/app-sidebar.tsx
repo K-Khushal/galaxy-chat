@@ -105,7 +105,10 @@ export function AppSidebar({
         <SidebarFooter className="gap-1 p-2">
           <SidebarMenu>
             <SidebarMenuItem>
-              <SidebarMenuButton tooltip="Settings (coming soon)" aria-disabled>
+              <SidebarMenuButton
+                tooltip="Settings"
+                render={<Link href="/chat/settings" />}
+              >
                 <Settings />
                 <span>Settings</span>
               </SidebarMenuButton>

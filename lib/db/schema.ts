@@ -1,5 +1,7 @@
+import { sql } from "drizzle-orm";
 import {
   boolean,
+  check,
   index,
   integer,
   jsonb,
@@ -150,3 +152,24 @@ export const byokKey = pgTable("byok_key", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
+
+export const userSettings = pgTable(
+  "user_settings",
+  {
+    userId: text("user_id")
+      .primaryKey()
+      .references(() => user.id, { onDelete: "cascade" }),
+    aboutYou: text("about_you").notNull().default(""),
+    responseInstructions: text("response_instructions").notNull().default(""),
+  },
+  (table) => [
+    check(
+      "user_settings_about_you_check",
+      sql`length(${table.aboutYou}) <= 2000`,
+    ),
+    check(
+      "user_settings_response_instructions_check",
+      sql`length(${table.responseInstructions}) <= 2000`,
+    ),
+  ],
+);

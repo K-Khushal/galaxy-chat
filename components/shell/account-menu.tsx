@@ -1,6 +1,7 @@
 "use client";
 
-import { ChevronsUpDown, LogOut } from "lucide-react";
+import { ChevronsUpDown, LogOut, Settings } from "lucide-react";
+import Link from "next/link";
 import { useSignOut } from "@/components/auth/use-sign-out";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -50,6 +51,10 @@ export function AccountMenu({ user }: { user: AccountUser }) {
         <ChevronsUpDown className="ml-auto text-muted-foreground" />
       </DropdownMenuTrigger>
       <DropdownMenuContent side="top" align="start" className="w-56">
+        <DropdownMenuItem render={<Link href="/chat/settings" />}>
+          <Settings />
+          Settings
+        </DropdownMenuItem>
         <DropdownMenuItem
           disabled={pending}
           onClick={() => void signOut()}

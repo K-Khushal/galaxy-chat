@@ -43,6 +43,7 @@ export function useGalaxyChat(initial: ChatView) {
     transport,
     resume: !!initial.generation,
     onFinish: () => {
+      window.dispatchEvent(new Event("galaxy-account-changed"));
       void reloadRef.current();
     },
   });

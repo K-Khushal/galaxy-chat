@@ -26,6 +26,7 @@ export async function api<T>(
   return response.status === 204 ? (undefined as T) : response.json();
 }
 const errors: Record<string, string> = {
+  reauth_required: "Please sign in again before deleting your account.",
   no_credits:
     "Your Credits are used up. Add your OpenRouter key to keep chatting.",
   needs_byok_key: "Add your OpenRouter key to use this model.",
