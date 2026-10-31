@@ -1,6 +1,7 @@
 "use client";
-
+import * as Sentry from "@sentry/nextjs";
 import { TriangleAlert } from "lucide-react";
+import { useEffect } from "react";
 import { StatePanel } from "@/components/shell/state-panel";
 import { Button } from "@/components/ui/button";
 
@@ -11,6 +12,11 @@ export default function RootError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  useEffect(() => {
+    Sentry.captureException(error, {
+      tags: { errorId: error.digest ?? "unexpected_error" },
+    });
+  }, [error]);
   return (
     <main className="flex min-h-dvh items-center justify-center">
       <StatePanel

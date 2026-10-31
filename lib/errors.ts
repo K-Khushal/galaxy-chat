@@ -1,3 +1,5 @@
+import * as Sentry from "@sentry/nextjs";
+import { log } from "@/lib/logger";
 export class AppError extends Error {
   readonly id: string;
   readonly status: number;
@@ -11,5 +13,10 @@ export class AppError extends Error {
 }
 
 export function logErrorId(id: string) {
-  process.stderr.write(`${JSON.stringify({ level: "error", id })}\n`);
+  if (id !== "internal_error") {
+    log("warn", id);
+    return;
+  }
+  log("error", id);
+  Sentry.captureException(new Error(id), { tags: { errorId: id } });
 }

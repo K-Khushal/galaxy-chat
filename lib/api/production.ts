@@ -16,6 +16,7 @@ import { requireAccess } from "@/lib/auth/access";
 import { testOpenRouterKey } from "@/lib/byok/store";
 import { getDb } from "@/lib/db/client";
 import { appOrigins, platformKey, testE2eEnabled } from "@/lib/env";
+import { observeRequest } from "@/lib/logger";
 import { redisRateLimit } from "@/lib/ratelimit";
 import { getRedis, lazyKv } from "@/lib/redis";
 import { e2eLanguageModel } from "@/lib/testing/e2e-model";
@@ -83,11 +84,13 @@ export function route(
   handler: (ctx: AppContext, request: Request, id: string) => Promise<Response>,
 ) {
   return async (request: Request, { params }: { params: Params }) => {
-    try {
-      requireSameOrigin(request, appOrigins());
-      return await handler(appContext(), request, (await params)?.id ?? "");
-    } catch (error) {
-      return errorResponse(error);
-    }
+    return observeRequest(request, async () => {
+      try {
+        requireSameOrigin(request, appOrigins());
+        return await handler(appContext(), request, (await params)?.id ?? "");
+      } catch (error) {
+        return errorResponse(error);
+      }
+    });
   };
 }

@@ -1,6 +1,10 @@
+import * as Sentry from "@sentry/nextjs";
 import { testE2eEnabled } from "@/lib/env";
 
-export function register() {
+export async function register() {
+  if (process.env.NEXT_RUNTIME === "nodejs")
+    await import("./sentry.server.config");
+  if (process.env.NEXT_RUNTIME === "edge") await import("./sentry.edge.config");
   if (!testE2eEnabled()) return;
   const original = globalThis.fetch;
   globalThis.fetch = Object.assign(
@@ -23,3 +27,18 @@ export function register() {
     original,
   );
 }
+
+export const onRequestError: typeof Sentry.captureRequestError = (
+  error,
+  request,
+  context,
+) => {
+  const errorId =
+    (error as Error & { digest?: string; errorId?: string }).digest ??
+    (error as Error & { errorId?: string }).errorId ??
+    "unexpected_error";
+  Sentry.withScope((scope) => {
+    scope.setTag("errorId", errorId);
+    Sentry.captureRequestError(error, request, context);
+  });
+};

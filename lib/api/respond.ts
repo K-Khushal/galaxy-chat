@@ -3,6 +3,7 @@ import { UI_MESSAGE_STREAM_HEADERS } from "ai";
 import type { z } from "zod";
 import { EnvError } from "@/lib/env";
 import { AppError, logErrorId } from "@/lib/errors";
+import { log } from "@/lib/logger";
 
 export function json(body: unknown, status = 200): Response {
   return Response.json(body, { status });
@@ -18,9 +19,8 @@ export function errorResponse(error: unknown): Response {
     return json({ error: error.id }, error.status);
   }
   if (error instanceof EnvError) {
-    process.stderr.write(
-      `${JSON.stringify({ level: "error", id: "env_invalid", message: error.message })}\n`,
-    );
+    log("error", error.message);
+    logErrorId("server_misconfigured");
     return json({ error: "server_misconfigured" }, 503);
   }
   logErrorId("internal_error");
