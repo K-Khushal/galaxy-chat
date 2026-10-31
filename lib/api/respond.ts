@@ -35,13 +35,55 @@ export async function handle(run: () => Promise<Response>): Promise<Response> {
   }
 }
 
+/** Default cap on a JSON request body; routes with large bodies pass their own. */
+export const MAX_JSON_BYTES = 16 * 1024;
+
+const tooLarge = () => new AppError("payload_too_large", 413);
+
+/**
+ * Reads at most `maxBytes` of the body. A larger declared `content-length` is
+ * rejected before reading, and the stream is cut off as soon as it passes the
+ * cap, so an oversized body is never buffered or parsed.
+ */
+async function readBody(request: Request, maxBytes: number): Promise<string> {
+  const declared = request.headers.get("content-length");
+  if (declared !== null && !(Number(declared) <= maxBytes)) throw tooLarge();
+  if (!request.body) return "";
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > maxBytes) {
+      await reader.cancel().catch(() => {});
+      throw tooLarge();
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw new AppError("invalid_request", 400);
+  }
+}
+
 export async function readJson<T extends z.ZodType>(
   request: Request,
   schema: T,
+  maxBytes = MAX_JSON_BYTES,
 ): Promise<z.output<T>> {
+  const text = await readBody(request, maxBytes);
   let body: unknown;
   try {
-    body = await request.json();
+    body = JSON.parse(text);
   } catch {
     throw new AppError("invalid_request", 400);
   }

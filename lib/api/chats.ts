@@ -68,7 +68,7 @@ export function createChatRoute(ctx: AppContext, request: Request) {
     const userId = await ctx.authenticate(request);
     const body = await readJson(
       request,
-      z.object({ model: modelId.optional() }),
+      z.strictObject({ model: modelId.optional() }),
     );
     const row = await createChat(
       ctx.db,
@@ -142,6 +142,13 @@ const textParts = z
       parts.reduce((total, part) => total + part.text.length, 0) <= 100_000,
   );
 
+/**
+ * Up to 100,000 characters of text, JSON-escaped. Unknown fields are allowed
+ * (and dropped) here only: AI SDK chat transports add their own, such as
+ * `id` and `messages`.
+ */
+const MAX_MESSAGE_BODY_BYTES = 1024 * 1024;
+
 const startSchema = z.discriminatedUnion("trigger", [
   z.object({
     trigger: z.literal("submit-message"),
@@ -170,7 +177,7 @@ export function sendMessageRoute(
   return handle(async () => {
     const userId = await ctx.authenticate(request);
     const row = await ownedChat(ctx, userId, chatId);
-    const body = await readJson(request, startSchema);
+    const body = await readJson(request, startSchema, MAX_MESSAGE_BODY_BYTES);
     if (!(await ctx.rateLimit("send", userId))) {
       throw new AppError("rate_limited", 429);
     }
@@ -215,7 +222,7 @@ export function switchVersionRoute(
   return handle(async () => {
     const userId = await ctx.authenticate(request);
     await ownedChat(ctx, userId, chatId);
-    const body = await readJson(request, z.object({ messageId: id }));
+    const body = await readJson(request, z.strictObject({ messageId: id }));
     const leaf = await switchVersion(ctx.db, chatId, body.messageId);
     if (!leaf) throw new AppError("message_not_found", 404);
     return json(await chatView(ctx, await ownedChat(ctx, userId, chatId)));

@@ -32,7 +32,7 @@ export function saveByokRoute(ctx: AppContext, request: Request) {
     await limited(ctx, userId);
     const body = await readJson(
       request,
-      z.object({ key: z.string().max(512) }),
+      z.strictObject({ key: z.string().max(512) }),
     );
     const key = validateKey(body.key.trim());
     if (!(await ctx.testByokKey(key))) {
