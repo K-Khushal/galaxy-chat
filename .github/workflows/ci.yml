@@ -22,7 +22,7 @@ jobs:
       - run: bun run test:ui
       - run: bun run build
 
-  # Informational until branch protection is deliberately updated.
+  # Required by branch protection on main, alongside `check`.
   e2e:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
