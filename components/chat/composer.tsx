@@ -212,7 +212,7 @@ export function Composer({
             send();
           }
         }}
-        className="field-sizing-content max-h-48 min-h-10 w-full resize-none bg-transparent px-3 py-2 text-message outline-none placeholder:text-muted-foreground"
+        className="field-sizing-content max-h-48 min-h-10 w-full pointer-coarse:min-h-11 resize-none bg-transparent px-3 py-2 text-message outline-none placeholder:text-muted-foreground"
       />
       <div className="flex items-center gap-1">
         <DropdownMenu>

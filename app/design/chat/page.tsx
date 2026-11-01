@@ -22,11 +22,11 @@ export default async function ChatDesign({
           </span>
         }
       />
-      <SidebarInset className="h-dvh min-w-0">
+      <SidebarInset className="h-[var(--app-height,100dvh)] min-w-0">
         <ChatHeader />
-        <main className="flex min-h-0 flex-1 flex-col">
+        <div className="flex min-h-0 flex-1 flex-col">
           {id && <ChatLoader id={id} />}
-        </main>
+        </div>
       </SidebarInset>
     </SidebarProvider>
   );

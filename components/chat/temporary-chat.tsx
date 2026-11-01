@@ -59,7 +59,8 @@ export function TemporaryChat() {
     return true;
   }
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-4 p-4">
+    <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col gap-4 p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+      <h1 className="sr-only">Temporary chat</h1>
       <p className="text-center text-sm text-muted-foreground">
         Temporary chat · Never saved · Uses Credits or your BYOK key
       </p>

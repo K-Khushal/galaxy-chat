@@ -42,12 +42,33 @@ export const e2eLanguageModel: LanguageModelFactory = (modelId) =>
         )
       )
         throw new Error("Mock did not receive PDF attachment");
-      const slow = JSON.stringify(request.prompt).includes("[slow]");
+      const slow = prompt.includes("[slow]");
+      // Content that tends to overflow a narrow screen: unbroken code, a wide table, a long link.
+      const wide = prompt.includes("[markdown]");
+      // A long Reply streamed in small pieces, to watch rendering cost per token.
+      const long = prompt.includes("[long]");
       return {
         stream: scriptedStream(
           {
             failAt: prompt.includes("[interrupted]") ? 1 : undefined,
-            words: prompt.includes("[rich]")
+            words: long
+              ? Array.from({ length: 600 }, (_, i) =>
+                  i % 60 === 0
+                    ? `\n\n## Part ${i / 60}\n\n`
+                    : i % 20 === 0
+                      ? `\`code${i}\` and **bold** `
+                      : `word${i} `,
+                )
+              : wide
+                ? [
+                    "Wide content.\n\n```ts\n",
+                    `const line = "${"x".repeat(300)}";\n`,
+                    "```\n\n",
+                    `| One | Two | Three | Four |\n| --- | --- | --- | --- |\n| ${"w".repeat(120)} | b | c | d |\n\n`,
+                    `https://example.com/${"a".repeat(200)}\n\n`,
+                    "Complete.",
+                  ]
+                : prompt.includes("[rich]")
               ? [
                   "## Astronomy\n\n**Stars**\n\n" +
                     String.fromCharCode(96).repeat(3) +
@@ -55,12 +76,13 @@ export const e2eLanguageModel: LanguageModelFactory = (modelId) =>
                     String.fromCharCode(96).repeat(3) +
                     "\n\n$$E=mc^2$$",
                 ]
-              : [
-                  "A thoughtful Reply. ",
-                  ...(slow ? Array(30).fill("Still streaming. ") : []),
-                  "Complete.",
-                ],
-            delayMs: slow ? 150 : 5,
+
+                : [
+                    "A thoughtful Reply. ",
+                    ...(slow ? Array(30).fill("Still streaming. ") : []),
+                    "Complete.",
+                  ],
+            delayMs: slow ? 150 : long ? 8 : 5,
           },
           request.abortSignal,
         ),
