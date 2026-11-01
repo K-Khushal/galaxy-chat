@@ -52,7 +52,7 @@ const violations = new WeakMap<Page, string[]>();
 test("Reply rendering has no CSP violations", async ({ page, browserName }) => {
   test.fixme(
     browserName === "firefox",
-    "BUG: Reply rendering attempts eval under nonce CSP in Firefox; components/elements/response.tsx:10 (Streamdown).",
+    "BUG: Reply rendering attempts eval under nonce CSP in Firefox; components/elements/reply-markdown.tsx:10 (Streamdown).",
   );
   await send(page, "Check CSP");
   await complete(page);
@@ -652,7 +652,7 @@ test("account menu sign-out returns to sign-in", async ({ page, context }) => {
 test("KaTeX math retains its rendering markup", async ({ page }) => {
   test.fixme(
     true,
-    "BUG: math output loses KaTeX classes/MathML and shows duplicated text; components/elements/response.tsx:10 (Streamdown sanitization).",
+    "BUG: math output loses KaTeX classes/MathML and shows duplicated text; components/elements/reply-markdown.tsx:10 (Streamdown sanitization).",
   );
   await send(page, "[rich] Render math");
   await complete(page);
