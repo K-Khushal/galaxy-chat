@@ -1,0 +1,6 @@
+{
+  "themeColor": { "light": "#fafafa", "dark": "#161618" },
+  "accent": "#5b57d1",
+  "mark": "#ffffff",
+  "shareText": { "foreground": "#f1f1f3", "muted": "#9b9ba5" }
+}
