@@ -11,7 +11,6 @@ import {
   filePart,
   loadForMessage,
 } from "@/lib/attachments/store";
-import { loadByokKey } from "@/lib/byok/store";
 import {
   type ChatRow,
   finishReply,
