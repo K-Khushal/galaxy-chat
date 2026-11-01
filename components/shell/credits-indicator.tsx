@@ -23,6 +23,9 @@ export function CreditsIndicator() {
   return <CreditsStatus data={data} />;
 }
 
+export const creditsLeft = (credits: number) =>
+  `${credits} ${credits === 1 ? "Credit" : "Credits"} left`;
+
 export function CreditsStatus({
   data,
 }: {
@@ -32,7 +35,7 @@ export function CreditsStatus({
     <p className="px-2 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
       {data.credits === 0 && data.key
         ? "Using your key"
-        : `${data.credits} Credits left`}
+        : creditsLeft(data.credits)}
       {data.credits <= 2 && !data.key && (
         <span className="block">Add your key to keep chatting.</span>
       )}

@@ -7,7 +7,10 @@ test("Credits notice appears at two or fewer without a BYOK key", () => {
     const html = renderToStaticMarkup(
       <CreditsStatus data={{ credits, key: null }} />,
     );
-    expect(html).toContain(`${credits} Credits left`);
+    expect(html).toContain(
+      credits === 1 ? "1 Credit left" : `${credits} Credits left`,
+    );
+    expect(html).not.toContain("1 Credits");
     expect(html).toContain("Add your key to keep chatting.");
   }
   expect(

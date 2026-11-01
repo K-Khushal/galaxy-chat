@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, errorCopy } from "@/components/chat/api";
 import { ByokDialog } from "@/components/chat/byok-dialog";
+import { creditsLeft } from "@/components/shell/credits-indicator";
 import { ThemeSwitcher } from "@/components/shell/theme-switcher";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -192,7 +193,7 @@ export function SettingsPage() {
             </section>
             <section className={section}>
               <h2 className="text-lg font-medium">Usage</h2>
-              <p>{data.credits} Credits left</p>
+              <p>{creditsLeft(data.credits)}</p>
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm">
                   <caption className="text-left text-muted-foreground">
