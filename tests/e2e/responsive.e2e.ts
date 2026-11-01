@@ -107,7 +107,13 @@ for (const viewport of VIEWPORTS) {
 
     test("a wide Reply scrolls inside its own box", async ({ page }) => {
       await signIn(page);
-      await composer(page).fill("[markdown] show wide content");
+      // Wait for hydration to own the textarea before submitting.
+      await expect(async () => {
+        await composer(page).fill("[markdown] show wide content");
+        await expect(
+          page.getByRole("button", { name: "Send message" }),
+        ).toBeEnabled({ timeout: 1_000 });
+      }).toPass();
       await composer(page).press("Enter");
       await expect(page).toHaveURL(/\/chat\/[0-9a-f-]{36}$/);
       await expect(

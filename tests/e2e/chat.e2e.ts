@@ -619,6 +619,7 @@ test("sign-in methods and email-code UI through the offline seam", async ({
   await expect(
     page.getByRole("button", { name: "Continue with Google" }),
   ).toBeVisible();
+  await page.getByLabel("Email", { exact: true }).focus();
   await expect(page.getByTestId("turnstile-placeholder")).toBeVisible();
   await page.route("**/api/auth/email-otp/send-verification-otp", (route) =>
     route.fulfill({ json: { success: true } }),
