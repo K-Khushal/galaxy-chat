@@ -1,9 +1,9 @@
 "use client";
 import { ArrowDown } from "lucide-react";
-import { useReducedMotion } from "motion/react";
 import type { ReactNode } from "react";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 import { Button } from "@/components/ui/button";
+import { useReducedMotion } from "@/hooks/use-reduced-motion";
 
 function Jump() {
   const { isAtBottom, scrollToBottom } = useStickToBottomContext();

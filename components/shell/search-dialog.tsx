@@ -25,16 +25,6 @@ export function SearchDialog({
   );
   const [status, setStatus] = useState("");
   useEffect(() => {
-    const listener = (event: KeyboardEvent) => {
-      if (event.key.toLowerCase() === "k" && (event.metaKey || event.ctrlKey)) {
-        event.preventDefault();
-        onOpenChange(!open);
-      }
-    };
-    document.addEventListener("keydown", listener);
-    return () => document.removeEventListener("keydown", listener);
-  }, [open, onOpenChange]);
-  useEffect(() => {
     if (!open) {
       setQuery("");
       return;

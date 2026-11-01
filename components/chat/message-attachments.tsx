@@ -59,6 +59,7 @@ export function MessageAttachments({ parts }: { parts: readonly FilePart[] }) {
                   src={file.url}
                   alt={file.name}
                   loading="lazy"
+                  decoding="async"
                   className="size-24 object-cover"
                 />
               </button>

@@ -50,3 +50,5 @@ Use `bun run test:e2e --project=chromium-desktop` for focused diagnosis.
 The suite uses axe-core WCAG A/AA checks on Chat and Settings. Rich-text and
 Interrupted fixtures are selected by explicit Message markers in the mock;
 ordinary Messages keep the original fast Reply.
+`seo.e2e.ts` checks robots.txt, the sitemap, the manifest, the generated images and the head of public and signed-in pages.
+`responsive.e2e.ts` opens the app at phone, tablet and desktop sizes (touch emulation on the first four) and checks that nothing scrolls sideways, the sidebar is a drawer on phones, wide Replies scroll inside their own box, dialogs fit, and touch targets are at least 44px. A Message containing `[markdown]` makes the mock model reply with wide code, a table and a long link; `[long]` makes it stream a long Reply.

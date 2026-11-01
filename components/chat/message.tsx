@@ -1,6 +1,5 @@
 "use client";
 import { Pencil } from "lucide-react";
-import { motion, useReducedMotion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { ReplyMarkdown } from "@/components/elements/reply-markdown";
 import { Button } from "@/components/ui/button";
@@ -27,7 +26,6 @@ export function Message({
   onContinue: () => void;
   onSwitch: (id: string) => void;
 }) {
-  const reduced = useReducedMotion();
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(textOf(message));
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -54,12 +52,9 @@ export function Message({
     .map((p) => p.text)
     .join("\n");
   return (
-    <motion.article
+    <article
       aria-label={user ? "Your Message" : "Reply"}
-      className={`group min-w-0 py-4 ${user ? "flex flex-col items-end" : ""}`}
-      initial={reduced ? false : { opacity: 0, y: 4 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: reduced ? 0 : 0.18 }}
+      className={`group min-w-0 animate-in py-4 duration-200 fade-in-0 slide-in-from-bottom-1 motion-reduce:animate-none ${user ? "flex flex-col items-end" : ""}`}
     >
       {files}
       {editing ? (
@@ -185,6 +180,6 @@ export function Message({
           onSwitch={onSwitch}
         />
       </div>
-    </motion.article>
+    </article>
   );
 }

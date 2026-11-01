@@ -1,3 +1,11 @@
+import { publicPageMetadata } from "@/lib/site";
+
+export const metadata = publicPageMetadata(
+  "/terms",
+  "Terms",
+  "Terms of use for Galaxy: Credits, BYOK keys and the accuracy of AI Replies.",
+);
+
 export default function Terms() {
   return (
     <main className="mx-auto max-w-prose space-y-6 px-6 py-16">

@@ -1,3 +1,11 @@
+import { publicPageMetadata } from "@/lib/site";
+
+export const metadata = publicPageMetadata(
+  "/privacy",
+  "Privacy",
+  "What Galaxy stores about your account and sign-in sessions, and what remains after account deletion.",
+);
+
 export default function Privacy() {
   return (
     <main className="mx-auto max-w-prose space-y-6 px-6 py-16">

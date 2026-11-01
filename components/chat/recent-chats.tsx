@@ -1,6 +1,6 @@
 "use client";
 import { Archive, MoreHorizontal, Pencil, Pin, Trash } from "lucide-react";
-import { LayoutGroup, motion, useReducedMotion } from "motion/react";
+import { LazyMotion, m } from "motion/react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -26,11 +26,14 @@ import {
   SidebarMenuButton,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useReducedMotion } from "@/hooks/use-reduced-motion";
 import { chatGroup, sortedChats } from "@/lib/chat/groups";
 import type { ChatSummary } from "@/lib/chat/store";
 import { api } from "./api";
 export function RecentChats() {
   const [chats, setChats] = useState<ChatSummary[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
   const [editing, setEditing] = useState<string>();
   const [title, setTitle] = useState("");
@@ -50,6 +53,7 @@ export function RecentChats() {
         .then((data) => {
           if (active && !mutating.current) {
             setChats(data.chats);
+            setLoaded(true);
             setError("");
           }
         })
@@ -104,14 +108,16 @@ export function RecentChats() {
           {error}
         </p>
       )}
-      <LayoutGroup>
+      <LazyMotion
+        features={() => import("./motion-features").then((f) => f.default)}
+      >
         <SidebarMenu>
           {sortedChats(chats).map((chat) => {
             const group = chatGroup(chat);
             const heading = group !== previous;
             previous = group;
             return (
-              <motion.li
+              <m.li
                 layout={!reduced}
                 transition={{ duration: reduced ? 0 : 0.18 }}
                 key={chat.id}
@@ -222,17 +228,24 @@ export function RecentChats() {
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </div>
-              </motion.li>
+              </m.li>
             );
           })}
         </SidebarMenu>
-      </LayoutGroup>
+      </LazyMotion>
       {chats.length === 500 && (
         <p className="px-2 py-1.5 text-sm text-muted-foreground">
           Showing 500 Chats. Search to find older Chats.
         </p>
       )}
-      {!chats.length && !error && (
+      {!loaded && !error && (
+        <div aria-hidden="true" className="grid gap-1 px-2 pt-2">
+          <Skeleton className="h-8 w-full" />
+          <Skeleton className="h-8 w-4/5" />
+          <Skeleton className="h-8 w-3/5" />
+        </div>
+      )}
+      {loaded && !chats.length && !error && (
         <p className="px-2 py-1.5 text-sm text-muted-foreground">
           Your chats will appear here.
         </p>

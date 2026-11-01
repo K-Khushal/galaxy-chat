@@ -65,6 +65,8 @@ export function useGalaxyChat(initial: ChatView) {
     id,
     messages: initial.messages,
     transport,
+    // At most 20 renders a second however fast tokens arrive.
+    throttle: 50,
     resume: !!initial.generation,
     onFinish: () => {
       window.dispatchEvent(new Event("galaxy-account-changed"));

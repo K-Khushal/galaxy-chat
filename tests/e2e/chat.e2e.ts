@@ -275,7 +275,13 @@ test("Temporary chat streams without saving anything", async ({ page }) => {
 });
 
 test("save Custom instructions and delete account", async ({ page }) => {
+  // Settings now renders its fields on the server; wait for client effects so
+  // hydration cannot replace text filled immediately after navigation.
+  const ready = page.waitForResponse((response) =>
+    response.url().endsWith("/api/credits"),
+  );
   await page.goto("/chat/settings");
+  await ready;
   await page
     .getByLabel("About you", { exact: true })
     .fill("I study astronomy.");
@@ -619,6 +625,7 @@ test("sign-in methods and email-code UI through the offline seam", async ({
   await expect(
     page.getByRole("button", { name: "Continue with Google" }),
   ).toBeVisible();
+  await page.getByLabel("Email", { exact: true }).focus();
   await expect(page.getByTestId("turnstile-placeholder")).toBeVisible();
   await page.route("**/api/auth/email-otp/send-verification-otp", (route) =>
     route.fulfill({ json: { success: true } }),

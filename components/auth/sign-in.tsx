@@ -22,6 +22,9 @@ export function SignInPanel({ siteKey }: { siteKey: string }) {
   const [sent, setSent] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  // Turnstile is a third-party script of several hundred KB that only the email
+  // code needs, so it loads when the visitor starts using the email form.
+  const [challenge, setChallenge] = useState(false);
   async function perform(action: () => Promise<{ error?: unknown }>) {
     setPending(true);
     setError("");
@@ -59,6 +62,9 @@ export function SignInPanel({ siteKey }: { siteKey: string }) {
       </div>
       <form
         className="space-y-3 text-left"
+        onFocus={() => setChallenge(true)}
+        onChange={() => setChallenge(true)}
+        onPointerDown={() => setChallenge(true)}
         onSubmit={(event) => {
           event.preventDefault();
           void perform(async () => {
@@ -86,7 +92,7 @@ export function SignInPanel({ siteKey }: { siteKey: string }) {
           Email
         </label>
         <input
-          className="flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-2 focus-visible:outline-ring"
+          className="flex h-10 w-full pointer-coarse:min-h-11 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-2 focus-visible:outline-ring"
           id="email"
           type="email"
           autoComplete="email"
@@ -101,7 +107,7 @@ export function SignInPanel({ siteKey }: { siteKey: string }) {
               Six-digit code
             </label>
             <input
-              className="flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-2 focus-visible:outline-ring"
+              className="flex h-10 w-full pointer-coarse:min-h-11 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-2 focus-visible:outline-ring"
               id="otp"
               inputMode="numeric"
               autoComplete="one-time-code"
@@ -116,19 +122,22 @@ export function SignInPanel({ siteKey }: { siteKey: string }) {
             </p>
           </>
         )}
-        <div ref={widget} hidden={sent} />
-        <Script
-          src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"
-          onReady={() => {
-            if (widget.current && !widgetId.current)
-              widgetId.current = window.turnstile.render(widget.current, {
-                sitekey: siteKey,
-                callback: (value: string) => setToken(value),
-                "expired-callback": () => setToken(""),
-                "error-callback": () => setToken(""),
-              });
-          }}
-        />
+        {/* Holds the widget's 65px so it does not push the button down. */}
+        <div ref={widget} hidden={sent} className="min-h-[65px]" />
+        {challenge && (
+          <Script
+            src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"
+            onReady={() => {
+              if (widget.current && !widgetId.current)
+                widgetId.current = window.turnstile.render(widget.current, {
+                  sitekey: siteKey,
+                  callback: (value: string) => setToken(value),
+                  "expired-callback": () => setToken(""),
+                  "error-callback": () => setToken(""),
+                });
+            }}
+          />
+        )}
         <Button
           className="w-full"
           type="submit"

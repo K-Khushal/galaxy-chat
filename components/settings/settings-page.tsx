@@ -7,10 +7,12 @@ import { ThemeSwitcher } from "@/components/shell/theme-switcher";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { authClient } from "@/lib/auth/client";
+import { ARCHIVED_PAGE } from "@/lib/chat/archived";
 
-type Data = {
+export type Data = {
   settings: { aboutYou: string; responseInstructions: string };
   credits: number;
   key: { updatedAt: string } | null;
@@ -26,18 +28,32 @@ type Data = {
     createdAt: string;
   }[];
 };
-type ArchivedChat = { id: string; title: string | null };
+export type ArchivedChat = { id: string; title: string | null };
 type ArchivedPage = { chats: ArchivedChat[]; nextCursor: string | null };
-const ARCHIVED_PAGE = 50;
 const archivedUrl = (cursor?: string) =>
   `/api/chats?archived=true&limit=${ARCHIVED_PAGE}${
     cursor ? `&cursor=${cursor}` : ""
   }`;
 
-export function SettingsPage() {
-  const [data, setData] = useState<Data>();
-  const [archived, setArchived] = useState<ArchivedChat[]>([]);
-  const [archivedCursor, setArchivedCursor] = useState<string | null>(null);
+function LocalDate({ value }: { value: string }) {
+  const [text, setText] = useState(value.slice(0, 10));
+  useEffect(() => setText(new Date(value).toLocaleDateString()), [value]);
+  return text;
+}
+
+export function SettingsPage({
+  initial,
+}: {
+  initial?: { data: Data; archived: ArchivedPage };
+}) {
+  const [data, setData] = useState<Data | undefined>(initial?.data);
+  const [archived, setArchived] = useState<ArchivedChat[]>(
+    initial?.archived.chats ?? [],
+  );
+  const [archivedCursor, setArchivedCursor] = useState<string | null>(
+    initial?.archived.nextCursor ?? null,
+  );
+  const hasInitial = initial !== undefined;
   const [keyOpen, setKeyOpen] = useState(false);
   const [confirmation, setConfirmation] = useState("");
   const [busy, setBusy] = useState(false);
@@ -69,10 +85,11 @@ export function SettingsPage() {
     setArchivedCursor(next.nextCursor);
   }
   useEffect(() => {
+    if (hasInitial) return;
     void refresh().catch(() =>
       setNotice("Settings could not be loaded. Please try again."),
     );
-  }, [refresh]);
+  }, [refresh, hasInitial]);
   async function act(work: () => Promise<void>, message: string) {
     setBusy(true);
     setNotice("");
@@ -92,9 +109,17 @@ export function SettingsPage() {
         <h1 className="text-2xl font-semibold">Settings</h1>
         <output aria-live="polite">{notice}</output>
         {!data ? (
-          <Button onClick={() => void act(refresh, "Settings loaded.")}>
-            Reload settings
-          </Button>
+          notice ? (
+            <Button onClick={() => void act(refresh, "Settings loaded.")}>
+              Reload settings
+            </Button>
+          ) : (
+            <div aria-hidden="true" className="grid gap-8">
+              <Skeleton className="h-24 w-full" />
+              <Skeleton className="h-80 w-full" />
+              <Skeleton className="h-32 w-full" />
+            </div>
+          )
         ) : (
           <>
             <section className={section}>
@@ -155,9 +180,14 @@ export function SettingsPage() {
             <section className={section}>
               <h2 className="text-lg font-medium">Models &amp; keys</h2>
               <p>
-                {data.key
-                  ? `OpenRouter •••••••• · Saved ${new Date(data.key.updatedAt).toLocaleDateString()}`
-                  : "No OpenRouter key saved."}
+                {data.key ? (
+                  <>
+                    OpenRouter •••••••• · Saved{" "}
+                    <LocalDate value={data.key.updatedAt} />
+                  </>
+                ) : (
+                  "No OpenRouter key saved."
+                )}
               </p>
               <div className="flex flex-wrap gap-2">
                 <Button onClick={() => setKeyOpen(true)}>
@@ -217,7 +247,7 @@ export function SettingsPage() {
                     {data.replies.map((reply) => (
                       <tr key={reply.id}>
                         <td className="py-2">
-                          {new Date(reply.createdAt).toLocaleDateString()}
+                          <LocalDate value={reply.createdAt} />
                         </td>
                         <td>{reply.model}</td>
                         <td>
