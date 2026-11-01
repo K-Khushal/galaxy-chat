@@ -36,7 +36,7 @@ export async function handle(run: () => Promise<Response>): Promise<Response> {
 }
 
 /** Default cap on a JSON request body; routes with large bodies pass their own. */
-export const MAX_JSON_BYTES = 16 * 1024;
+const MAX_JSON_BYTES = 16 * 1024;
 
 const tooLarge = () => new AppError("payload_too_large", 413);
 

@@ -275,7 +275,3 @@
   background: var(--border);
   border-radius: 3px;
 }
-
-@utility overscroll-contain-y {
-  overscroll-behavior-y: contain;
-}

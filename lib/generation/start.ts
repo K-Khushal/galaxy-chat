@@ -37,7 +37,7 @@ import { recoverRepliesQuietly } from "@/lib/generation/recover";
 import { runGeneration } from "@/lib/generation/run";
 import { type ResolvedModel, resolveModel } from "@/lib/models";
 
-export type TextPart = { type: "text"; text: string };
+type TextPart = { type: "text"; text: string };
 
 /** What a client asks for. Edits are submits under the edited Message's parent. */
 export type StartRequest =

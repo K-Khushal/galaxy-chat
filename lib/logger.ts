@@ -1,6 +1,7 @@
 import "server-only";
 import { AsyncLocalStorage } from "node:async_hooks";
-export const requestLog = new AsyncLocalStorage<{
+
+const requestLog = new AsyncLocalStorage<{
   requestId: string;
   route: string;
 }>();

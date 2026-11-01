@@ -115,14 +115,6 @@ export async function updateChat(
   return rows[0] ?? null;
 }
 
-export async function deleteChat(db: Db, userId: string, chatId: string) {
-  const rows = await db
-    .delete(chat)
-    .where(and(eq(chat.id, chatId), eq(chat.userId, userId)))
-    .returning({ id: chat.id });
-  return rows.length > 0;
-}
-
 export function listMessages(db: Db, chatId: string): Promise<MessageRow[]> {
   return db
     .select()

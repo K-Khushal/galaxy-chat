@@ -27,12 +27,12 @@ export type Upload = {
 };
 
 /** How long an upload URL works, and a read URL handed to the browser. */
-export const UPLOAD_URL_SECONDS = 300;
+const UPLOAD_URL_SECONDS = 300;
 const VIEW_URL_SECONDS = 300;
 /** Unattached files older than this are deleted the next time their owner uploads. */
 export const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
 /** Files uploaded but not yet sent in a Message, per User. */
-export const MAX_UNATTACHED = 20;
+const MAX_UNATTACHED = 20;
 /** Bytes checked for the text sniff. */
 const SNIFF_BYTES = 8192;
 
@@ -50,7 +50,7 @@ export function objectKey(userId: string, attachmentId: string): string {
   return `u/${userId}/${attachmentId}`;
 }
 
-export function attachmentView(row: AttachmentRow): AttachmentView {
+function attachmentView(row: AttachmentRow): AttachmentView {
   return {
     id: row.id,
     filename: row.filename,
@@ -73,7 +73,7 @@ export function filePart(row: AttachmentRow) {
 const notFound = () => new AppError("attachment_not_found", 404);
 
 /** The Attachment when `userId` owns it; null otherwise (callers answer 404). */
-export async function getOwnedAttachment(
+async function getOwnedAttachment(
   db: Db,
   userId: string,
   id: string,
@@ -87,7 +87,7 @@ export async function getOwnedAttachment(
 }
 
 /** Retained independently of User/Chat cascades, including unknown in-flight PUTs. */
-export async function recordTombstones(db: Db, rows: AttachmentRow[]) {
+async function recordTombstones(db: Db, rows: AttachmentRow[]) {
   if (!rows.length) return;
   await db
     .insert(attachmentTombstone)
