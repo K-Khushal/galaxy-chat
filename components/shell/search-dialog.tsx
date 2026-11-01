@@ -18,7 +18,7 @@ export function SearchDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const router = useRouter();
-  const { resolvedTheme, setTheme } = useTheme();
+  const { setTheme } = useTheme();
   const [query, setQuery] = useState("");
   const [chats, setChats] = useState<{ id: string; title: string | null }[]>(
     [],
@@ -104,13 +104,13 @@ export function SearchDialog({
               label: "New Temporary chat",
               action: () => navigate("/chat/temporary"),
             },
-            {
-              label: "Toggle theme",
+            ...(["system", "light", "dark"] as const).map((theme) => ({
+              label: `Theme: ${theme[0]?.toUpperCase()}${theme.slice(1)}`,
               action: () => {
-                setTheme(resolvedTheme === "dark" ? "light" : "dark");
+                setTheme(theme);
                 onOpenChange(false);
               },
-            },
+            })),
             {
               label: "Open Settings",
               action: () => navigate("/chat/settings"),

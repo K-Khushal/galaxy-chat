@@ -991,3 +991,37 @@ test("Settings lists archived Chats a page at a time with Load more", async () =
     globalThis.fetch = original;
   }
 });
+test("the command palette offers System, Light and Dark themes", async () => {
+  const { mock } = await import("bun:test");
+  const themes: string[] = [];
+  mock.module("next-themes", () => ({
+    useTheme: () => ({
+      theme: "system",
+      setTheme: (theme: string) => themes.push(theme),
+    }),
+  }));
+  mock.module("next/navigation", () => ({ useRouter: () => ({ push() {} }) }));
+  Object.assign(globalThis, {
+    ResizeObserver: class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  });
+  Element.prototype.scrollIntoView = () => {};
+  const { SearchDialog } = await import("../../components/shell/search-dialog");
+  await withAnimationFrames(async () => {
+    let open = true;
+    const ui = render(
+      <SearchDialog open={open} onOpenChange={(next) => (open = next)} />,
+    );
+    const input = ui.getByPlaceholderText("Search chats or choose an action");
+    fireEvent.change(input, { target: { value: "theme" } });
+    for (const label of ["Theme: System", "Theme: Light", "Theme: Dark"])
+      expect(ui.getByText(label)).toBeTruthy();
+    expect(ui.queryByText("Toggle theme")).toBeNull();
+    fireEvent.click(ui.getByText("Theme: Dark"));
+    fireEvent.click(ui.getByText("Theme: System"));
+    expect(themes).toEqual(["dark", "system"]);
+  });
+});
