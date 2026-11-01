@@ -7,6 +7,7 @@ import {
 import { listChatsRoute } from "@/lib/api/chats";
 import { appContext } from "@/lib/api/production";
 import { getSettingsRoute } from "@/lib/api/settings";
+import { ARCHIVED_PAGE } from "@/lib/chat/archived";
 
 export default async function Page() {
   const requestHeaders = await headers();
@@ -18,9 +19,12 @@ export default async function Page() {
     ),
     listChatsRoute(
       ctx,
-      new Request("http://localhost/api/chats?archived=true", {
-        headers: requestHeaders,
-      }),
+      new Request(
+        `http://localhost/api/chats?archived=true&limit=${ARCHIVED_PAGE}`,
+        {
+          headers: requestHeaders,
+        },
+      ),
     ),
   ]);
   // On any failure the page falls back to fetching, and reports the error itself.

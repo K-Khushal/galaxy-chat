@@ -95,7 +95,7 @@ for (const viewport of VIEWPORTS) {
       const newChat = page.getByRole("link", { name: "New chat" });
       if (compact) {
         await expect(newChat).toBeHidden();
-        await page.getByRole("button", { name: "Toggle Sidebar" }).click();
+        await openDrawer(page);
         await expect(newChat).toBeVisible();
         await expectInsideViewport(page, '[data-slot="sidebar"][data-mobile]');
         await page.keyboard.press("Escape");
@@ -150,8 +150,7 @@ for (const viewport of VIEWPORTS) {
       await expect(page.getByRole("dialog")).toBeVisible();
       await expectInsideViewport(page, '[data-slot="dialog-content"]');
       await page.keyboard.press("Escape");
-      if (compact)
-        await page.getByRole("button", { name: "Toggle Sidebar" }).click();
+      if (compact) await openDrawer(page);
       await page.getByRole("button", { name: "Search" }).click();
       await expect(page.getByRole("combobox")).toBeVisible();
       await expectInsideViewport(page, '[data-slot="dialog-content"]');
@@ -163,7 +162,7 @@ for (const viewport of VIEWPORTS) {
         const small = await smallTargets(page);
         expect(small).toEqual([]);
         if (compact) {
-          await page.getByRole("button", { name: "Toggle Sidebar" }).click();
+          await openDrawer(page);
           await expect(
             page.getByRole("link", { name: "New chat" }),
           ).toBeVisible();
@@ -171,6 +170,17 @@ for (const viewport of VIEWPORTS) {
         }
       });
   });
+}
+
+/** Opens the sidebar drawer, retrying until hydration lets the toggle work. */
+async function openDrawer(page: Page) {
+  await expect(async () => {
+    if (!(await page.getByRole("dialog").isVisible()))
+      await page.getByRole("button", { name: "Toggle Sidebar" }).click();
+    await expect(page.getByRole("link", { name: "New chat" })).toBeVisible({
+      timeout: 2_000,
+    });
+  }).toPass();
 }
 
 /** Visible controls whose tap area is under 44px; links inside running text are exempt. */

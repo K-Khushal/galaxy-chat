@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { authClient } from "@/lib/auth/client";
+import { ARCHIVED_PAGE } from "@/lib/chat/archived";
 
 export type Data = {
   settings: { aboutYou: string; responseInstructions: string };
@@ -29,7 +30,6 @@ export type Data = {
 };
 export type ArchivedChat = { id: string; title: string | null };
 type ArchivedPage = { chats: ArchivedChat[]; nextCursor: string | null };
-const ARCHIVED_PAGE = 50;
 const archivedUrl = (cursor?: string) =>
   `/api/chats?archived=true&limit=${ARCHIVED_PAGE}${
     cursor ? `&cursor=${cursor}` : ""

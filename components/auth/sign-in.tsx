@@ -123,11 +123,7 @@ export function SignInPanel({ siteKey }: { siteKey: string }) {
           </>
         )}
         {/* Holds the widget's 65px so it does not push the button down. */}
-        <div
-          ref={widget}
-          hidden={sent}
-          className={challenge ? "min-h-[65px]" : undefined}
-        />
+        <div ref={widget} hidden={sent} className="min-h-[65px]" />
         {challenge && (
           <Script
             src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"
