@@ -15,6 +15,7 @@ import {
   getOwnedChat,
   listChats,
   listMessages,
+  MAX_CHAT_PAGE,
   switchVersion,
   updateChat,
 } from "@/lib/chat/store";
@@ -55,14 +56,34 @@ async function chatView(ctx: AppContext, row: ChatRow) {
   };
 }
 
-/** GET /api/chats[?archived=true]. Capped at 500, pinned then newest first. */
+const listQuery = z.object({
+  archived: z.enum(["true", "false"]).optional(),
+  limit: z.coerce.number().int().min(1).max(MAX_CHAT_PAGE).optional(),
+  cursor: id.optional(),
+});
+
+/**
+ * GET /api/chats[?archived=true&limit=N&cursor=ID]. Pinned then newest first,
+ * at most 500 per page; `nextCursor` is the `cursor` for the next page.
+ */
 export function listChatsRoute(ctx: AppContext, request: Request) {
   return handle(async () => {
     const userId = await ctx.authenticate(request);
-    const archived =
-      new URL(request.url).searchParams.get("archived") === "true";
-    const rows = await listChats(ctx.db, userId, archived);
-    return json({ chats: rows.map(chatSummary) });
+    const query = listQuery.safeParse(
+      Object.fromEntries(new URL(request.url).searchParams),
+    );
+    if (!query.success) throw new AppError("invalid_request", 400);
+    const result = await listChats(
+      ctx.db,
+      userId,
+      query.data.archived === "true",
+      { limit: query.data.limit, cursor: query.data.cursor },
+    );
+    if (!result) throw new AppError("invalid_cursor", 400);
+    return json({
+      chats: result.rows.map(chatSummary),
+      nextCursor: result.nextCursor,
+    });
   });
 }
 

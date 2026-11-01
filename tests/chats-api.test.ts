@@ -475,3 +475,58 @@ test("every Chat route checks the owner", async () => {
   expect(after.messages).toHaveLength(2);
   expect(await getCredits(h.db, "mallory")).toBe(10);
 });
+
+test("the Chat list pages by cursor in a stable order, per User", async () => {
+  // Same updated_at on purpose: ties break by ID, so no page skips or repeats.
+  const stamp = "2026-01-01 00:00:00.123456";
+  for (const [id, pinned, updated] of [
+    ["a1", false, stamp],
+    ["a2", false, stamp],
+    ["a3", true, "2025-01-01 00:00:00"],
+    ["a4", false, "2026-02-01 00:00:00"],
+    ["a5", false, "2025-06-01 00:00:00"],
+  ] as const) {
+    await h.pg.query(
+      `INSERT INTO chat (id, user_id, model, archived, pinned, updated_at) VALUES ($1, 'alice', 'm', true, $2, $3)`,
+      [id, pinned, updated],
+    );
+  }
+  await h.pg.query(
+    `INSERT INTO chat (id, user_id, model, archived) VALUES ('m1', 'mallory', 'm', true)`,
+  );
+  const page = async (query: string) => {
+    const response = await call(h, listChatsRoute, { user: "alice", query });
+    return response.status === 200
+      ? ((await response.json()) as {
+          chats: { id: string }[];
+          nextCursor: string | null;
+        })
+      : response.status;
+  };
+
+  const all = await page("?archived=true");
+  if (typeof all === "number") throw new Error(`status ${all}`);
+  const expected = ["a3", "a4", "a2", "a1", "a5"];
+  expect(all.chats.map((c) => c.id)).toEqual(expected);
+  expect(all.nextCursor).toBeNull();
+
+  const seen: string[] = [];
+  let cursor: string | null = null;
+  let pages = 0;
+  do {
+    const next = await page(
+      `?archived=true&limit=2${cursor ? `&cursor=${cursor}` : ""}`,
+    );
+    if (typeof next === "number") throw new Error(`status ${next}`);
+    seen.push(...next.chats.map((c) => c.id));
+    cursor = next.nextCursor;
+    pages++;
+  } while (cursor);
+  expect(seen).toEqual(expected);
+  expect(pages).toBe(3);
+
+  expect(await page("?archived=true&cursor=m1")).toBe(400);
+  expect(await page("?archived=true&cursor=missing")).toBe(400);
+  expect(await page("?archived=true&limit=0")).toBe(400);
+  expect(await page("?archived=true&limit=501")).toBe(400);
+});

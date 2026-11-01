@@ -955,3 +955,39 @@ test("without a BYOK key a custom model ID shows a hint and opens the key dialog
     expect(picked).toEqual([]);
     expect(keyAdds).toBe(1);
   }));
+test("Settings lists archived Chats a page at a time with Load more", async () => {
+  const { SettingsPage } = await import(
+    "../../components/settings/settings-page"
+  );
+  const requested: string[] = [];
+  const original = globalThis.fetch;
+  const chat = (n: number) => ({ id: `c${n}`, title: `Archived ${n}` });
+  globalThis.fetch = (async (url: string) => {
+    requested.push(url);
+    if (url.startsWith("/api/settings"))
+      return Response.json({
+        settings: { aboutYou: "", responseInstructions: "" },
+        credits: 3,
+        key: null,
+        replies: [],
+      });
+    return url.includes("cursor=c2")
+      ? Response.json({ chats: [chat(3)], nextCursor: null })
+      : Response.json({ chats: [chat(1), chat(2)], nextCursor: "c2" });
+  }) as unknown as typeof fetch;
+  try {
+    const ui = render(<SettingsPage />);
+    await ui.findByText("Archived 2");
+    expect(ui.queryByText("Archived 3")).toBeNull();
+    fireEvent.click(ui.getByRole("button", { name: "Load more" }));
+    await ui.findByText("Archived 3");
+    expect(ui.getByText("Archived 1")).toBeTruthy();
+    expect(ui.queryByRole("button", { name: "Load more" })).toBeNull();
+    expect(requested.filter((url) => url.includes("archived=true"))).toEqual([
+      "/api/chats?archived=true&limit=50",
+      "/api/chats?archived=true&limit=50&cursor=c2",
+    ]);
+  } finally {
+    globalThis.fetch = original;
+  }
+});

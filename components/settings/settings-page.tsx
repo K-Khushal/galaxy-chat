@@ -25,24 +25,42 @@ type Data = {
     createdAt: string;
   }[];
 };
+type ArchivedChat = { id: string; title: string | null };
+type ArchivedPage = { chats: ArchivedChat[]; nextCursor: string | null };
+const ARCHIVED_PAGE = 50;
+const archivedUrl = (limit: number, cursor?: string) =>
+  `/api/chats?archived=true&limit=${Math.min(limit, 500)}${
+    cursor ? `&cursor=${cursor}` : ""
+  }`;
+
 export function SettingsPage() {
   const [data, setData] = useState<Data>();
-  const [archived, setArchived] = useState<
-    { id: string; title: string | null }[]
-  >([]);
+  const [archived, setArchived] = useState<ArchivedChat[]>([]);
+  const [archivedCursor, setArchivedCursor] = useState<string | null>(null);
   const [keyOpen, setKeyOpen] = useState(false);
   const [confirmation, setConfirmation] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
-  const refresh = useCallback(async () => {
+  // Reloads from the top as far as the User had loaded, so a restored or
+  // deleted Chat never leaves a stale cursor behind.
+  const refresh = useCallback(async (loaded = ARCHIVED_PAGE) => {
     const [settings, chats] = await Promise.all([
       api<Data>("/api/settings"),
-      api<{ chats: typeof archived }>("/api/chats?archived=true"),
+      api<ArchivedPage>(archivedUrl(Math.max(loaded, ARCHIVED_PAGE))),
     ]);
     setData(settings);
     setArchived(chats.chats);
+    setArchivedCursor(chats.nextCursor);
     window.dispatchEvent(new Event("galaxy-account-changed"));
   }, []);
+  async function loadMore() {
+    if (!archivedCursor) return;
+    const next = await api<ArchivedPage>(
+      archivedUrl(ARCHIVED_PAGE, archivedCursor),
+    );
+    setArchived((current) => [...current, ...next.chats]);
+    setArchivedCursor(next.nextCursor);
+  }
   useEffect(() => {
     void refresh().catch(() =>
       setNotice("Settings could not be loaded. Please try again."),
@@ -162,7 +180,7 @@ export function SettingsPage() {
                       onClick={() =>
                         void act(async () => {
                           await api("/api/byok", {}, "DELETE");
-                          await refresh();
+                          await refresh(archived.length);
                         }, "Key removed.")
                       }
                     >
@@ -240,7 +258,7 @@ export function SettingsPage() {
                           { archived: false },
                           "PATCH",
                         );
-                        await refresh();
+                        await refresh(archived.length);
                       }, "Chat restored.")
                     }
                   >
@@ -252,7 +270,7 @@ export function SettingsPage() {
                     onClick={() =>
                       void act(async () => {
                         await api(`/api/chats/${chat.id}`, {}, "DELETE");
-                        await refresh();
+                        await refresh(archived.length);
                       }, "Chat deleted.")
                     }
                   >
@@ -260,6 +278,15 @@ export function SettingsPage() {
                   </Button>
                 </div>
               ))}
+              {archivedCursor && (
+                <Button
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => void act(loadMore, "")}
+                >
+                  Load more
+                </Button>
+              )}
               <Button
                 variant="link"
                 render={
