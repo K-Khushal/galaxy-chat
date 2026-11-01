@@ -234,6 +234,8 @@ test("Stop ends the Reply as Stopped with its partial text and still charges", a
   expect(text).toStartWith("w0 w1 w2 w3 ");
   expect(text.length).toBeLessThan(words(200).join("").length);
   expect(await getCredits(h.db, "alice")).toBe(9);
+  // A Stopped first Reply still names the Chat, without another Credit.
+  expect((await view(chatId)).chat.title).toBe("A friendly greeting");
 });
 
 test("Stop with nothing running is a no-op", async () => {
@@ -259,6 +261,7 @@ test("hitting the time limit leaves the Reply Interrupted, and continue finishes
   expect(interrupted?.status).toBe("interrupted");
   const partial = replyText(interrupted ?? { parts: [] });
   expect(partial.length).toBeGreaterThan(0);
+  expect((await view(chatId)).chat.title).toBe("A friendly greeting");
 
   h.ctx.timing.deadlineMs = 60_000;
   h.state.script = { words: ["the end."], delayMs: 1 };
@@ -362,6 +365,7 @@ test("a failure after the first token keeps the text as Interrupted and charges"
   expect(reply?.status).toBe("interrupted");
   expect(replyText(reply ?? { parts: [] })).toBe("w0 w1 w2 w3 ");
   expect(await getCredits(h.db, "alice")).toBe(9);
+  expect((await view(chatId)).chat.title).toBe("A friendly greeting");
 });
 
 test("a rejected BYOK key is reported with a clear error", async () => {
