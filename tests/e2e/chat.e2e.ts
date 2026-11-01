@@ -275,16 +275,18 @@ test("Temporary chat streams without saving anything", async ({ page }) => {
 });
 
 test("save Custom instructions and delete account", async ({ page }) => {
-  // Settings now renders its fields on the server; wait for client effects so
-  // hydration cannot replace text filled immediately after navigation.
-  const ready = page.waitForResponse((response) =>
-    response.url().endsWith("/api/credits"),
-  );
+  // Settings renders its fields on the server; text filled before hydration
+  // is replaced when React takes over, so wait until React owns the field.
   await page.goto("/chat/settings");
-  await ready;
-  await page
-    .getByLabel("About you", { exact: true })
-    .fill("I study astronomy.");
+  const aboutYou = page.getByLabel("About you", { exact: true });
+  await expect
+    .poll(() =>
+      aboutYou.evaluate((element) =>
+        Object.keys(element).some((key) => key.startsWith("__reactFiber")),
+      ),
+    )
+    .toBe(true);
+  await aboutYou.fill("I study astronomy.");
   await page.getByLabel("How should Galaxy respond").fill("Be concise.");
   await page.getByRole("button", { name: "Save instructions" }).click();
   await expect(
