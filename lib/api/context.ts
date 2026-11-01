@@ -52,7 +52,7 @@ export type AppContext = {
 };
 
 /** Must match `maxDuration` in the Generation routes (Vercel Hobby: 300s). */
-export const MAX_DURATION_SECONDS = 300;
+const MAX_DURATION_SECONDS = 300;
 
 export const DEFAULT_TIMING: GenerationTiming = {
   checkpointMs: 2_000,

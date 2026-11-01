@@ -19,7 +19,7 @@ function oldestFirst(a: TreeNode, b: TreeNode) {
 }
 
 /** Children of `parentId` (null for roots), oldest first. */
-export function childrenOf<T extends TreeNode>(
+function childrenOf<T extends TreeNode>(
   messages: readonly T[],
   parentId: string | null,
 ): T[] {

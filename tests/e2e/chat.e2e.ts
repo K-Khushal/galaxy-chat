@@ -3,7 +3,14 @@ import { expect, type Page, test } from "@playwright/test";
 const composer = (page: Page) =>
   page.getByRole("textbox", { name: "Message", exact: true });
 async function send(page: Page, text: string) {
-  await composer(page).fill(text);
+  // Hydration resets a value typed into the server-rendered textarea, so retry
+  // until React owns it and enables Send.
+  await expect(async () => {
+    await composer(page).fill(text);
+    await expect(
+      page.getByRole("button", { name: "Send message" }),
+    ).toBeEnabled({ timeout: 1_000 });
+  }).toPass();
   await composer(page).press("Enter");
 }
 async function complete(page: Page) {

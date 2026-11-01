@@ -20,9 +20,9 @@ See `docs/agents/issue-tracker.md`.
 Single-context layout: root `GLOSSARY.md` and `docs/adr/`.
 See `docs/agents/domain.md`.
 
-## Rebuild in progress (read first)
+## v1 shipped (read first)
 
-Galaxy Chat is being rebuilt as milestones M0–M8, one GitHub issue each (see the open `v1` roadmap issue). Before writing code, read:
+Galaxy Chat v1 is shipped. Before writing code, read:
 
 - `GLOSSARY.md`: use these terms in code, copy, tests and PRs (Chat, Message, Reply, Version, Generation, Credits, BYOK key…). Don't use the synonyms it lists under _Avoid_.
 - `docs/adr/`: binding decisions. If your change contradicts an ADR, stop and say so in the PR instead of working around it.

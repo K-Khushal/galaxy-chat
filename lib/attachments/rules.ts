@@ -33,7 +33,7 @@ const TEXT_EXTENSIONS = new Set(
 );
 
 /** The content type stored for, and signed into the upload of, text files. */
-export const TEXT_CONTENT_TYPE = "text/plain";
+const TEXT_CONTENT_TYPE = "text/plain";
 
 export type FileClass = { kind: AttachmentKind; contentType: string };
 

@@ -55,7 +55,7 @@ const errors: Record<string, string> = {
   server_misconfigured:
     "Chat is unavailable right now. Please try again later.",
 };
-export function errorCode(error: Error) {
+function errorCode(error: Error) {
   let code = error.message;
   try {
     code = JSON.parse(code).error ?? code;

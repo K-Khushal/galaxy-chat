@@ -19,13 +19,13 @@ import {
   scriptedStream,
 } from "./mock-model";
 
-export { BYOK_ENV, PLATFORM_KEY, type Script } from "./mock-model";
+export { BYOK_ENV, PLATFORM_KEY } from "./mock-model";
 
 const usage = {
   inputTokens: { total: 12, noCache: 12, cacheRead: 0, cacheWrite: 0 },
   outputTokens: { total: 34, text: 34, reasoning: 0 },
 };
-export type ModelCall = {
+type ModelCall = {
   modelId: string;
   apiKey: string;
   reasoningEffort?: string;

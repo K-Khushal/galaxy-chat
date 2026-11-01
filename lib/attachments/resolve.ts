@@ -24,9 +24,7 @@ type Part = { type: string; [key: string]: unknown };
 type Entry = { role: "user" | "assistant"; parts: Part[] };
 
 /** Text of a PDF, or null when it cannot be read. */
-export async function extractPdfText(
-  bytes: Uint8Array,
-): Promise<string | null> {
+async function extractPdfText(bytes: Uint8Array): Promise<string | null> {
   try {
     const pdf = await getDocumentProxy(bytes);
     const { text } = await extractText(pdf, { mergePages: true });

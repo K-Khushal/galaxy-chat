@@ -47,7 +47,7 @@ function release(item: DraftAttachment) {
 }
 
 /** Restores files already uploaded, e.g. carried over from a new Chat. */
-export function savedAttachment(saved: UploadedAttachment): DraftAttachment {
+function savedAttachment(saved: UploadedAttachment): DraftAttachment {
   return {
     key: `saved-${saved.id}`,
     name: saved.filename,

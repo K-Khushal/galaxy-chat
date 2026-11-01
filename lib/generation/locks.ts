@@ -8,7 +8,7 @@ import type { Kv } from "@/lib/redis";
  */
 
 /** Concurrent Generations a User may run across all their Chats. */
-export const USER_GENERATION_LIMIT = 3;
+const USER_GENERATION_LIMIT = 3;
 
 /** The Generation running in a Chat; the per-Chat lock's value. */
 export type ActiveGeneration = {
