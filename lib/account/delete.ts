@@ -10,7 +10,7 @@ import type { Db } from "@/lib/db/types";
 import { logErrorId } from "@/lib/errors";
 import { stopGeneration } from "@/lib/generation/resume";
 
-/** Bound M7 cleanup seam; injectable for storage-failure tests. */
+/** Attachment cleanup seam; injectable for storage-failure tests. */
 export const attachmentCleanup: {
   deleteUserAttachments(keys: string[], ctx: AppContext): Promise<void>;
 } = {

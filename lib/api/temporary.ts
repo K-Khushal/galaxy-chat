@@ -51,7 +51,7 @@ export function temporaryMessageRoute(ctx: AppContext, request: Request) {
     const model = resolveModel(body.model);
     if (!model) throw new AppError("invalid_request", 400);
     const generationId = crypto.randomUUID();
-    // A unique, Redis-only Chat lock lets Temporary chats share M3's expiring
+    // A unique, Redis-only Chat lock lets Temporary chats share the expiring
     // per-User slots with saved Chats without creating any Postgres row.
     const acquired = await acquireGeneration(
       ctx.kv,
@@ -100,7 +100,7 @@ export function temporaryMessageRoute(ctx: AppContext, request: Request) {
       };
       let payment = await choosePayment(payer, userId, model);
       // The atomic debit may lose a race for the final Credit. Re-select so a
-      // saved BYOK key can pay, just as on M3's normal send path.
+      // saved BYOK key can pay, just as on the saved-Chat send path.
       if (!(await spendForReply(ctx.db, userId, payment))) {
         payment = await choosePayment(payer, userId, model);
         if (!(await spendForReply(ctx.db, userId, payment)))

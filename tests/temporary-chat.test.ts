@@ -48,7 +48,7 @@ async function assertSlotsReleased() {
   }
 }
 
-test("streams with M3 settings, spends Credits and cannot write any other Postgres table", async () => {
+test("streams with saved-Chat settings, spends Credits and cannot write any other Postgres table", async () => {
   // Reject every non-Credit write, even one rolled back or later deleted.
   await h.pg.exec(`
     CREATE FUNCTION reject_temporary_write() RETURNS trigger AS $$
