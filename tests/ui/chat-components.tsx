@@ -891,3 +891,67 @@ test("a thumbnail opens a larger view", () =>
       "/api/attachments/img1",
     );
   }));
+const { ModelPicker } = await import("../../components/chat/model-picker");
+test("BYOK users can pick a custom OpenRouter model ID; others are asked for a key", () =>
+  withAnimationFrames(async () => {
+    const picked: string[] = [];
+    let keyAdds = 0;
+    const ui = render(
+      <ModelPicker
+        model="openai/gpt-6-luna"
+        onChange={(id) => picked.push(id)}
+        hasKey
+        addKey={() => {
+          keyAdds++;
+        }}
+      />,
+    );
+    fireEvent.click(ui.getByRole("button", { name: "Choose model" }));
+    const search = ui.getByLabelText("Search models");
+    fireEvent.change(search, { target: { value: "not a model id" } });
+    expect(ui.queryByText(/^Use \S+\/\S+$/)).toBeNull();
+    // A listed model is picked from the catalog, not offered as custom.
+    fireEvent.change(search, { target: { value: "openai/gpt-6-luna" } });
+    expect(ui.queryByText(/^Use \S+\/\S+$/)).toBeNull();
+    fireEvent.change(search, { target: { value: "acme/brand-new:free" } });
+    fireEvent.click(ui.getByText("Use acme/brand-new:free"));
+    expect(picked).toEqual(["acme/brand-new:free"]);
+    expect(keyAdds).toBe(0);
+    ui.rerender(
+      <ModelPicker
+        model="acme/brand-new:free"
+        onChange={() => {}}
+        hasKey
+        addKey={() => {}}
+      />,
+    );
+    expect(ui.getByRole("button", { name: "Choose model" }).textContent).toBe(
+      "acme/brand-new:free",
+    );
+  }));
+test("without a BYOK key a custom model ID shows a hint and opens the key dialog", () =>
+  withAnimationFrames(async () => {
+    const picked: string[] = [];
+    let keyAdds = 0;
+    const ui = render(
+      <ModelPicker
+        model="openai/gpt-6-luna"
+        onChange={(id) => picked.push(id)}
+        hasKey={false}
+        addKey={() => {
+          keyAdds++;
+        }}
+      />,
+    );
+    fireEvent.click(ui.getByRole("button", { name: "Choose model" }));
+    fireEvent.change(ui.getByLabelText("Search models"), {
+      target: { value: "acme/brand-new" },
+    });
+    expect(ui.queryByText(/^Use \S+\/\S+$/)).toBeNull();
+    expect(
+      ui.getByText("Add your OpenRouter key to use a custom model ID"),
+    ).toBeTruthy();
+    fireEvent.click(ui.getByText("Custom model acme/brand-new"));
+    expect(picked).toEqual([]);
+    expect(keyAdds).toBe(1);
+  }));
