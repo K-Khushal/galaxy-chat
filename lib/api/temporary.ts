@@ -67,23 +67,23 @@ export function temporaryMessageRoute(ctx: AppContext, request: Request) {
     const abort = new AbortController();
     let firstToken = false;
     let complete = false;
-    let stopped = false;
     let charged = false;
     let cleanup: Promise<void> | undefined;
     let renewal: ReturnType<typeof setInterval> | undefined;
     let deadline: ReturnType<typeof setTimeout> | undefined;
+    // A Temporary chat cannot be resumed, so a Stop and a dropped connection
+    // look alike: both just abort the request.
     const stop = () => abort.abort();
-    const clientStop = () => {
-      stopped = true;
-      stop();
-    };
     const finish = () => {
       cleanup ??= (async () => {
         clearInterval(renewal);
         clearTimeout(deadline);
-        request.signal.removeEventListener("abort", clientStop);
+        request.signal.removeEventListener("abort", stop);
         try {
-          if (charged && !firstToken && !complete && !stopped)
+          // ADR 0003: a Credit is refunded when no token arrived, however the
+          // request ended; a Reply that began streaming stays charged. This
+          // runs at most once per request.
+          if (charged && !firstToken && !complete)
             await refundCredit(ctx.db, userId);
         } finally {
           await releaseGeneration(ctx.kv, acquired.lease);
@@ -98,8 +98,8 @@ export function temporaryMessageRoute(ctx: AppContext, request: Request) {
         spendForReply(ctx.db, userId, payment),
       );
       charged = payment.source === "credits";
-      request.signal.addEventListener("abort", clientStop, { once: true });
-      if (request.signal.aborted) clientStop();
+      request.signal.addEventListener("abort", stop, { once: true });
+      if (request.signal.aborted) stop();
       renewal = setInterval(() => {
         renewGeneration(ctx.kv, acquired.lease, ctx.timing.lockTtlMs)
           .then((held) => {
@@ -148,7 +148,7 @@ export function temporaryMessageRoute(ctx: AppContext, request: Request) {
         },
         async cancel() {
           cancelled = true;
-          clientStop();
+          stop();
           await finish();
         },
       });

@@ -102,8 +102,10 @@ test("failure after a token keeps the Credit and releases capacity", async () =>
   await assertSlotsReleased();
 });
 
+// A Temporary chat cannot be resumed, so the server cannot tell a Stop from a
+// dropped connection: no token delivered refunds, any token keeps the Credit.
 for (const firstToken of [false, true]) {
-  test(`request abort stops the model and releases capacity (first token: ${firstToken})`, async () => {
+  test(`request abort stops the model and ${firstToken ? "keeps" : "refunds"} the Credit (first token: ${firstToken})`, async () => {
     h.state.script = {
       words: ["kept", "never"],
       delayMs: 1,
@@ -130,22 +132,55 @@ for (const firstToken of [false, true]) {
     abort.abort();
     while (!(await reader.read()).done) {}
     expect(h.state.aborts).toBe(1);
-    expect(await getCredits(h.db, "alice")).toBe(9);
+    expect(await getCredits(h.db, "alice")).toBe(firstToken ? 9 : 10);
     await assertSlotsReleased();
   });
 }
 
-test("cancelling the response body aborts the model and keeps the Credit before first token", async () => {
+for (const firstToken of [false, true]) {
+  test(`cancelling the response body aborts the model and ${firstToken ? "keeps" : "refunds"} the Credit (first token: ${firstToken})`, async () => {
+    h.state.script = {
+      words: ["kept", "never"],
+      delayMs: 1,
+      hangAt: firstToken ? 1 : 0,
+    };
+    const response = await send();
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error("missing stream");
+    let output = "";
+    while (!output.includes(firstToken ? "kept" : "text-start")) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      output += new TextDecoder().decode(chunk.value);
+    }
+    await sleep(10);
+    await reader.cancel();
+    await sleep(10);
+    expect(h.state.aborts).toBe(1);
+    expect(await getCredits(h.db, "alice")).toBe(firstToken ? 9 : 10);
+    await assertSlotsReleased();
+  });
+}
+
+test("abort and cancel together refund a pre-token Credit only once", async () => {
   h.state.script = { words: ["never"], delayMs: 1, hangAt: 0 };
-  const response = await send();
+  const abort = new AbortController();
+  const response = await temporaryMessageRoute(
+    h.ctx,
+    new Request("http://test/temporary", {
+      method: "POST",
+      signal: abort.signal,
+      headers: { "x-test-user": "alice" },
+      body: JSON.stringify({ model: DEFAULT_MODEL_ID, messages: history }),
+    }),
+  );
   const reader = response.body?.getReader();
   if (!reader) throw new Error("missing stream");
   await reader.read();
-  await sleep(10);
+  abort.abort();
   await reader.cancel();
-  await sleep(10);
-  expect(h.state.aborts).toBe(1);
-  expect(await getCredits(h.db, "alice")).toBe(9);
+  await sleep(20);
+  expect(await getCredits(h.db, "alice")).toBe(10);
   await assertSlotsReleased();
 });
 
