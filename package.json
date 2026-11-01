@@ -53,6 +53,7 @@
     "zod": "^4.1.11"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
     "@biomejs/biome": "2.2.0",
     "@electric-sql/pglite": "0.5.10",
     "@electric-sql/pglite-socket": "0.2.13",

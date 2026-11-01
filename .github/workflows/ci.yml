@@ -25,7 +25,7 @@ jobs:
   # Informational until branch protection is deliberately updated.
   e2e:
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -41,9 +41,9 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('bun.lock') }}
       - if: steps.playwright.outputs.cache-hit != 'true'
-        run: bunx playwright install --with-deps chromium
+        run: bunx playwright install --with-deps chromium firefox webkit
       - if: steps.playwright.outputs.cache-hit == 'true'
-        run: bunx playwright install-deps chromium
+        run: bunx playwright install-deps chromium firefox webkit
       - run: sudo apt-get update && sudo apt-get install -y redis-server postgresql
       - run: bun run test:e2e
       - uses: actions/upload-artifact@v4

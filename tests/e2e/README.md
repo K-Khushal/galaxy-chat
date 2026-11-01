@@ -8,8 +8,8 @@ bun run test:e2e
 ```
 
 Playwright builds normal production assets with `next build`, starts a fresh
-migrated local PostgreSQL database on TCP :5544 and a disposable Redis on :6399, then runs
-`next start` on :3008. It owns and stops these processes. No external services
+migrated local PostgreSQL database on TCP :34872 and a disposable Redis on :34873, then runs
+`next start` on :34871. It owns and stops these processes. No external services
 or credentials are needed. Each test signs up a fresh identity with 10 Credits;
 there is no ordering dependency or shared browser state.
 
@@ -42,3 +42,11 @@ CI runs this as a separate informational job (branch protection is unchanged),
 caches Chromium, and retains traces, screenshots and the HTML report on failure.
 Open a failure trace with `bunx playwright show-trace <trace.zip>`.
 Specs use .e2e.ts so Bun's unit-test discovery does not run Playwright tests.
+
+The full matrix runs Chromium, Firefox and WebKit at 1280×800 and 390×844
+(with touch enabled at the smaller viewport). Install all engines with
+`bunx playwright install --with-deps chromium firefox webkit`.
+Use `bun run test:e2e --project=chromium-desktop` for focused diagnosis.
+The suite uses axe-core WCAG A/AA checks on Chat and Settings. Rich-text and
+Interrupted fixtures are selected by explicit Message markers in the mock;
+ordinary Messages keep the original fast Reply.

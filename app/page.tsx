@@ -7,6 +7,7 @@ export default async function Home() {
   if (testE2eEnabled()) {
     return (
       <main>
+        <SignInPanel siteKey="e2e" />
         <form action="/api/test-e2e/sign-in" method="POST">
           <button type="submit">E2E sign in</button>
         </form>
