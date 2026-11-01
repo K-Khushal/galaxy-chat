@@ -1029,7 +1029,7 @@ test("the command palette offers System, Light and Dark themes", async () => {
     fireEvent.click(ui.getByText("Theme: System"));
     expect(themes).toEqual(["dark", "system"]);
   });
-
+});
 test("Reply math keeps KaTeX markup while raw HTML stays sanitized", async () => {
   const { ReplyMarkdown } = await import(
     "../../components/elements/reply-markdown"

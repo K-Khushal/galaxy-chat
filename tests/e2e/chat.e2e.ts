@@ -49,11 +49,7 @@ async function openSidebar(page: Page) {
 }
 
 const violations = new WeakMap<Page, string[]>();
-test("Reply rendering has no CSP violations", async ({ page, browserName }) => {
-  test.fixme(
-    browserName === "firefox",
-    "BUG: Reply rendering attempts eval under nonce CSP in Firefox; components/elements/reply-markdown.tsx:10 (Streamdown).",
-  );
+test("Reply rendering has no CSP violations", async ({ page }) => {
   await send(page, "Check CSP");
   await complete(page);
   expect(violations.get(page)).toEqual([]);
@@ -650,16 +646,10 @@ test("account menu sign-out returns to sign-in", async ({ page, context }) => {
 });
 
 test("KaTeX math retains its rendering markup", async ({ page }) => {
-  test.fixme(
-    true,
-    "BUG: math output loses KaTeX classes/MathML and shows duplicated text; components/elements/reply-markdown.tsx:10 (Streamdown sanitization).",
-  );
   await send(page, "[rich] Render math");
   await complete(page);
-  await expect(
-    page
-      .getByRole("article", { name: "Reply", exact: true })
-      .locator(".katex")
-      .first(),
-  ).toBeVisible();
+  const reply = page.getByRole("article", { name: "Reply", exact: true });
+  await expect(reply.locator(".katex")).toHaveCount(1);
+  await expect(reply.locator(".katex-html")).toBeVisible();
+  await expect(reply.locator(".katex math")).toHaveCount(1);
 });
