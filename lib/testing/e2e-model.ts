@@ -3,12 +3,12 @@ import { MockLanguageModelV4 } from "ai/test";
 import type { LanguageModelFactory } from "@/lib/api/context";
 import { scriptedStream } from "../../tests/support/mock-model";
 
-/** Reuses the M4 mock; slow only when the Message explicitly requests it. */
+/** Explicit Message markers select offline fixtures; ordinary Replies stay fast. */
 export const e2eLanguageModel: LanguageModelFactory = (modelId) =>
   new MockLanguageModelV4({
     modelId,
     supportedUrls: {
-      "image/*": [/^http:\/\/127\.0\.0\.1:3008\/api\/test-e2e\/storage\?/],
+      "image/*": [/^http:\/\/127\.0\.0\.1:34871\/api\/test-e2e\/storage\?/],
     },
     doStream: async (request) => {
       const prompt = JSON.stringify(request.prompt);
@@ -29,15 +29,37 @@ export const e2eLanguageModel: LanguageModelFactory = (modelId) =>
           );
         }
       }
+      if (
+        prompt.includes("[pdf]") &&
+        !prompt.includes("offline PDF astronomy") &&
+        !request.prompt.some(
+          (message) =>
+            message.role === "user" &&
+            message.content.some(
+              (part) =>
+                part.type === "file" && part.mediaType === "application/pdf",
+            ),
+        )
+      )
+        throw new Error("Mock did not receive PDF attachment");
       const slow = JSON.stringify(request.prompt).includes("[slow]");
       return {
         stream: scriptedStream(
           {
-            words: [
-              "A thoughtful Reply. ",
-              ...(slow ? Array(30).fill("Still streaming. ") : []),
-              "Complete.",
-            ],
+            failAt: prompt.includes("[interrupted]") ? 1 : undefined,
+            words: prompt.includes("[rich]")
+              ? [
+                  "## Astronomy\n\n**Stars**\n\n" +
+                    String.fromCharCode(96).repeat(3) +
+                    "js\nconst stars = 3;\n" +
+                    String.fromCharCode(96).repeat(3) +
+                    "\n\n$$E=mc^2$$",
+                ]
+              : [
+                  "A thoughtful Reply. ",
+                  ...(slow ? Array(30).fill("Still streaming. ") : []),
+                  "Complete.",
+                ],
             delayMs: slow ? 150 : 5,
           },
           request.abortSignal,

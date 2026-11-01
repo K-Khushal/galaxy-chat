@@ -46,7 +46,7 @@ const database = Bun.spawn(
     "-h",
     "127.0.0.1",
     "-p",
-    "5544",
+    "34872",
     "-k",
     directory,
     "-F",
@@ -64,7 +64,15 @@ process.on("SIGTERM", cleanup);
 process.on("SIGINT", cleanup);
 for (let attempt = 0; ; attempt++) {
   const ready = Bun.spawn(
-    [`${bindir}/pg_isready`, "-h", "127.0.0.1", "-p", "5544", "-U", "postgres"],
+    [
+      `${bindir}/pg_isready`,
+      "-h",
+      "127.0.0.1",
+      "-p",
+      "34872",
+      "-U",
+      "postgres",
+    ],
     { stdout: "ignore", stderr: "ignore" },
   );
   if ((await ready.exited) === 0) break;
@@ -74,7 +82,7 @@ for (let attempt = 0; ; attempt++) {
   }
   await Bun.sleep(100);
 }
-const databaseUrl = "postgres://postgres@127.0.0.1:5544/postgres";
+const databaseUrl = "postgres://postgres@127.0.0.1:34872/postgres";
 const db = postgres(databaseUrl);
 for (const file of (await readdir("drizzle"))
   .filter((f) => f.endsWith(".sql"))
@@ -82,7 +90,7 @@ for (const file of (await readdir("drizzle"))
   await db.unsafe(await Bun.file(`drizzle/${file}`).text());
 await db.end();
 redis = Bun.spawn(
-  ["redis-server", "--port", "6399", "--save", "", "--appendonly", "no"],
+  ["redis-server", "--port", "34873", "--save", "", "--appendonly", "no"],
   { stdout: "ignore", stderr: "inherit" },
 );
 app = Bun.spawn(
@@ -93,7 +101,7 @@ app = Bun.spawn(
     "-H",
     "127.0.0.1",
     "-p",
-    "3008",
+    "34871",
   ],
   {
     env: {
@@ -101,8 +109,8 @@ app = Bun.spawn(
       NODE_ENV: "test",
       GALAXY_TEST_E2E: "1",
       DATABASE_URL: databaseUrl,
-      REDIS_URL: "redis://127.0.0.1:6399",
-      BETTER_AUTH_URL: "http://127.0.0.1:3008",
+      REDIS_URL: "redis://127.0.0.1:34873",
+      BETTER_AUTH_URL: "http://127.0.0.1:34871",
       BETTER_AUTH_SECRET: "e2e-secret-0000000000000000000000000000",
       CREDIT_IDENTITY_KEY: "e2e-identity-00000000000000000000000000",
       GITHUB_CLIENT_ID: "e2e",
