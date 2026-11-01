@@ -275,7 +275,13 @@ test("Temporary chat streams without saving anything", async ({ page }) => {
 });
 
 test("save Custom instructions and delete account", async ({ page }) => {
+  // Settings now renders its fields on the server; wait for client effects so
+  // hydration cannot replace text filled immediately after navigation.
+  const ready = page.waitForResponse((response) =>
+    response.url().endsWith("/api/credits"),
+  );
   await page.goto("/chat/settings");
+  await ready;
   await page
     .getByLabel("About you", { exact: true })
     .fill("I study astronomy.");
