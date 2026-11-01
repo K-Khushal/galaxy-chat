@@ -49,11 +49,7 @@ async function openSidebar(page: Page) {
 }
 
 const violations = new WeakMap<Page, string[]>();
-test("Reply rendering has no CSP violations", async ({ page, browserName }) => {
-  test.fixme(
-    browserName === "firefox",
-    "BUG: Reply rendering attempts eval under nonce CSP in Firefox; components/elements/reply-markdown.tsx:10 (Streamdown).",
-  );
+test("Reply rendering has no CSP violations", async ({ page }) => {
   await send(page, "Check CSP");
   await complete(page);
   expect(violations.get(page)).toEqual([]);
@@ -87,18 +83,32 @@ test.beforeEach(async ({ page }) => {
   expect(response?.headers()["content-security-policy"]).not.toContain(
     "unsafe-eval",
   );
-  const ready = page.waitForResponse((response) =>
-    response.url().endsWith("/api/credits"),
-  );
-  await page.getByRole("button", { name: "E2E sign in" }).click();
-  await ready;
-  if ((page.viewportSize()?.width ?? 1280) < 768)
-    await page.getByRole("button", { name: "Toggle Sidebar" }).first().click();
-  await expect(
-    page.getByText("10 Credits left", { exact: true }),
-  ).toBeVisible();
-  if ((page.viewportSize()?.width ?? 1280) < 768)
+  // Sign in through the seam directly: a native form submit raced hydration in
+  // WebKit. The sign-in page itself is covered by its own journeys.
+  const signIn = await page.request.post("/api/test-e2e/sign-in", {
+    headers: { origin: "http://127.0.0.1:34871" },
+    maxRedirects: 0,
+  });
+  expect(signIn.status()).toBe(303);
+  await page.goto("/chat");
+  await expect(page).toHaveURL(/\/chat$/);
+  const credits = page.getByText("10 Credits left", { exact: true });
+  const mobile = (page.viewportSize()?.width ?? 1280) < 768;
+  if (mobile) {
+    // The Credits indicator lives in the sidebar drawer, which only mounts
+    // (and fetches Credits) once opened; retry until hydration lets it open.
+    await expect(async () => {
+      if (!(await page.getByRole("dialog").isVisible()))
+        await page
+          .getByRole("button", { name: "Toggle Sidebar" })
+          .first()
+          .click();
+      await expect(credits).toBeVisible({ timeout: 2_000 });
+    }).toPass();
     await page.keyboard.press("Escape");
+  } else {
+    await expect(credits).toBeVisible();
+  }
 });
 
 test("sign in grants 10 Credits and lands on /chat", async ({ page }) => {
@@ -115,7 +125,9 @@ test("send streams and persists the Reply after reload", async ({ page }) => {
   expect(saved.messages).toHaveLength(2);
   await reload(page);
   await expect(
-    page.getByText("Persist this Message", { exact: true }),
+    page
+      .getByRole("article", { name: "Your Message" })
+      .getByText("Persist this Message", { exact: true }),
   ).toBeVisible();
   await expect(
     page.getByText("A thoughtful Reply. Complete.", { exact: true }),
@@ -650,16 +662,10 @@ test("account menu sign-out returns to sign-in", async ({ page, context }) => {
 });
 
 test("KaTeX math retains its rendering markup", async ({ page }) => {
-  test.fixme(
-    true,
-    "BUG: math output loses KaTeX classes/MathML and shows duplicated text; components/elements/reply-markdown.tsx:10 (Streamdown sanitization).",
-  );
   await send(page, "[rich] Render math");
   await complete(page);
-  await expect(
-    page
-      .getByRole("article", { name: "Reply", exact: true })
-      .locator(".katex")
-      .first(),
-  ).toBeVisible();
+  const reply = page.getByRole("article", { name: "Reply", exact: true });
+  await expect(reply.locator(".katex")).toHaveCount(1);
+  await expect(reply.locator(".katex-html")).toBeVisible();
+  await expect(reply.locator(".katex math")).toHaveCount(1);
 });

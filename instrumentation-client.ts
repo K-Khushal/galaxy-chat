@@ -1,5 +1,10 @@
 import * as Sentry from "@sentry/nextjs";
+import { z } from "zod";
 import { scrubEvent } from "./lib/telemetry";
+
+// Zod probes `new Function` for its JIT; under our nonce CSP (no 'unsafe-eval')
+// Firefox logs that probe as a violation. Interpreted parsing needs no eval.
+z.config({ jitless: true });
 
 if (process.env.NEXT_PUBLIC_SENTRY_DSN)
   Sentry.init({

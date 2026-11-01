@@ -1030,3 +1030,19 @@ test("the command palette offers System, Light and Dark themes", async () => {
     expect(themes).toEqual(["dark", "system"]);
   });
 });
+test("Reply math keeps KaTeX markup while raw HTML stays sanitized", async () => {
+  const { ReplyMarkdown } = await import(
+    "../../components/elements/reply-markdown"
+  );
+  const ui = render(
+    <ReplyMarkdown>
+      {
+        '$$E=mc^2$$\n\n<img src="x" onerror="alert(1)"><script>alert(1)</script>'
+      }
+    </ReplyMarkdown>,
+  );
+  expect(ui.container.querySelectorAll(".katex")).toHaveLength(1);
+  expect(ui.container.querySelector(".katex math")).not.toBeNull();
+  expect(ui.container.querySelector("script")).toBeNull();
+  expect(ui.container.innerHTML).not.toContain("onerror");
+});
