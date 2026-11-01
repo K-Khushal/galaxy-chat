@@ -1,3 +1,4 @@
+import "server-only";
 import { createHmac } from "node:crypto";
 import { and, eq, gt, inArray, sql } from "drizzle-orm";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";

@@ -1,3 +1,4 @@
+import "server-only";
 import type { LanguageModel } from "ai";
 import type { ResumableStreamContext } from "resumable-stream";
 import type { ObjectStorage } from "@/lib/attachments/storage";

@@ -1,3 +1,4 @@
+import "server-only";
 import * as Sentry from "@sentry/nextjs";
 import { log } from "@/lib/logger";
 export class AppError extends Error {
