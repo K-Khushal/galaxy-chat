@@ -8,10 +8,10 @@ import {
   Shield,
   Sparkles,
 } from "lucide-react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { type ReactNode, useState } from "react";
-import { SearchDialog } from "@/components/shell/search-dialog";
+import { type ReactNode, useEffect, useState } from "react";
 import {
   Sidebar,
   SidebarContent,
@@ -26,6 +26,13 @@ import {
   SidebarRail,
   useSidebar,
 } from "@/components/ui/sidebar";
+
+// The command palette (cmdk) loads the first time it is wanted.
+const loadSearchDialog = () => import("@/components/shell/search-dialog");
+const SearchDialog = dynamic(
+  () => loadSearchDialog().then((m) => m.SearchDialog),
+  { ssr: false },
+);
 
 /**
  * The sidebar frame. `footer` is the slot for the account menu and the
@@ -42,6 +49,19 @@ export function AppSidebar({
   const pathname = usePathname();
   const { toggleSidebar, state } = useSidebar();
   const [searchOpen, setSearchOpen] = useState(false);
+  // Stays mounted after the first open so it can animate closed.
+  const [searchWanted, setSearchWanted] = useState(false);
+  useEffect(() => {
+    const listener = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() === "k" && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault();
+        setSearchWanted(true);
+        setSearchOpen((open) => !open);
+      }
+    };
+    document.addEventListener("keydown", listener);
+    return () => document.removeEventListener("keydown", listener);
+  }, []);
 
   return (
     <>
@@ -49,7 +69,7 @@ export function AppSidebar({
         <SidebarHeader className="flex-row items-center justify-between gap-2 p-2 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:justify-start">
           <Link
             href="/chat"
-            className="flex h-8 min-w-0 items-center gap-2 rounded-lg px-2 font-medium tracking-tight outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+            className="flex h-8 min-w-0 items-center gap-2 rounded-lg px-2 pointer-coarse:min-h-11 font-medium tracking-tight outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring"
           >
             <Sparkles className="size-4 shrink-0 text-sidebar-primary" />
             <span className="truncate group-data-[collapsible=icon]:sr-only">
@@ -97,7 +117,12 @@ export function AppSidebar({
                 <SidebarMenuItem>
                   <SidebarMenuButton
                     tooltip="Search"
-                    onClick={() => setSearchOpen(true)}
+                    onPointerEnter={() => void loadSearchDialog()}
+                    onFocus={() => void loadSearchDialog()}
+                    onClick={() => {
+                      setSearchWanted(true);
+                      setSearchOpen(true);
+                    }}
                   >
                     <Search />
                     <span>Search</span>
@@ -135,7 +160,9 @@ export function AppSidebar({
         </SidebarFooter>
         <SidebarRail />
       </Sidebar>
-      <SearchDialog open={searchOpen} onOpenChange={setSearchOpen} />
+      {searchWanted && (
+        <SearchDialog open={searchOpen} onOpenChange={setSearchOpen} />
+      )}
     </>
   );
 }

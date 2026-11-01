@@ -1,6 +1,7 @@
 "use client";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { preloadResponse } from "@/components/elements/preload-response";
 import { DEFAULT_MODEL_ID } from "@/lib/models";
 import { api, errorCopy } from "./api";
 import { ByokDialog } from "./byok-dialog";
@@ -9,6 +10,11 @@ import { ModelPicker } from "./model-picker";
 import { useByokKey } from "./use-byok-key";
 export function NewChat() {
   const router = useRouter();
+  useEffect(() => {
+    // Whoever starts typing is about to read a Reply, so fetch the renderer now.
+    document.addEventListener("focusin", preloadResponse, { once: true });
+    return () => document.removeEventListener("focusin", preloadResponse);
+  }, []);
   const [model, setModel] = useState(DEFAULT_MODEL_ID);
   const { hasKey, setHasKey } = useByokKey();
   const [keyOpen, setKeyOpen] = useState(false);

@@ -22,7 +22,7 @@ for (const key of [
     configurable: true,
     writable: true,
   });
-const { render, fireEvent, cleanup, act } = await import(
+const { render, fireEvent, cleanup, act, waitFor } = await import(
   "@testing-library/react"
 );
 const { Composer } = await import("../../components/chat/composer");
@@ -314,7 +314,8 @@ for (const code of [
         ok = await result.current.send("Keep my text");
       });
       expect(ok).toBe(false);
-      expect(result.current.messages).toEqual([]);
+      // Message updates reach React at most every 50ms while streaming.
+      await waitFor(() => expect(result.current.messages).toEqual([]));
       expect(result.current.error).toBeTruthy();
     } finally {
       globalThis.fetch = original;

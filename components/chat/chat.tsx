@@ -1,6 +1,9 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import type { UIMessage } from "ai";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { preloadResponse } from "@/components/elements/preload-response";
 import { Button } from "@/components/ui/button";
+import type { ChatMessage } from "@/lib/chat/store";
 import {
   api,
   type ChatView,
@@ -17,6 +20,50 @@ import { MessageList } from "./message-list";
 import { ModelPicker } from "./model-picker";
 import { useByokKey } from "./use-byok-key";
 import { useGalaxyChat } from "./use-galaxy-chat";
+
+type Actions = Pick<
+  ReturnType<typeof useGalaxyChat>,
+  "edit" | "regenerate" | "continueReply" | "switchVersion"
+>;
+type RowProps = {
+  message: UIMessage;
+  saved: ChatMessage | undefined;
+  parentId: string | null;
+  model: string;
+  busy: boolean;
+  streaming: boolean;
+  actions: Actions;
+};
+
+/**
+ * One Message of the list. Streaming replaces only the last Message object, so
+ * every other row keeps the same props and skips rendering for each token.
+ */
+const MessageRow = memo(function MessageRow({
+  message,
+  saved,
+  parentId,
+  model,
+  busy,
+  streaming,
+  actions,
+}: RowProps) {
+  const row = useMemo(
+    () => chatMessage(message, saved, parentId, model),
+    [message, saved, parentId, model],
+  );
+  return (
+    <Message
+      message={row}
+      busy={busy}
+      streaming={streaming}
+      onEdit={(text) => actions.edit(row, text)}
+      onRegenerate={() => void actions.regenerate(row)}
+      onContinue={() => void actions.continueReply(row)}
+      onSwitch={(id) => void actions.switchVersion(id)}
+    />
+  );
+});
 
 /** Files uploaded on the new-Chat page, carried over with its first Message. */
 function transferredAttachments(chatId: string): StoredAttachment[] {
@@ -41,6 +88,27 @@ export function Chat({ initial }: { initial: ChatView }) {
       : transferredAttachments(initial.chat.id),
   );
   const chat = useGalaxyChat(initial);
+  // Rows get these once, so a token that changes `chat` does not re-render them.
+  const latest = useRef(chat);
+  latest.current = chat;
+  const actions = useMemo<Actions>(
+    () => ({
+      edit: (row, text) => latest.current.edit(row, text),
+      regenerate: (row) => latest.current.regenerate(row),
+      continueReply: (row) => latest.current.continueReply(row),
+      switchVersion: (id) => latest.current.switchVersion(id),
+    }),
+    [],
+  );
+  const saved = useMemo(
+    () => new Map(chat.view.messages.map((m) => [m.id, m])),
+    [chat.view.messages],
+  );
+  const empty = chat.messages.length === 0;
+  useEffect(() => {
+    // A Chat with no Messages is about to get its first Reply.
+    if (empty) preloadResponse();
+  }, [empty]);
   const { hasKey, setHasKey } = useByokKey();
   const [keyOpen, setKeyOpen] = useState(false);
   const [announcement, setAnnouncement] = useState("");
@@ -73,36 +141,29 @@ export function Chat({ initial }: { initial: ChatView }) {
   return (
     <>
       <MessageList>
-        {!chat.messages.length && (
+        {chat.messages.length ? (
+          <h1 className="sr-only">{initial.chat.title ?? "Chat"}</h1>
+        ) : (
           <h1 className="pt-[20vh] pb-6 text-center text-3xl font-medium tracking-tight">
             What can I help with?
           </h1>
         )}
-        {chat.messages.map((message, index) => {
-          const saved = chat.view.messages.find((m) => m.id === message.id);
-          const row = chatMessage(
-            message,
-            saved,
-            chat.messages[index - 1]?.id ?? null,
-            chat.model,
-          );
-          return (
-            <Message
-              key={`${index}-${message.role}`}
-              message={row}
-              busy={chat.busy}
-              streaming={
-                chat.busy &&
-                index === chat.messages.length - 1 &&
-                message.role === "assistant"
-              }
-              onEdit={(text) => chat.edit(row, text)}
-              onRegenerate={() => void chat.regenerate(row)}
-              onContinue={() => void chat.continueReply(row)}
-              onSwitch={(id) => void chat.switchVersion(id)}
-            />
-          );
-        })}
+        {chat.messages.map((message, index) => (
+          <MessageRow
+            key={`${index}-${message.role}`}
+            message={message}
+            saved={saved.get(message.id)}
+            parentId={chat.messages[index - 1]?.id ?? null}
+            model={chat.model}
+            busy={chat.busy}
+            streaming={
+              chat.busy &&
+              index === chat.messages.length - 1 &&
+              message.role === "assistant"
+            }
+            actions={actions}
+          />
+        ))}
       </MessageList>
       <output className="sr-only" aria-live="polite">
         {announcement}

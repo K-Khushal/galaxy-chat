@@ -19,7 +19,14 @@ export function CreditsIndicator() {
       window.removeEventListener("galaxy-account-changed", refresh);
     };
   }, []);
-  if (!data) return null;
+  // Holds the line's height so the footer does not jump when the count arrives.
+  if (!data)
+    return (
+      <p
+        aria-hidden="true"
+        className="h-4 px-2 group-data-[collapsible=icon]:hidden"
+      />
+    );
   return <CreditsStatus data={data} />;
 }
 
