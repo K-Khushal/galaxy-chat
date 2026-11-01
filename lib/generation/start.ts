@@ -20,6 +20,7 @@ import {
   type MessageRow,
 } from "@/lib/chat/store";
 import { pathTo } from "@/lib/chat/tree";
+import { isUniqueViolation } from "@/lib/db/errors";
 import { chat, message, user } from "@/lib/db/schema";
 import { AppError, logErrorId } from "@/lib/errors";
 import {
@@ -171,10 +172,6 @@ function firstUserText(history: Plan["history"]): string {
 /** The last credit went to another Generation between choosing and spending. */
 class CreditsGone extends Error {}
 
-const isDuplicate = (error: unknown) =>
-  error instanceof Error &&
-  /duplicate key|unique/i.test(`${error.message} ${error.cause ?? ""}`);
-
 /**
  * Starts a Generation in a Chat the caller owns: takes the locks, then in one
  * transaction spends the credit (if Credits pay) and records the Messages, so
@@ -251,7 +248,7 @@ export async function startGeneration(
   } catch (error) {
     // Nothing was spent or stored: the transaction rolled back.
     await release();
-    if (isDuplicate(error)) throw new AppError("message_exists", 409);
+    if (isUniqueViolation(error)) throw new AppError("message_exists", 409);
     throw error;
   }
 
