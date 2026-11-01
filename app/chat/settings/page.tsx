@@ -28,7 +28,10 @@ export default async function Page() {
     settings.ok && chats.ok
       ? {
           data: (await settings.json()) as Data,
-          archived: ((await chats.json()) as { chats: ArchivedChat[]; nextCursor: string | null }),
+          archived: (await chats.json()) as {
+            chats: ArchivedChat[];
+            nextCursor: string | null;
+          },
         }
       : undefined;
   return <SettingsPage initial={initial} />;

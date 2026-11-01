@@ -41,10 +41,18 @@ function LocalDate({ value }: { value: string }) {
   return text;
 }
 
-export function SettingsPage({ initial }: { initial?: { data: Data; archived: ArchivedPage } }) {
+export function SettingsPage({
+  initial,
+}: {
+  initial?: { data: Data; archived: ArchivedPage };
+}) {
   const [data, setData] = useState<Data | undefined>(initial?.data);
-  const [archived, setArchived] = useState<ArchivedChat[]>(initial?.archived.chats ?? []);
-  const [archivedCursor, setArchivedCursor] = useState<string | null>(initial?.archived.nextCursor ?? null);
+  const [archived, setArchived] = useState<ArchivedChat[]>(
+    initial?.archived.chats ?? [],
+  );
+  const [archivedCursor, setArchivedCursor] = useState<string | null>(
+    initial?.archived.nextCursor ?? null,
+  );
   const hasInitial = initial !== undefined;
   const [keyOpen, setKeyOpen] = useState(false);
   const [confirmation, setConfirmation] = useState("");

@@ -70,7 +70,6 @@ for (const viewport of VIEWPORTS) {
     test.use({
       viewport: { width: viewport.width, height: viewport.height },
       hasTouch: viewport.touch,
-      isMobile: viewport.touch,
     });
 
     test("public pages have no horizontal scroll", async ({ page }) => {

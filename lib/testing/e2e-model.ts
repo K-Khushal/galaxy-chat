@@ -69,19 +69,18 @@ export const e2eLanguageModel: LanguageModelFactory = (modelId) =>
                     "Complete.",
                   ]
                 : prompt.includes("[rich]")
-              ? [
-                  "## Astronomy\n\n**Stars**\n\n" +
-                    String.fromCharCode(96).repeat(3) +
-                    "js\nconst stars = 3;\n" +
-                    String.fromCharCode(96).repeat(3) +
-                    "\n\n$$E=mc^2$$",
-                ]
-
-                : [
-                    "A thoughtful Reply. ",
-                    ...(slow ? Array(30).fill("Still streaming. ") : []),
-                    "Complete.",
-                  ],
+                  ? [
+                      "## Astronomy\n\n**Stars**\n\n" +
+                        String.fromCharCode(96).repeat(3) +
+                        "js\nconst stars = 3;\n" +
+                        String.fromCharCode(96).repeat(3) +
+                        "\n\n$$E=mc^2$$",
+                    ]
+                  : [
+                      "A thoughtful Reply. ",
+                      ...(slow ? Array(30).fill("Still streaming. ") : []),
+                      "Complete.",
+                    ],
             delayMs: slow ? 150 : long ? 8 : 5,
           },
           request.abortSignal,
