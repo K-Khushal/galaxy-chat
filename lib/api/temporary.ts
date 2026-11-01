@@ -66,7 +66,6 @@ export function temporaryMessageRoute(ctx: AppContext, request: Request) {
 
     const abort = new AbortController();
     let firstToken = false;
-    let complete = false;
     let charged = false;
     let cleanup: Promise<void> | undefined;
     let renewal: ReturnType<typeof setInterval> | undefined;
@@ -83,8 +82,7 @@ export function temporaryMessageRoute(ctx: AppContext, request: Request) {
           // ADR 0003: a Credit is refunded when no token arrived, however the
           // request ended; a Reply that began streaming stays charged. This
           // runs at most once per request.
-          if (charged && !firstToken && !complete)
-            await refundCredit(ctx.db, userId);
+          if (charged && !firstToken) await refundCredit(ctx.db, userId);
         } finally {
           await releaseGeneration(ctx.kv, acquired.lease);
         }
@@ -131,8 +129,6 @@ export function temporaryMessageRoute(ctx: AppContext, request: Request) {
                 chunk.delta.length
               )
                 firstToken = true;
-              if (chunk.type === "finish" && chunk.finishReason !== "error")
-                complete = true;
               if (!cancelled) controller.enqueue(chunk);
             }
           } catch {

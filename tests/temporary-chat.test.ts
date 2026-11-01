@@ -95,6 +95,13 @@ test("charges before streaming and refunds exactly once on failure before the fi
   await assertSlotsReleased();
 });
 
+test("a successful Reply with no tokens refunds the Credit", async () => {
+  h.state.script = { words: [], delayMs: 1 };
+  await (await send()).text();
+  expect(await getCredits(h.db, "alice")).toBe(10);
+  await assertSlotsReleased();
+});
+
 test("failure after a token keeps the Credit and releases capacity", async () => {
   h.state.script = { words: ["kept", "never"], delayMs: 1, failAt: 1 };
   await (await send()).text();

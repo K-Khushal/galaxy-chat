@@ -987,6 +987,14 @@ test("Settings lists archived Chats a page at a time with Load more", async () =
       "/api/chats?archived=true&limit=50",
       "/api/chats?archived=true&limit=50&cursor=c2",
     ]);
+    // Restoring a Chat keeps every page already loaded.
+    fireEvent.click(ui.getAllByRole("button", { name: "Unarchive" })[0]);
+    await act(() => new Promise((resolve) => setTimeout(resolve, 100)));
+    expect(ui.queryByText("Archived 1")).toBeNull();
+    expect(ui.getByText("Archived 3")).toBeTruthy();
+    expect(
+      requested.filter((url) => url.includes("archived=true")),
+    ).toHaveLength(2);
   } finally {
     globalThis.fetch = original;
   }

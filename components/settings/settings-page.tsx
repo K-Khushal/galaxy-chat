@@ -29,8 +29,8 @@ type Data = {
 type ArchivedChat = { id: string; title: string | null };
 type ArchivedPage = { chats: ArchivedChat[]; nextCursor: string | null };
 const ARCHIVED_PAGE = 50;
-const archivedUrl = (limit: number, cursor?: string) =>
-  `/api/chats?archived=true&limit=${Math.min(limit, 500)}${
+const archivedUrl = (cursor?: string) =>
+  `/api/chats?archived=true&limit=${ARCHIVED_PAGE}${
     cursor ? `&cursor=${cursor}` : ""
   }`;
 
@@ -42,23 +42,29 @@ export function SettingsPage() {
   const [confirmation, setConfirmation] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
-  // Reloads from the top as far as the User had loaded, so a restored or
-  // deleted Chat never leaves a stale cursor behind.
-  const refresh = useCallback(async (loaded = ARCHIVED_PAGE) => {
+  const refresh = useCallback(async () => {
     const [settings, chats] = await Promise.all([
       api<Data>("/api/settings"),
-      api<ArchivedPage>(archivedUrl(Math.max(loaded, ARCHIVED_PAGE))),
+      api<ArchivedPage>(archivedUrl()),
     ]);
     setData(settings);
     setArchived(chats.chats);
     setArchivedCursor(chats.nextCursor);
     window.dispatchEvent(new Event("galaxy-account-changed"));
   }, []);
+  const refreshSettings = async () => {
+    setData(await api<Data>("/api/settings"));
+    window.dispatchEvent(new Event("galaxy-account-changed"));
+  };
+  // The cursor marks the last loaded Chat, so dropping a restored or deleted
+  // Chat locally keeps every loaded page and the cursor valid.
+  async function removeArchived(id: string) {
+    setArchived((current) => current.filter((chat) => chat.id !== id));
+    await refreshSettings();
+  }
   async function loadMore() {
     if (!archivedCursor) return;
-    const next = await api<ArchivedPage>(
-      archivedUrl(ARCHIVED_PAGE, archivedCursor),
-    );
+    const next = await api<ArchivedPage>(archivedUrl(archivedCursor));
     setArchived((current) => [...current, ...next.chats]);
     setArchivedCursor(next.nextCursor);
   }
@@ -181,7 +187,7 @@ export function SettingsPage() {
                       onClick={() =>
                         void act(async () => {
                           await api("/api/byok", {}, "DELETE");
-                          await refresh(archived.length);
+                          await refreshSettings();
                         }, "Key removed.")
                       }
                     >
@@ -259,7 +265,7 @@ export function SettingsPage() {
                           { archived: false },
                           "PATCH",
                         );
-                        await refresh(archived.length);
+                        await removeArchived(chat.id);
                       }, "Chat restored.")
                     }
                   >
@@ -271,7 +277,7 @@ export function SettingsPage() {
                     onClick={() =>
                       void act(async () => {
                         await api(`/api/chats/${chat.id}`, {}, "DELETE");
-                        await refresh(archived.length);
+                        await removeArchived(chat.id);
                       }, "Chat deleted.")
                     }
                   >
