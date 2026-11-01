@@ -1,7 +1,7 @@
 import type { AttachmentView } from "@/lib/attachments/rules";
 
 /** What the browser keeps of an Attachment once it is uploaded and verified. */
-export type UploadedAttachment = Pick<
+export type StoredAttachment = Pick<
   AttachmentView,
   "id" | "filename" | "kind" | "contentType" | "size"
 >;
@@ -9,7 +9,7 @@ export type UploadedAttachment = Pick<
 export type Uploader = (
   file: File,
   options: { onProgress: (fraction: number) => void; signal: AbortSignal },
-) => Promise<UploadedAttachment>;
+) => Promise<StoredAttachment>;
 
 async function failure(response: Response): Promise<Error> {
   const data = await response.json().catch(() => ({}));
@@ -61,7 +61,7 @@ export const uploadAttachment: Uploader = async (
   });
   if (!presign.ok) throw await failure(presign);
   const { attachment, upload } = (await presign.json()) as {
-    attachment: UploadedAttachment;
+    attachment: StoredAttachment;
     upload: { url: string; headers: Record<string, string> };
   };
   try {
@@ -71,7 +71,7 @@ export const uploadAttachment: Uploader = async (
       signal,
     });
     if (!confirm.ok) throw await failure(confirm);
-    return ((await confirm.json()) as { attachment: UploadedAttachment })
+    return ((await confirm.json()) as { attachment: StoredAttachment })
       .attachment;
   } catch (error) {
     // Do not leave a half-made file behind.

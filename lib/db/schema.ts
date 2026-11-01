@@ -65,8 +65,11 @@ export const verification = pgTable("verification", {
 
 export const authSchema = { user, session, account, verification };
 
-/** Credits (ADR 0003). Mirrors drizzle/0001_credits.sql. */
-export const creditBalance = pgTable("credit_balance", {
+/**
+ * A User's Credits (ADR 0003). The SQL table keeps its original name,
+ * `credit_balance`: renaming it would need a migration for no behaviour change.
+ */
+export const creditAccount = pgTable("credit_balance", {
   userId: text("user_id")
     .primaryKey()
     .references(() => user.id, { onDelete: "cascade" }),

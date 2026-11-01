@@ -8,7 +8,7 @@ import {
 } from "@/lib/attachments/rules";
 import {
   removeAttachment,
-  type UploadedAttachment,
+  type StoredAttachment,
   type Uploader,
   uploadAttachment,
 } from "./attachment-upload";
@@ -25,7 +25,7 @@ export type DraftAttachment = {
   /** An object URL of the file, or its saved URL, for image thumbnails. */
   preview: string | null;
   /** Set once uploaded and verified. */
-  uploaded: UploadedAttachment | null;
+  uploaded: StoredAttachment | null;
   error: string | null;
 };
 
@@ -47,7 +47,7 @@ function release(item: DraftAttachment) {
 }
 
 /** Restores files already uploaded, e.g. carried over from a new Chat. */
-function savedAttachment(saved: UploadedAttachment): DraftAttachment {
+function savedAttachment(saved: StoredAttachment): DraftAttachment {
   return {
     key: `saved-${saved.id}`,
     name: saved.filename,
@@ -69,7 +69,7 @@ export function useAttachments({
 }: {
   support: ModelSupport;
   upload?: Uploader;
-  initial?: UploadedAttachment[];
+  initial?: StoredAttachment[];
 }) {
   const [items, setItems] = useState<DraftAttachment[]>(() =>
     initial.map(savedAttachment),

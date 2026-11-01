@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { attachmentIdFromUrl, attachmentUrl } from "@/lib/attachments/rules";
 import type { ChatMessage } from "@/lib/chat/store";
 import { api, type ChatView } from "./api";
-import type { UploadedAttachment } from "./attachment-upload";
+import type { StoredAttachment } from "./attachment-upload";
 
 type FilePart = {
   type: "file";
@@ -14,7 +14,7 @@ type FilePart = {
   url: string;
 };
 
-const fileParts = (files: UploadedAttachment[]): FilePart[] =>
+const fileParts = (files: StoredAttachment[]): FilePart[] =>
   files.map((file) => ({
     type: "file",
     mediaType: file.contentType,
@@ -154,7 +154,7 @@ export function useGalaxyChat(initial: ChatView) {
     setModel,
     busy,
     error: actionError ?? chat.error,
-    send: (text: string, files: UploadedAttachment[] = []) =>
+    send: (text: string, files: StoredAttachment[] = []) =>
       perform(
         {
           trigger: "submit-message",

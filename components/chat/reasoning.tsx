@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Response } from "@/components/elements/response";
+import { ReplyMarkdown } from "@/components/elements/reply-markdown";
 export function Reasoning({
   text,
   thinking,
@@ -28,7 +28,7 @@ export function Reasoning({
             : "Thought process"}
       </summary>
       <div className="mt-2 border-l pl-4">
-        <Response>{text}</Response>
+        <ReplyMarkdown>{text}</ReplyMarkdown>
       </div>
     </details>
   );
