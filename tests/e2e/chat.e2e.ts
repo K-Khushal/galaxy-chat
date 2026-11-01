@@ -118,7 +118,9 @@ test("send streams and persists the Reply after reload", async ({ page }) => {
   expect(saved.messages).toHaveLength(2);
   await reload(page);
   await expect(
-    page.getByText("Persist this Message", { exact: true }),
+    page
+      .getByRole("article", { name: "Your Message" })
+      .getByText("Persist this Message", { exact: true }),
   ).toBeVisible();
   await expect(
     page.getByText("A thoughtful Reply. Complete.", { exact: true }),
