@@ -83,7 +83,14 @@ test.beforeEach(async ({ page }) => {
   expect(response?.headers()["content-security-policy"]).not.toContain(
     "unsafe-eval",
   );
-  await page.getByRole("button", { name: "E2E sign in" }).click();
+  // Sign in through the seam directly: a native form submit raced hydration in
+  // WebKit. The sign-in page itself is covered by its own journeys.
+  const signIn = await page.request.post("/api/test-e2e/sign-in", {
+    headers: { origin: "http://127.0.0.1:34871" },
+    maxRedirects: 0,
+  });
+  expect(signIn.status()).toBe(303);
+  await page.goto("/chat");
   await expect(page).toHaveURL(/\/chat$/);
   const credits = page.getByText("10 Credits left", { exact: true });
   const mobile = (page.viewportSize()?.width ?? 1280) < 768;
