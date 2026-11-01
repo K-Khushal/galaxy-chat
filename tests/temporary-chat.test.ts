@@ -188,7 +188,7 @@ test("payment errors, authentication, limits and history validation", async () =
 test("shares the three-slot limit with saved Chats", async () => {
   await assertSlotsReleased(); // Fills all three shared slots.
   const response = await send();
-  expect(response.status).toBe(409);
+  expect(response.status).toBe(429);
   expect(await response.json()).toEqual({ error: "too_many_generations" });
   expect(await getCredits(h.db, "alice")).toBe(10);
 });

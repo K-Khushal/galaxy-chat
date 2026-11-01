@@ -9,6 +9,7 @@ import { refundCredit } from "@/lib/credits";
 import { AppError } from "@/lib/errors";
 import {
   acquireGeneration,
+  lockError,
   releaseGeneration,
   renewGeneration,
 } from "@/lib/generation/locks";
@@ -62,7 +63,7 @@ export function temporaryMessageRoute(ctx: AppContext, request: Request) {
       },
       ctx.timing.lockTtlMs,
     );
-    if (!acquired.ok) throw new AppError(acquired.error, 409);
+    if (!acquired.ok) throw lockError(acquired.error);
 
     const abort = new AbortController();
     let firstToken = false;

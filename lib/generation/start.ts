@@ -25,6 +25,7 @@ import { AppError, logErrorId } from "@/lib/errors";
 import {
   acquireGeneration,
   isStopRequested,
+  lockError,
   releaseGeneration,
 } from "@/lib/generation/locks";
 import {
@@ -229,12 +230,7 @@ export async function startGeneration(
     },
     ctx.timing.lockTtlMs,
   );
-  if (!acquired.ok) {
-    throw new AppError(
-      acquired.error,
-      acquired.error === "generation_in_progress" ? 409 : 429,
-    );
-  }
+  if (!acquired.ok) throw lockError(acquired.error);
   const { lease } = acquired;
   const release = () =>
     releaseGeneration(ctx.kv, lease).catch(() =>

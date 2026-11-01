@@ -1,4 +1,5 @@
 import "server-only";
+import { AppError } from "@/lib/errors";
 import type { Kv } from "@/lib/redis";
 
 /**
@@ -33,6 +34,13 @@ const stopKey = (generationId: string) =>
 export type AcquireResult =
   | { ok: true; lease: GenerationLease }
   | { ok: false; error: "generation_in_progress" | "too_many_generations" };
+
+/** The API error for a refused lock: 409 for a busy Chat, 429 for the User's limit. */
+export function lockError(
+  error: Extract<AcquireResult, { ok: false }>["error"],
+): AppError {
+  return new AppError(error, error === "generation_in_progress" ? 409 : 429);
+}
 
 /** Takes the Chat's lock, then one of the User's Generation slots. */
 export async function acquireGeneration(
