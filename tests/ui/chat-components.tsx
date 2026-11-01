@@ -1011,10 +1011,7 @@ test("the command palette offers System, Light and Dark themes", async () => {
   Element.prototype.scrollIntoView = () => {};
   const { SearchDialog } = await import("../../components/shell/search-dialog");
   await withAnimationFrames(async () => {
-    let open = true;
-    const ui = render(
-      <SearchDialog open={open} onOpenChange={(next) => (open = next)} />,
-    );
+    const ui = render(<SearchDialog open onOpenChange={() => {}} />);
     const input = ui.getByPlaceholderText("Search chats or choose an action");
     fireEvent.change(input, { target: { value: "theme" } });
     for (const label of ["Theme: System", "Theme: Light", "Theme: Dark"])
