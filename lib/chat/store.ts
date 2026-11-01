@@ -74,14 +74,44 @@ export async function createChat(
   return row;
 }
 
-/** Sidebar and Archived lists show at most 500 Chats; full history remains searchable. */
-export function listChats(db: Db, userId: string, archived: boolean) {
-  return db
+export const MAX_CHAT_PAGE = 500;
+
+/**
+ * One page of a User's Chats, pinned then newest first. The sidebar takes the
+ * first 500 (full history remains searchable); the Archived view pages on with
+ * `cursor`, the ID of the last Chat it has. Null when the cursor is not one of
+ * the User's Chats. `nextCursor` is null on the last page.
+ */
+export async function listChats(
+  db: Db,
+  userId: string,
+  archived: boolean,
+  page: { limit?: number; cursor?: string } = {},
+): Promise<{ rows: ChatRow[]; nextCursor: string | null } | null> {
+  const limit = page.limit ?? MAX_CHAT_PAGE;
+  // Compared against the cursor's own row, not a serialised timestamp, so
+  // microsecond ties cannot skip or repeat a Chat.
+  const after = page.cursor
+    ? sql`(${chat.pinned}, ${chat.updatedAt}, ${chat.id}) < (
+        select pinned, updated_at, id from chat
+        where id = ${page.cursor} and user_id = ${userId}
+      )`
+    : undefined;
+  if (page.cursor && !(await getOwnedChat(db, userId, page.cursor))) {
+    return null;
+  }
+  const rows = await db
     .select()
     .from(chat)
-    .where(and(eq(chat.userId, userId), eq(chat.archived, archived)))
+    .where(and(eq(chat.userId, userId), eq(chat.archived, archived), after))
     .orderBy(desc(chat.pinned), desc(chat.updatedAt), desc(chat.id))
-    .limit(500);
+    .limit(limit + 1);
+  const more = rows.length > limit;
+  const pageRows = rows.slice(0, limit);
+  return {
+    rows: pageRows,
+    nextCursor: more ? (pageRows.at(-1)?.id ?? null) : null,
+  };
 }
 
 /** The Chat when `userId` owns it; null otherwise, so callers answer 404. */

@@ -2,7 +2,7 @@
 import { Pencil } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
-import { Response } from "@/components/elements/response";
+import { ReplyMarkdown } from "@/components/elements/reply-markdown";
 import { Button } from "@/components/ui/button";
 import type { ChatMessage } from "@/lib/chat/store";
 import { textOf } from "./api";
@@ -121,7 +121,9 @@ export function Message({
           {user ? (
             textOf(message)
           ) : (
-            <Response isAnimating={streaming}>{textOf(message)}</Response>
+            <ReplyMarkdown isAnimating={streaming}>
+              {textOf(message)}
+            </ReplyMarkdown>
           )}
           {streaming && (
             <span

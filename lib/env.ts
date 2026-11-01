@@ -118,7 +118,7 @@ const platformKeySchema = z
   .object({ OPENROUTER_API_KEY: required("OPENROUTER_API_KEY") })
   .transform((value) => value.OPENROUTER_API_KEY);
 
-// Cloudflare R2 through its S3 API: Attachments (M6).
+// Cloudflare R2 through its S3 API: Attachments.
 const storageSchema = z.object({
   R2_ACCOUNT_ID: required("R2_ACCOUNT_ID"),
   R2_ACCESS_KEY_ID: required("R2_ACCESS_KEY_ID"),

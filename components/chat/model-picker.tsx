@@ -9,7 +9,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { MODELS } from "@/lib/models";
+import { isCustomModelId, MODELS } from "@/lib/models";
 export function ModelPicker({
   model,
   onChange,
@@ -25,9 +25,17 @@ export function ModelPicker({
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
+  const query = search.trim().toLowerCase();
   const matches = MODELS.filter((m) =>
-    `${m.provider} ${m.label}`.toLowerCase().includes(search.toLowerCase()),
+    `${m.provider} ${m.label} ${m.id}`.toLowerCase().includes(query),
   );
+  // An OpenRouter ID that is not in the catalog; the server accepts it for
+  // BYOK use only (resolveModel).
+  const customId =
+    isCustomModelId(search.trim()) &&
+    !MODELS.some((m) => m.id === search.trim())
+      ? search.trim()
+      : null;
   return (
     <>
       <Button
@@ -49,7 +57,9 @@ export function ModelPicker({
           </DialogDescription>
           <Input
             aria-label="Search models"
-            placeholder="Search models"
+            placeholder={
+              hasKey ? "Search models or enter a model ID" : "Search models"
+            }
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -99,7 +109,28 @@ export function ModelPicker({
                   })}
               </section>
             ))}
-            {!matches.length && (
+            {customId && (
+              <button
+                type="button"
+                className="flex w-full flex-col gap-1 rounded-lg px-2 py-2 text-left outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+                onClick={() => {
+                  setOpen(false);
+                  if (hasKey) onChange(customId);
+                  else addKey();
+                }}
+              >
+                <span className="flex w-full items-center justify-between break-all">
+                  {hasKey ? `Use ${customId}` : `Custom model ${customId}`}
+                  {!hasKey && <Lock className="size-3 shrink-0" />}
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {hasKey
+                    ? "Billed to your OpenRouter key"
+                    : "Add your OpenRouter key to use a custom model ID"}
+                </span>
+              </button>
+            )}
+            {!matches.length && !customId && (
               <p className="p-2 text-muted-foreground">No models found.</p>
             )}
           </div>

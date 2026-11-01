@@ -35,7 +35,7 @@ Do not reintroduce removed subsystems (MCP, sandbox, browser, durable jobs, plat
 - Package manager is **Bun**. Never use npm/yarn/pnpm for installs.
 - Before every push, run and pass, in this order: `bun run lint`, `bun run typecheck`, `bun test`, `bun run test:ui`, `bun run build`. Paste the pass/fail summary in the PR body. A PR without this evidence will not be merged.
 - One milestone (or one sub-task) per branch and PR, named `m<N>/<slug>`, targeting `main`. Keep PRs reviewable; prefer several focused commits.
-- Prefer deleting code to adding flags. No feature flags for v1 features; fail loudly with a clear error when required config is missing.
+- Prefer deleting code to adding flags. No feature flags for v1 features; fail loudly with a clear error when required config is missing. The accepted exceptions are `GALAXY_TEST_E2E` (test-only seams, refused outside `NODE_ENV=test` and off Vercel) and the optional `SENTRY_DSN`.
 - Validate all env vars in one place (zod) and keep `.env.example` in sync with it.
 - Server-only modules import `server-only`. Never send secrets or BYOK keys to the client or to logs.
 - UI work: shadcn/ui on Base UI, Lucide icons, tokens from `app/globals.css` only (no hard-coded colours). Respect `prefers-reduced-motion`.

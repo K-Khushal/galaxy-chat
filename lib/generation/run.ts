@@ -100,6 +100,9 @@ function observe(
   });
 }
 
+const hasText = (parts: MessageParts) =>
+  parts.some((part) => part.type === "text" && part.text.length > 0);
+
 function usageFrom(event: {
   totalUsage: {
     inputTokens?: number;
@@ -282,7 +285,13 @@ export async function runGeneration(
       logErrorId("lock_release_failed"),
     );
 
-    if (saved && status === "complete" && input.titleFrom !== null) {
+    // The first Reply names the Chat whenever it kept some text, however it
+    // ended; a Reply with no text (failed, refunded) leaves the Chat untitled.
+    if (
+      saved &&
+      input.titleFrom !== null &&
+      (status === "complete" || hasText(latest.parts))
+    ) {
       await generateChatTitle(ctx, {
         chatId: input.chatId,
         text: input.titleFrom,

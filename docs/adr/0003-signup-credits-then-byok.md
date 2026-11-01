@@ -5,3 +5,4 @@ Sign-up is open to anyone, so every new account costs the operator money. Each U
 ## Consequences
 
 - To stop users deleting their account and signing up again for fresh Credits, a hashed record of verified emails and GitHub/Google account IDs that already received Credits survives account deletion. A returning identity gets an account with 0 Credits. The privacy page must say so.
+- Credit Replies are capped at 4,096 output tokens, with low reasoning effort on models that accept one, to bound the cost of each Credit.

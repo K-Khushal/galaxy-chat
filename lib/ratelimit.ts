@@ -1,3 +1,4 @@
+import "server-only";
 import type { Kv } from "@/lib/redis";
 
 export type RateLimitKind =

@@ -9,7 +9,7 @@ import {
   needsKey,
   textOf,
 } from "./api";
-import type { UploadedAttachment } from "./attachment-upload";
+import type { StoredAttachment } from "./attachment-upload";
 import { ByokDialog } from "./byok-dialog";
 import { Composer } from "./composer";
 import { Message } from "./message";
@@ -19,7 +19,7 @@ import { useByokKey } from "./use-byok-key";
 import { useGalaxyChat } from "./use-galaxy-chat";
 
 /** Files uploaded on the new-Chat page, carried over with its first Message. */
-function transferredAttachments(chatId: string): UploadedAttachment[] {
+function transferredAttachments(chatId: string): StoredAttachment[] {
   try {
     const saved = JSON.parse(
       sessionStorage.getItem(`galaxy:attach:${chatId}`) ?? "[]",
@@ -65,7 +65,7 @@ export function Chat({ initial }: { initial: ChatView }) {
     }
     wasBusy.current = chat.busy;
   }, [chat.busy, chat.messages]);
-  async function send(text: string, files: UploadedAttachment[]) {
+  async function send(text: string, files: StoredAttachment[]) {
     const ok = await chat.send(text, files);
     if (ok) sessionStorage.removeItem(`galaxy:attach:${initial.chat.id}`);
     return ok;

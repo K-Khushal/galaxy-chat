@@ -161,6 +161,11 @@ export const CREDIT_REASONING_EFFORT: ReasoningEffort = "low";
 
 const CUSTOM_MODEL_ID = /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:-]*$/i;
 
+/** True for a well-formed OpenRouter model ID (`vendor/model`) a BYOK User may enter. */
+export function isCustomModelId(id: string): boolean {
+  return id.length <= 100 && CUSTOM_MODEL_ID.test(id);
+}
+
 export function findModel(id: string): CatalogModel | null {
   return MODELS.find((model) => model.id === id) ?? null;
 }
@@ -174,7 +179,7 @@ export function resolveModel(id: string): ResolvedModel | null {
   if (catalog) {
     return { id, creditModel: catalog.creditModel, catalog };
   }
-  if (id.length > 100 || !CUSTOM_MODEL_ID.test(id)) {
+  if (!isCustomModelId(id)) {
     return null;
   }
   return { id, creditModel: false, catalog: null };

@@ -58,7 +58,7 @@ test("mutations require the configured origin with strict fetch metadata fallbac
     "https://galaxy.example",
   );
 });
-test("M6 must replace the no-op attachment cleanup when attachments land", () => {
+test("attachment cleanup is not a no-op once attachments exist", () => {
   if (existsSync("lib/attachments") || existsSync("lib/attachments.ts")) {
     expect(attachmentCleanup.deleteUserAttachments.toString()).not.toMatch(
       /async deleteUserAttachments\(_userId\)\s*\{\s*\}/,

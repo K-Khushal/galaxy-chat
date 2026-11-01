@@ -33,7 +33,7 @@ import {
 } from "@/lib/attachments/rules";
 import { DEFAULT_MODEL_ID, findModel } from "@/lib/models";
 import { AttachmentTray } from "./attachment-tray";
-import type { UploadedAttachment, Uploader } from "./attachment-upload";
+import type { StoredAttachment, Uploader } from "./attachment-upload";
 import { useAttachments } from "./use-attachments";
 export function Composer({
   chatId,
@@ -51,10 +51,10 @@ export function Composer({
   chatId: string;
   persistDraft?: boolean;
   busy?: boolean;
-  onSend: (text: string, attachments: UploadedAttachment[]) => Promise<boolean>;
+  onSend: (text: string, attachments: StoredAttachment[]) => Promise<boolean>;
   initialDraft?: string;
   /** Files already uploaded, carried over from the new-Chat page. */
-  initialAttachments?: UploadedAttachment[];
+  initialAttachments?: StoredAttachment[];
   autoSend?: boolean;
   onStop: () => void;
   picker?: ReactNode;

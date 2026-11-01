@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, errorCopy } from "@/components/chat/api";
 import { ByokDialog } from "@/components/chat/byok-dialog";
+import { creditsLeft } from "@/components/shell/credits-indicator";
 import { ThemeSwitcher } from "@/components/shell/theme-switcher";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,11 +26,18 @@ type Data = {
     createdAt: string;
   }[];
 };
+type ArchivedChat = { id: string; title: string | null };
+type ArchivedPage = { chats: ArchivedChat[]; nextCursor: string | null };
+const ARCHIVED_PAGE = 50;
+const archivedUrl = (cursor?: string) =>
+  `/api/chats?archived=true&limit=${ARCHIVED_PAGE}${
+    cursor ? `&cursor=${cursor}` : ""
+  }`;
+
 export function SettingsPage() {
   const [data, setData] = useState<Data>();
-  const [archived, setArchived] = useState<
-    { id: string; title: string | null }[]
-  >([]);
+  const [archived, setArchived] = useState<ArchivedChat[]>([]);
+  const [archivedCursor, setArchivedCursor] = useState<string | null>(null);
   const [keyOpen, setKeyOpen] = useState(false);
   const [confirmation, setConfirmation] = useState("");
   const [busy, setBusy] = useState(false);
@@ -37,12 +45,29 @@ export function SettingsPage() {
   const refresh = useCallback(async () => {
     const [settings, chats] = await Promise.all([
       api<Data>("/api/settings"),
-      api<{ chats: typeof archived }>("/api/chats?archived=true"),
+      api<ArchivedPage>(archivedUrl()),
     ]);
     setData(settings);
     setArchived(chats.chats);
+    setArchivedCursor(chats.nextCursor);
     window.dispatchEvent(new Event("galaxy-account-changed"));
   }, []);
+  const refreshSettings = async () => {
+    setData(await api<Data>("/api/settings"));
+    window.dispatchEvent(new Event("galaxy-account-changed"));
+  };
+  // The cursor marks the last loaded Chat, so dropping a restored or deleted
+  // Chat locally keeps every loaded page and the cursor valid.
+  async function removeArchived(id: string) {
+    setArchived((current) => current.filter((chat) => chat.id !== id));
+    await refreshSettings();
+  }
+  async function loadMore() {
+    if (!archivedCursor) return;
+    const next = await api<ArchivedPage>(archivedUrl(archivedCursor));
+    setArchived((current) => [...current, ...next.chats]);
+    setArchivedCursor(next.nextCursor);
+  }
   useEffect(() => {
     void refresh().catch(() =>
       setNotice("Settings could not be loaded. Please try again."),
@@ -162,7 +187,7 @@ export function SettingsPage() {
                       onClick={() =>
                         void act(async () => {
                           await api("/api/byok", {}, "DELETE");
-                          await refresh();
+                          await refreshSettings();
                         }, "Key removed.")
                       }
                     >
@@ -174,7 +199,7 @@ export function SettingsPage() {
             </section>
             <section className={section}>
               <h2 className="text-lg font-medium">Usage</h2>
-              <p>{data.credits} Credits left</p>
+              <p>{creditsLeft(data.credits)}</p>
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm">
                   <caption className="text-left text-muted-foreground">
@@ -240,7 +265,7 @@ export function SettingsPage() {
                           { archived: false },
                           "PATCH",
                         );
-                        await refresh();
+                        await removeArchived(chat.id);
                       }, "Chat restored.")
                     }
                   >
@@ -252,7 +277,7 @@ export function SettingsPage() {
                     onClick={() =>
                       void act(async () => {
                         await api(`/api/chats/${chat.id}`, {}, "DELETE");
-                        await refresh();
+                        await removeArchived(chat.id);
                       }, "Chat deleted.")
                     }
                   >
@@ -260,6 +285,15 @@ export function SettingsPage() {
                   </Button>
                 </div>
               ))}
+              {archivedCursor && (
+                <Button
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => void act(loadMore, "")}
+                >
+                  Load more
+                </Button>
+              )}
               <Button
                 variant="link"
                 render={

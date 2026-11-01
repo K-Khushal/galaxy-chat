@@ -32,4 +32,21 @@ Tests use PGlite and mock models. Run `bun run test:e2e` for Playwright browser 
 
 ## Deployment
 
-Deploy on Vercel with managed Postgres and Redis, and configure the variables documented in `.env.example`. Apply pending SQL migrations with `bun run db:migrate` before serving the updated app. Attachments use a private R2 bucket; hosting uses Vercel (ADR 0002).
+Production runs on Vercel (ADR 0002) at <https://galaxychat.tech>. Set every variable from `.env.example` in the Vercel project; `lib/env.ts` fails loudly when a route needs one that is missing. Never commit values.
+
+**Migrations.** `vercel.json` sets the build command to `bun run db:migrate` followed by `bun run build`, with the migration step only when `VERCEL_ENV=production`. Vercel uses `buildCommand` from `vercel.json` ahead of the framework's `build` script. Preview builds do not receive production secrets, so they skip the migration and just build. If a migration fails, `db:migrate` exits non-zero and the deployment fails before `next build` runs; the previous deployment keeps serving. Locally, run `bun run db:migrate` yourself.
+
+### Production services
+
+| Service | Configuration |
+| --- | --- |
+| Neon (Postgres) | `DATABASE_URL`: the pooled connection string, with the password URL-encoded. |
+| Upstash Redis | `REDIS_URL`: the TCP/TLS URL (`rediss://…`), not the REST URL or token. |
+| Cloudflare R2 | A private bucket (no public access) with `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` and `R2_BUCKET`; the token is limited to Object Read & Write on that bucket. CORS: allow `PUT`, `GET` and `HEAD` from the exact app origins (for example `https://galaxychat.tech`, plus `https://www.galaxychat.tech` if used), allow headers `content-type` and `if-none-match`, and expose `ETag`. Do not expire live objects under `u/`. |
+| Resend | A verified sending domain, with `RESEND_API_KEY` and `AUTH_EMAIL_FROM` on that domain. |
+| GitHub and Google OAuth | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`. Callback URLs: `https://galaxychat.tech/api/auth/callback/github` and `https://galaxychat.tech/api/auth/callback/google`. Set `BETTER_AUTH_URL` to the site origin and list other origins in `APP_ORIGINS`. |
+| Cloudflare Turnstile | `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY`, for the production hostname. |
+| Sentry | `SENTRY_DSN` and `SENTRY_ENVIRONMENT` enable error reporting; `SENTRY_AUTH_TOKEN` is build-only, for source maps. Leave `SENTRY_DSN` unset to disable Sentry. |
+| OpenRouter | `OPENROUTER_API_KEY` is the Platform key that pays for Credit Replies. Users' BYOK keys are encrypted with `BYOK_ENCRYPTION_KEYS_JSON` and `BYOK_ACTIVE_KEY_VERSION`. |
+
+Also set `BETTER_AUTH_SECRET` and `CREDIT_IDENTITY_KEY` (keep the latter stable).

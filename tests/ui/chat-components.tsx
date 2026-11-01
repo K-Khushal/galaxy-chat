@@ -891,3 +891,142 @@ test("a thumbnail opens a larger view", () =>
       "/api/attachments/img1",
     );
   }));
+const { ModelPicker } = await import("../../components/chat/model-picker");
+test("BYOK users can pick a custom OpenRouter model ID; others are asked for a key", () =>
+  withAnimationFrames(async () => {
+    const picked: string[] = [];
+    let keyAdds = 0;
+    const ui = render(
+      <ModelPicker
+        model="openai/gpt-6-luna"
+        onChange={(id) => picked.push(id)}
+        hasKey
+        addKey={() => {
+          keyAdds++;
+        }}
+      />,
+    );
+    fireEvent.click(ui.getByRole("button", { name: "Choose model" }));
+    const search = ui.getByLabelText("Search models");
+    fireEvent.change(search, { target: { value: "not a model id" } });
+    expect(ui.queryByText(/^Use \S+\/\S+$/)).toBeNull();
+    // A listed model is picked from the catalog, not offered as custom.
+    fireEvent.change(search, { target: { value: "openai/gpt-6-luna" } });
+    expect(ui.queryByText(/^Use \S+\/\S+$/)).toBeNull();
+    fireEvent.change(search, { target: { value: "acme/brand-new:free" } });
+    fireEvent.click(ui.getByText("Use acme/brand-new:free"));
+    expect(picked).toEqual(["acme/brand-new:free"]);
+    expect(keyAdds).toBe(0);
+    ui.rerender(
+      <ModelPicker
+        model="acme/brand-new:free"
+        onChange={() => {}}
+        hasKey
+        addKey={() => {}}
+      />,
+    );
+    expect(ui.getByRole("button", { name: "Choose model" }).textContent).toBe(
+      "acme/brand-new:free",
+    );
+  }));
+test("without a BYOK key a custom model ID shows a hint and opens the key dialog", () =>
+  withAnimationFrames(async () => {
+    const picked: string[] = [];
+    let keyAdds = 0;
+    const ui = render(
+      <ModelPicker
+        model="openai/gpt-6-luna"
+        onChange={(id) => picked.push(id)}
+        hasKey={false}
+        addKey={() => {
+          keyAdds++;
+        }}
+      />,
+    );
+    fireEvent.click(ui.getByRole("button", { name: "Choose model" }));
+    fireEvent.change(ui.getByLabelText("Search models"), {
+      target: { value: "acme/brand-new" },
+    });
+    expect(ui.queryByText(/^Use \S+\/\S+$/)).toBeNull();
+    expect(
+      ui.getByText("Add your OpenRouter key to use a custom model ID"),
+    ).toBeTruthy();
+    fireEvent.click(ui.getByText("Custom model acme/brand-new"));
+    expect(picked).toEqual([]);
+    expect(keyAdds).toBe(1);
+  }));
+test("Settings lists archived Chats a page at a time with Load more", async () => {
+  const { SettingsPage } = await import(
+    "../../components/settings/settings-page"
+  );
+  const requested: string[] = [];
+  const original = globalThis.fetch;
+  const chat = (n: number) => ({ id: `c${n}`, title: `Archived ${n}` });
+  globalThis.fetch = (async (url: string) => {
+    requested.push(url);
+    if (url.startsWith("/api/settings"))
+      return Response.json({
+        settings: { aboutYou: "", responseInstructions: "" },
+        credits: 3,
+        key: null,
+        replies: [],
+      });
+    return url.includes("cursor=c2")
+      ? Response.json({ chats: [chat(3)], nextCursor: null })
+      : Response.json({ chats: [chat(1), chat(2)], nextCursor: "c2" });
+  }) as unknown as typeof fetch;
+  try {
+    const ui = render(<SettingsPage />);
+    await ui.findByText("Archived 2");
+    expect(ui.queryByText("Archived 3")).toBeNull();
+    fireEvent.click(ui.getByRole("button", { name: "Load more" }));
+    await ui.findByText("Archived 3");
+    expect(ui.getByText("Archived 1")).toBeTruthy();
+    expect(ui.queryByRole("button", { name: "Load more" })).toBeNull();
+    expect(requested.filter((url) => url.includes("archived=true"))).toEqual([
+      "/api/chats?archived=true&limit=50",
+      "/api/chats?archived=true&limit=50&cursor=c2",
+    ]);
+    // Restoring a Chat keeps every page already loaded.
+    fireEvent.click(ui.getAllByRole("button", { name: "Unarchive" })[0]);
+    await act(() => new Promise((resolve) => setTimeout(resolve, 100)));
+    expect(ui.queryByText("Archived 1")).toBeNull();
+    expect(ui.getByText("Archived 3")).toBeTruthy();
+    expect(
+      requested.filter((url) => url.includes("archived=true")),
+    ).toHaveLength(2);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+test("the command palette offers System, Light and Dark themes", async () => {
+  const { mock } = await import("bun:test");
+  const themes: string[] = [];
+  mock.module("next-themes", () => ({
+    useTheme: () => ({
+      theme: "system",
+      setTheme: (theme: string) => themes.push(theme),
+    }),
+  }));
+  mock.module("next/navigation", () => ({ useRouter: () => ({ push() {} }) }));
+  Object.assign(globalThis, {
+    ResizeObserver: class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  });
+  Element.prototype.scrollIntoView = () => {};
+  const { SearchDialog } = await import("../../components/shell/search-dialog");
+  await withAnimationFrames(async () => {
+    const ui = render(<SearchDialog open onOpenChange={() => {}} />);
+    const input = ui.getByPlaceholderText("Search chats or choose an action");
+    fireEvent.change(input, { target: { value: "theme" } });
+    for (const label of ["Theme: System", "Theme: Light", "Theme: Dark"])
+      expect(ui.getByText(label)).toBeTruthy();
+    expect(ui.queryByText("Toggle theme")).toBeNull();
+    fireEvent.click(ui.getByText("Theme: Dark"));
+    fireEvent.click(ui.getByText("Theme: System"));
+    expect(themes).toEqual(["dark", "system"]);
+  });
+});

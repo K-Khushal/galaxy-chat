@@ -5,9 +5,10 @@ import { deleteAccount } from "@/lib/account/delete";
 import { getSettings } from "@/lib/account/settings";
 import type { AppContext } from "@/lib/api/context";
 import { handle, json, readJson } from "@/lib/api/respond";
+import { attachmentIdFromUrl } from "@/lib/attachments/rules";
 import { getByokKeyStatus } from "@/lib/byok/store";
 import { getCredits } from "@/lib/credits";
-import { chat, message, user, userSettings } from "@/lib/db/schema";
+import { attachment, chat, message, user, userSettings } from "@/lib/db/schema";
 import { AppError } from "@/lib/errors";
 
 export function getSettingsRoute(ctx: AppContext, request: Request) {
@@ -85,11 +86,38 @@ export function exportAccountRoute(ctx: AppContext, request: Request) {
       .from(message)
       .innerJoin(chat, eq(message.chatId, chat.id))
       .where(eq(chat.userId, id));
+    const files = await ctx.db
+      .select({
+        id: attachment.id,
+        filename: attachment.filename,
+        contentType: attachment.contentType,
+        size: attachment.size,
+        createdAt: attachment.createdAt,
+        chatId: attachment.chatId,
+      })
+      .from(attachment)
+      .where(and(eq(attachment.userId, id), eq(attachment.status, "ready")));
+    // Metadata only: no file bytes, object keys, URLs or extracted text. The
+    // Message an Attachment belongs to is the one whose file part points at it.
+    const messageOf = new Map<string, string>();
+    for (const { message: row } of messages) {
+      for (const part of row.parts as { type: string; url?: string }[]) {
+        const fileId =
+          part.type === "file" && part.url
+            ? attachmentIdFromUrl(part.url)
+            : null;
+        if (fileId) messageOf.set(fileId, row.id);
+      }
+    }
     return new Response(
       JSON.stringify({
         profile,
         chats,
         messages: messages.map((row) => row.message),
+        attachments: files.map((file) => ({
+          ...file,
+          messageId: messageOf.get(file.id) ?? null,
+        })),
         settings: await getSettings(ctx.db, id),
         credits: await getCredits(ctx.db, id),
         key: await getByokKeyStatus(ctx.db, id),

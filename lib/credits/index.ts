@@ -1,8 +1,9 @@
+import "server-only";
 import { createHmac } from "node:crypto";
 import { and, eq, gt, inArray, sql } from "drizzle-orm";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import type * as schema from "@/lib/db/schema";
-import { creditBalance, creditGrantIdentity } from "@/lib/db/schema";
+import { creditAccount, creditGrantIdentity } from "@/lib/db/schema";
 
 /** Credits granted once, at sign-up (ADR 0003). */
 export const SIGNUP_CREDITS = 10;
@@ -45,9 +46,9 @@ export async function grantSignupCredits(
     // Serialize identity claims, including overlapping email/provider sets.
     await tx.execute(sql`LOCK TABLE credit_grant_identity IN EXCLUSIVE MODE`);
     const existing = await tx
-      .select({ userId: creditBalance.userId })
-      .from(creditBalance)
-      .where(eq(creditBalance.userId, userId));
+      .select({ userId: creditAccount.userId })
+      .from(creditAccount)
+      .where(eq(creditAccount.userId, userId));
 
     const seen =
       identityHashes.length === 0
@@ -66,7 +67,7 @@ export async function grantSignupCredits(
     }
     if (existing.length > 0) return 0;
     await tx
-      .insert(creditBalance)
+      .insert(creditAccount)
       .values({ userId, remaining: granted })
       .onConflictDoNothing();
     return granted;
@@ -79,9 +80,9 @@ export async function getCredits(
   userId: string,
 ): Promise<number> {
   const rows = await db
-    .select({ remaining: creditBalance.remaining })
-    .from(creditBalance)
-    .where(eq(creditBalance.userId, userId));
+    .select({ remaining: creditAccount.remaining })
+    .from(creditAccount)
+    .where(eq(creditAccount.userId, userId));
   return rows[0]?.remaining ?? 0;
 }
 
@@ -91,15 +92,15 @@ export async function spendCredit(
   userId: string,
 ): Promise<boolean> {
   const rows = await db
-    .update(creditBalance)
+    .update(creditAccount)
     .set({
-      remaining: sql`${creditBalance.remaining} - 1`,
+      remaining: sql`${creditAccount.remaining} - 1`,
       updatedAt: new Date(),
     })
     .where(
-      and(eq(creditBalance.userId, userId), gt(creditBalance.remaining, 0)),
+      and(eq(creditAccount.userId, userId), gt(creditAccount.remaining, 0)),
     )
-    .returning({ remaining: creditBalance.remaining });
+    .returning({ remaining: creditAccount.remaining });
   return rows.length > 0;
 }
 
@@ -112,10 +113,10 @@ export async function refundCredit(
   userId: string,
 ): Promise<void> {
   await db
-    .update(creditBalance)
+    .update(creditAccount)
     .set({
-      remaining: sql`${creditBalance.remaining} + 1`,
+      remaining: sql`${creditAccount.remaining} + 1`,
       updatedAt: new Date(),
     })
-    .where(eq(creditBalance.userId, userId));
+    .where(eq(creditAccount.userId, userId));
 }

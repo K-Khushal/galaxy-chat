@@ -63,6 +63,70 @@ test("export is owner scoped and never contains keys or sessions", async () => {
     expect(JSON.stringify(data)).not.toContain(`"${forbidden}":`);
   }
 });
+test("export lists Attachment metadata only, for the owner's ready files", async () => {
+  const aliceChat = await chat("alice");
+  const bobChat = await chat("bob");
+  const insert = (
+    id: string,
+    user: string,
+    chatId: string | null,
+    status = "ready",
+  ) =>
+    h.pg.query(
+      `INSERT INTO attachment (id, user_id, chat_id, filename, kind, content_type, size, status, presign_expires_at, extracted_text)
+       VALUES ($1, $2, $3, $1 || '.png', 'image', 'image/png', 1234, $4, now(), 'SECRET EXTRACTED')`,
+      [id, user, chatId, status],
+    );
+  await insert("att-sent", "alice", aliceChat);
+  await insert("att-loose", "alice", null);
+  await insert("att-pending", "alice", null, "pending");
+  await insert("att-bob", "bob", bobChat);
+  await h.pg.query(
+    `INSERT INTO message (id, chat_id, role, status, parts) VALUES ('msg-1', $1, 'user', 'complete', $2::jsonb)`,
+    [
+      aliceChat,
+      JSON.stringify([
+        {
+          type: "file",
+          mediaType: "image/png",
+          filename: "att-sent.png",
+          url: "/api/attachments/att-sent",
+        },
+      ]),
+    ],
+  );
+  const text = await (
+    await call(h, exportAccountRoute, { user: "alice" })
+  ).text();
+  const data = JSON.parse(text);
+  expect(data.attachments.map((a: { id: string }) => a.id).sort()).toEqual([
+    "att-loose",
+    "att-sent",
+  ]);
+  const sent = data.attachments.find(
+    (a: { id: string }) => a.id === "att-sent",
+  );
+  expect(sent).toEqual({
+    id: "att-sent",
+    filename: "att-sent.png",
+    contentType: "image/png",
+    size: 1234,
+    createdAt: expect.any(String),
+    chatId: aliceChat,
+    messageId: "msg-1",
+  });
+  expect(
+    data.attachments.find((a: { id: string }) => a.id === "att-loose"),
+  ).toMatchObject({ chatId: null, messageId: null });
+  // No object keys, storage details or extracted file text.
+  for (const leaked of [
+    "SECRET EXTRACTED",
+    "u/alice/",
+    "att-bob",
+    "att-pending",
+  ])
+    expect(text).not.toContain(leaked);
+});
 test("settings reject unauthenticated access and excessive lengths", async () => {
   for (const handler of [
     getSettingsRoute,

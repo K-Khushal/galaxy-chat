@@ -1,3 +1,4 @@
+import "server-only";
 import domains from "disposable-email-domains";
 import type { RateLimitKind } from "@/lib/ratelimit";
 
