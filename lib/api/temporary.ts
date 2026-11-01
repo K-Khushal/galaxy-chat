@@ -4,7 +4,6 @@ import { z } from "zod";
 import { customContext } from "@/lib/account/settings";
 import type { AppContext } from "@/lib/api/context";
 import { handle, readJson, sseResponse } from "@/lib/api/respond";
-import { loadByokKey } from "@/lib/byok/store";
 import { refundCredit } from "@/lib/credits";
 import { AppError } from "@/lib/errors";
 import {
@@ -14,7 +13,7 @@ import {
   renewGeneration,
 } from "@/lib/generation/locks";
 import { errorId, replyModelSettings } from "@/lib/generation/model";
-import { choosePayment, spendForReply } from "@/lib/generation/payment";
+import { payForReply, spendForReply } from "@/lib/generation/payment";
 import { resolveModel } from "@/lib/models";
 
 /** Text-only client history: no system prompts, tools, attachments or saved IDs. */
@@ -94,19 +93,10 @@ export function temporaryMessageRoute(ctx: AppContext, request: Request) {
     };
 
     try {
-      const payer = {
-        db: ctx.db,
-        platformKey: ctx.platformKey,
-        loadByokKey: (id: string) => loadByokKey(ctx.db, ctx.byokEnv, id),
-      };
-      let payment = await choosePayment(payer, userId, model);
-      // The atomic debit may lose a race for the final Credit. Re-select so a
-      // saved BYOK key can pay, just as on the saved-Chat send path.
-      if (!(await spendForReply(ctx.db, userId, payment))) {
-        payment = await choosePayment(payer, userId, model);
-        if (!(await spendForReply(ctx.db, userId, payment)))
-          throw new AppError("no_credits", 402);
-      }
+      // Nothing is stored: the debit alone records a Temporary chat's payment.
+      const { payment } = await payForReply(ctx, userId, model, (payment) =>
+        spendForReply(ctx.db, userId, payment),
+      );
       charged = payment.source === "credits";
       request.signal.addEventListener("abort", clientStop, { once: true });
       if (request.signal.aborted) clientStop();

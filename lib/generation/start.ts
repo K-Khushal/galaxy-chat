@@ -30,8 +30,8 @@ import {
   releaseGeneration,
 } from "@/lib/generation/locks";
 import {
-  choosePayment,
   type Payment,
+  payForReply,
   refundReplyCredit,
   spendForReply,
 } from "@/lib/generation/payment";
@@ -168,9 +168,6 @@ function firstUserText(history: Plan["history"]): string {
     .filter(Boolean)
     .join(", ");
 }
-
-/** The last credit went to another Generation between choosing and spending. */
-class CreditsGone extends Error {}
 
 /**
  * Starts a Generation in a Chat the caller owns: takes the locks, then in one
@@ -313,29 +310,18 @@ type RecordInput = {
   generationId: string;
 };
 
-/**
- * Chooses who pays, then records the Reply with the payment. A second pass
- * runs only when the last credit was spent elsewhere in between: then the
- * BYOK key pays, or the User has neither.
- */
+/** Chooses who pays and records the Reply with the payment, in one transaction. */
 async function payAndRecord(
   ctx: AppContext,
   input: RecordInput,
 ): Promise<{ payment: Payment; initialParts: MessageParts }> {
-  const payer = {
-    db: ctx.db,
-    platformKey: ctx.platformKey,
-    loadByokKey: (id: string) => loadByokKey(ctx.db, ctx.byokEnv, id),
-  };
-  for (let attempt = 0; ; attempt++) {
-    const payment = await choosePayment(payer, input.userId, input.model);
-    try {
-      return { payment, initialParts: await recordReply(ctx, input, payment) };
-    } catch (error) {
-      if (!(error instanceof CreditsGone)) throw error;
-      if (attempt > 0) throw new AppError("no_credits", 402);
-    }
-  }
+  const { payment, recorded } = await payForReply(
+    ctx,
+    input.userId,
+    input.model,
+    (payment) => recordReply(ctx, input, payment),
+  );
+  return { payment, initialParts: recorded };
 }
 
 /**
@@ -356,9 +342,7 @@ async function recordReply(
       .where(eq(user.id, input.userId))
       .for("update");
     if (!owner) throw new AppError("unauthenticated", 401);
-    if (!(await spendForReply(tx, input.userId, payment))) {
-      throw new CreditsGone();
-    }
+    await spendForReply(tx, input.userId, payment);
     if (steps.userMessage) {
       const { attachmentIds, ...userMessage } = steps.userMessage;
       await claimForChat(tx, input.userId, chatRow.id, attachmentIds);
