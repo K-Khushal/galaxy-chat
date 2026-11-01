@@ -83,18 +83,25 @@ test.beforeEach(async ({ page }) => {
   expect(response?.headers()["content-security-policy"]).not.toContain(
     "unsafe-eval",
   );
-  const ready = page.waitForResponse((response) =>
-    response.url().endsWith("/api/credits"),
-  );
   await page.getByRole("button", { name: "E2E sign in" }).click();
-  await ready;
-  if ((page.viewportSize()?.width ?? 1280) < 768)
-    await page.getByRole("button", { name: "Toggle Sidebar" }).first().click();
-  await expect(
-    page.getByText("10 Credits left", { exact: true }),
-  ).toBeVisible();
-  if ((page.viewportSize()?.width ?? 1280) < 768)
+  await expect(page).toHaveURL(/\/chat$/);
+  const credits = page.getByText("10 Credits left", { exact: true });
+  const mobile = (page.viewportSize()?.width ?? 1280) < 768;
+  if (mobile) {
+    // The Credits indicator lives in the sidebar drawer, which only mounts
+    // (and fetches Credits) once opened; retry until hydration lets it open.
+    await expect(async () => {
+      if (!(await page.getByRole("dialog").isVisible()))
+        await page
+          .getByRole("button", { name: "Toggle Sidebar" })
+          .first()
+          .click();
+      await expect(credits).toBeVisible({ timeout: 2_000 });
+    }).toPass();
     await page.keyboard.press("Escape");
+  } else {
+    await expect(credits).toBeVisible();
+  }
 });
 
 test("sign in grants 10 Credits and lands on /chat", async ({ page }) => {
