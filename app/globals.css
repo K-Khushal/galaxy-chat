@@ -73,6 +73,16 @@
   --shadow-sm: 0 1px 2px oklch(0 0 0 / 5%);
   --shadow-md: 0 2px 8px oklch(0 0 0 / 6%);
   --shadow-lg: 0 8px 24px oklch(0 0 0 / 8%);
+  --shadow-xl: 0 16px 48px oklch(0 0 0 / 12%), 0 2px 6px oklch(0 0 0 / 6%);
+
+  /* Status: dark enough for 4.5:1 text on --background. */
+  --success: oklch(0.5 0.12 155);
+  --success-foreground: oklch(0.99 0 0);
+  --warning: oklch(0.5 0.12 60);
+  --warning-foreground: oklch(0.99 0 0);
+
+  /* 1px inset outline on image thumbnails. */
+  --image-outline: oklch(0 0 0 / 10%);
 }
 
 .dark {
@@ -126,6 +136,14 @@
   --shadow-sm: 0 1px 2px oklch(0 0 0 / 24%);
   --shadow-md: 0 2px 8px oklch(0 0 0 / 28%);
   --shadow-lg: 0 8px 24px oklch(0 0 0 / 36%);
+  --shadow-xl: 0 16px 48px oklch(0 0 0 / 48%), 0 2px 6px oklch(0 0 0 / 30%);
+
+  --success: oklch(0.75 0.14 155);
+  --success-foreground: oklch(0.17 0.01 286);
+  --warning: oklch(0.8 0.14 80);
+  --warning-foreground: oklch(0.17 0.01 286);
+
+  --image-outline: oklch(1 0 0 / 10%);
 }
 
 :root {
@@ -153,6 +171,11 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-image-outline: var(--image-outline);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
@@ -190,16 +213,63 @@
   --shadow-sm: var(--shadow-sm);
   --shadow-md: var(--shadow-md);
   --shadow-lg: var(--shadow-lg);
+  --shadow-xl: var(--shadow-xl);
 
   /* Message text is 15px; the interface is 14px (set on body). */
   --text-message: 0.9375rem;
   --text-message--line-height: 1.7;
 }
 
-/* Motion: short, ease-out (Tailwind's `ease-out` uses this stronger curve).
-   Durations stay between 120 and 250ms. */
+/*
+ * Type roles (pair with the weights in the epic: 600 for display and heading,
+ * 500 for title). `cn()` knows these names, so they merge as font sizes.
+ */
+@theme {
+  --text-display: 1.75rem;
+  --text-display--line-height: 2.25rem;
+  --text-display--letter-spacing: -0.02em;
+  --text-heading: 1.25rem;
+  --text-heading--line-height: 1.75rem;
+  --text-heading--letter-spacing: -0.015em;
+  --text-title: 1rem;
+  --text-title--line-height: 1.5rem;
+  --text-title--letter-spacing: -0.01em;
+  --text-caption: 0.8125rem;
+  --text-caption--line-height: 1.125rem;
+}
+
+/*
+ * Motion. Durations use Tailwind's numeric scale and nothing else:
+ * 80 (hover colour), 120 (exits, tooltips), 160 (press, menus enter),
+ * 240 (dialogs, sheets, collapsibles, skeleton fade).
+ * Enters and exits use `ease-out`; on-screen movement uses `ease-in-out`;
+ * the mobile sheet uses `ease-drawer`. Transforms sit behind `motion-safe:`.
+ */
 @theme {
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* A slow sweep for "working" labels; static muted text under reduced motion. */
+@utility text-shimmer {
+  color: transparent;
+  background-image: linear-gradient(
+    90deg,
+    var(--muted-foreground) 0%,
+    var(--foreground) 50%,
+    var(--muted-foreground) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: text-shimmer 2s linear infinite;
+
+  @media (prefers-reduced-motion: reduce) {
+    color: var(--muted-foreground);
+    background-image: none;
+    animation: none;
+  }
 }
 
 @layer base {
@@ -233,11 +303,18 @@
     }
   }
 
+  /* One stroke for every Lucide icon, matched to 14–15px text. */
+  .lucide {
+    stroke-width: 1.75;
+  }
+
   ::selection {
     background: color-mix(in oklch, var(--primary) 25%, transparent);
   }
 
-  /* Reduced motion keeps colour changes but drops movement. */
+  /* Reduced motion stops keyframe loops. Transitions keep running so opacity
+     and colour fades still explain what changed; every transform is gated
+     behind `motion-safe:` instead. */
   @media (prefers-reduced-motion: reduce) {
     *,
     *::before,
@@ -248,9 +325,34 @@
       animation-duration: 0.01ms !important;
       /* biome-ignore lint/complexity/noImportantStyles: The accessibility preference overrides component utility motion. */
       animation-iteration-count: 1 !important;
-      /* biome-ignore lint/complexity/noImportantStyles: The accessibility preference overrides component utility motion. */
-      transition-duration: 0.01ms !important;
     }
+  }
+}
+
+/* Skeletons wait 160ms, then fade in, so fast loads never flash. */
+@keyframes skeleton-in {
+  to {
+    opacity: 1;
+  }
+}
+
+/* Explicit end frames: the element's own opacity is 0 until skeleton-in ends. */
+@keyframes skeleton-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+@keyframes text-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: 0% 0;
   }
 }
 
