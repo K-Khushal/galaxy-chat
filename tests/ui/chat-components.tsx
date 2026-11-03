@@ -1047,3 +1047,50 @@ test("Reply math keeps KaTeX markup while raw HTML stays sanitized", async () =>
   expect(ui.container.querySelector("script")).toBeNull();
   expect(ui.container.innerHTML).not.toContain("onerror");
 });
+test("FieldError links to its control through aria-describedby only when it has a message", async () => {
+  await withAnimationFrames(async () => {
+    const { Field, FieldError, FieldLabel } = await import(
+      "../../components/ui/field"
+    );
+    const { Input } = await import("../../components/ui/input");
+    const { Textarea } = await import("../../components/ui/textarea");
+    const ui = render(
+      <>
+        <Field invalid>
+          <FieldLabel>OpenRouter key</FieldLabel>
+          <Input />
+          <FieldError>OpenRouter didn't accept this key.</FieldError>
+        </Field>
+        <Field>
+          <FieldLabel>About you</FieldLabel>
+          <Textarea />
+          <FieldError />
+        </Field>
+      </>,
+    );
+    const key = ui.getByLabelText("OpenRouter key");
+    const error = ui.getByText(
+      "OpenRouter didn't accept this key.",
+    ).parentElement;
+    expect(error?.id).toBeTruthy();
+    expect(key.getAttribute("aria-describedby")).toContain(error?.id ?? "-");
+    expect(key.getAttribute("aria-invalid")).toBe("true");
+    const about = ui.getByLabelText("About you");
+    expect(about.tagName).toBe("TEXTAREA");
+    expect(about.getAttribute("aria-describedby")).toBeNull();
+  });
+});
+test("Button pending holds the label for screen readers and blocks clicks", async () => {
+  const { Button } = await import("../../components/ui/button");
+  let clicks = 0;
+  const ui = render(
+    <Button pending onClick={() => clicks++}>
+      Save instructions
+    </Button>,
+  );
+  const button = ui.getByRole("button", { name: "Save instructions" });
+  expect(button.getAttribute("aria-busy")).toBe("true");
+  expect((button as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(button);
+  expect(clicks).toBe(0);
+});

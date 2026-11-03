@@ -1,22 +1,44 @@
 "use client";
 
-import { ArrowUp, Bell, Download, Plus, Search, Trash2 } from "lucide-react";
-import { useId } from "react";
+import {
+  ArrowUp,
+  Bell,
+  Download,
+  MessageSquare,
+  Monitor,
+  Moon,
+  Plus,
+  Search,
+  Sun,
+  Trash2,
+} from "lucide-react";
+import { useId, useState } from "react";
 import { Composer } from "@/components/chat/composer";
-import { StatePanel } from "@/components/shell/state-panel";
+import { GalaxyMark, GitHubMark, GoogleMark } from "@/components/icons/brand";
+import { ProviderIcon } from "@/components/icons/provider-icon";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Field,
+  FieldCounter,
+  FieldDescription,
+  FieldError,
+  FieldLabel,
+} from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
   InputGroup,
   InputGroupAddon,
   InputGroupInput,
 } from "@/components/ui/input-group";
+import { Kbd, KbdGroup } from "@/components/ui/kbd";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Separator } from "@/components/ui/separator";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Skeleton, SkeletonText } from "@/components/ui/skeleton";
+import { EmptyState, ErrorState, InlineAlert } from "@/components/ui/state";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
@@ -48,6 +70,8 @@ const swatches = [
   ["user-bubble", "bg-user-bubble"],
   ["primary", "bg-primary"],
   ["destructive", "bg-destructive"],
+  ["success", "bg-success"],
+  ["warning", "bg-warning"],
   ["foreground", "bg-foreground"],
   ["muted-fg", "bg-muted-foreground"],
   ["border", "bg-border"],
@@ -67,11 +91,47 @@ const variants = [
   "outline",
   "ghost",
   "destructive",
+  "destructive-subtle",
   "link",
 ] as const;
 
+const badgeVariants = [
+  "default",
+  "secondary",
+  "outline",
+  "ghost",
+  "destructive",
+  "link",
+] as const;
+
+const providers = [
+  "OpenAI",
+  "Anthropic",
+  "Google",
+  "xAI",
+  "DeepSeek",
+  "Meta",
+  "Qwen",
+  "Mistral",
+  "custom/model",
+] as const;
+
+const themes = [
+  { value: "system", label: "System", icon: <Monitor /> },
+  { value: "light", label: "Light", icon: <Sun /> },
+  { value: "dark", label: "Dark", icon: <Moon /> },
+] as const;
+
+const instructions =
+  "Keep replies short. Use British spelling. Prefer tables to long lists. ".repeat(
+    26,
+  );
+
 export function Showcase() {
   const uid = useId();
+  const [theme, setTheme] =
+    useState<(typeof themes)[number]["value"]>("system");
+  const [pending, setPending] = useState(false);
   return (
     <div className="flex flex-col gap-10">
       <Block title="Colour tokens">
@@ -95,22 +155,24 @@ export function Showcase() {
         </ul>
       </Block>
 
-      <Block title="Type">
+      <Block title="Type roles">
         <div className="flex flex-col gap-2">
-          <p className="text-3xl font-medium tracking-tight">
-            What can I help with?
-          </p>
-          <p className="text-lg font-medium tracking-tight">Heading, 18px</p>
-          <p>
-            Interface text, Geist 14px. Menus, labels, buttons and controls.
-          </p>
+          <p className="text-display font-semibold">What can I help with?</p>
+          <p className="text-heading font-semibold">Heading, 20px</p>
+          <p className="text-title font-medium">Title, 16px</p>
+          <p>Body, Geist 14px. Menus, labels, buttons and controls.</p>
           <p className="text-message">
-            Message text, Geist 15px with a looser line height for reading
-            replies at length.
+            Message, Geist 15px with a looser line height for reading replies at
+            length.
           </p>
-          <p className="text-muted-foreground">
-            Muted text for secondary copy.
+          <p className="text-caption text-muted-foreground">
+            Caption, 13px. Secondary lines, field errors and chips.
           </p>
+          <p className="text-xs text-muted-foreground">
+            Micro, 12px. Group headings and Kbd.
+          </p>
+          <p className="text-shimmer">Thinking…</p>
+          <p className="tabular-nums">12 Credits left · $0.0042</p>
           <p>
             A{" "}
             <a
@@ -121,19 +183,25 @@ export function Showcase() {
             </a>{" "}
             and <code className="font-mono text-[0.85em]">inline code</code>.
           </p>
-          <pre className="overflow-x-auto rounded-xl bg-muted p-3 font-mono text-[0.8125rem]">
+          <pre className="overflow-x-auto rounded-xl bg-muted p-3 font-mono text-caption">
             {"const reply = await generate(chat)"}
           </pre>
         </div>
       </Block>
 
-      <Block title="Radius: 8px controls, 12px cards and menus, 24px composer">
+      <Block title="Radius: 6 chips, 8 controls, 12 menus and cards, 16 dialogs, 24 composer">
         <div className="flex items-end gap-4">
+          <div className="flex h-10 w-16 items-center justify-center rounded-md border bg-card text-xs">
+            6
+          </div>
           <div className="flex h-12 w-24 items-center justify-center rounded-lg border bg-card text-xs">
             8
           </div>
           <div className="flex h-16 w-24 items-center justify-center rounded-xl border bg-card text-xs">
             12
+          </div>
+          <div className="flex h-20 w-24 items-center justify-center rounded-2xl border bg-card text-xs shadow-xl">
+            16
           </div>
           <div className="flex h-20 min-w-0 flex-1 items-center justify-center rounded-3xl border bg-card text-xs">
             24
@@ -176,7 +244,7 @@ export function Showcase() {
             <Plus data-icon="inline-start" />
             New chat
           </Button>
-          <Button variant="destructive">
+          <Button variant="destructive-subtle">
             <Trash2 data-icon="inline-start" />
             Delete
           </Button>
@@ -193,40 +261,65 @@ export function Showcase() {
           </Button>
         </div>
       </Block>
+      <Block title="Button: pending (spinner over the label, width held)">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button pending>Save instructions</Button>
+          <Button variant="outline" pending>
+            Try again
+          </Button>
+          <Button variant="destructive" pending>
+            Delete Chat
+          </Button>
+          <Button size="sm" variant="secondary" pending>
+            Remove
+          </Button>
+          <Button
+            variant="outline"
+            pending={pending}
+            onClick={() => {
+              setPending(true);
+              setTimeout(() => setPending(false), 1500);
+            }}
+          >
+            Click to submit
+          </Button>
+        </div>
+      </Block>
 
       <Block title="Fields">
         <div className="grid gap-4 sm:grid-cols-2">
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor={`${uid}-d-input`}>Label</Label>
-            <Input id={`${uid}-d-input`} placeholder="Placeholder" />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor={`${uid}-d-value`}>Filled</Label>
-            <Input id={`${uid}-d-value`} defaultValue="sk-proj-…" />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor={`${uid}-d-focus`}>Focused (forced)</Label>
+          <Field>
+            <FieldLabel>Label</FieldLabel>
+            <Input placeholder="Placeholder" />
+          </Field>
+          <Field>
+            <FieldLabel>Filled</FieldLabel>
+            <Input defaultValue="sk-or-…" />
+          </Field>
+          <Field>
+            <FieldLabel>Focused (forced)</FieldLabel>
+            <Input placeholder="Focused" className={focusRing} />
+          </Field>
+          <Field invalid>
+            <FieldLabel>OpenRouter key</FieldLabel>
             <Input
-              id={`${uid}-d-focus`}
-              placeholder="Focused"
-              className={focusRing}
-            />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor={`${uid}-d-invalid`}>Invalid</Label>
-            <Input
-              id={`${uid}-d-invalid`}
-              aria-invalid
+              type="password"
+              autoComplete="off"
               defaultValue="Not a key"
             />
-            <p className="text-xs text-destructive">
-              Enter a key that starts with sk-.
-            </p>
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor={`${uid}-d-disabled`}>Disabled</Label>
-            <Input id={`${uid}-d-disabled`} disabled placeholder="Disabled" />
-          </div>
+            <FieldError>OpenRouter didn't accept this key.</FieldError>
+          </Field>
+          <Field disabled>
+            <FieldLabel>Disabled</FieldLabel>
+            <Input placeholder="Disabled" />
+          </Field>
+          <Field>
+            <FieldLabel>Type DELETE to confirm</FieldLabel>
+            <Input autoComplete="off" />
+            <FieldDescription>
+              This deletes your account, Chats and BYOK key.
+            </FieldDescription>
+          </Field>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor={`${uid}-d-group`}>Input group</Label>
             <InputGroup>
@@ -239,9 +332,37 @@ export function Showcase() {
               />
             </InputGroup>
           </div>
-          <div className="flex flex-col gap-1.5 sm:col-span-2">
-            <Label htmlFor={`${uid}-d-textarea`}>Textarea</Label>
-            <Textarea id={`${uid}-d-textarea`} placeholder="Write something" />
+          <Field className="sm:col-span-2">
+            <FieldLabel>Textarea with counter</FieldLabel>
+            <Textarea
+              className="max-h-32"
+              maxLength={2000}
+              defaultValue={instructions.slice(0, 1850)}
+            />
+            <FieldCounter value={1850} max={2000} />
+          </Field>
+        </div>
+      </Block>
+
+      <Block title="Segmented control and Kbd">
+        <div className="flex flex-wrap items-center gap-4">
+          <SegmentedControl
+            aria-label="Theme"
+            value={theme}
+            onValueChange={setTheme}
+            options={[...themes]}
+          />
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <KbdGroup>
+              <Kbd>⌘</Kbd>
+              <Kbd>K</Kbd>
+            </KbdGroup>
+            Search
+            <KbdGroup>
+              <Kbd>⌘</Kbd>
+              <Kbd>,</Kbd>
+            </KbdGroup>
+            Settings
           </div>
         </div>
       </Block>
@@ -265,7 +386,7 @@ export function Showcase() {
 
       <Block title="Badge">
         <div className="flex flex-wrap items-center gap-2">
-          {variants.map((variant) => (
+          {badgeVariants.map((variant) => (
             <Badge key={variant} variant={variant}>
               {variant}
             </Badge>
@@ -315,10 +436,16 @@ export function Showcase() {
         <Separator />
         <div className="flex items-center gap-3">
           <Skeleton className="size-9 rounded-full" />
-          <div className="flex flex-1 flex-col gap-2">
-            <Skeleton className="h-3 w-2/3" />
-            <Skeleton className="h-3 w-1/2" />
+          <SkeletonText lines={2} className="flex-1" />
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="text-message">
+            <SkeletonText lines={4} />
           </div>
+          <p className="text-message">
+            Skeleton lines are one line-height tall, so four of them take the
+            height of four real lines.
+          </p>
         </div>
         <ScrollArea className="h-28 rounded-xl border">
           <ul className="flex flex-col p-2">
@@ -335,6 +462,25 @@ export function Showcase() {
         </ScrollArea>
       </Block>
 
+      <Block title="Provider and brand marks">
+        <ul className="flex flex-wrap items-center gap-4">
+          {providers.map((provider) => (
+            <li
+              key={provider}
+              className="flex items-center gap-1.5 text-caption text-muted-foreground"
+            >
+              <ProviderIcon provider={provider} className="text-foreground" />
+              {provider}
+            </li>
+          ))}
+        </ul>
+        <div className="flex items-center gap-4">
+          <GalaxyMark className="size-8" />
+          <GitHubMark className="size-5" />
+          <GoogleMark className="size-5" />
+        </div>
+      </Block>
+
       <Block title="Composer shell">
         <Composer
           chatId="showcase"
@@ -343,23 +489,51 @@ export function Showcase() {
         />
       </Block>
 
-      <Block title="Empty and error states">
+      <Block title="Empty, error and inline states">
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="rounded-xl border py-8">
-            <StatePanel
+            <EmptyState
+              headingLevel={2}
+              icon={<MessageSquare />}
               title="No chats yet"
               description="Start a chat and it will show up here."
               action={<Button variant="outline">New chat</Button>}
             />
           </div>
           <div className="rounded-xl border py-8">
-            <StatePanel
-              title="Couldn't load chats"
+            <ErrorState
+              headingLevel={2}
               description="Check your connection and try again."
+              errorId="9f2c41ab"
               action={<Button variant="outline">Try again</Button>}
             />
           </div>
         </div>
+        <EmptyState
+          size="inline"
+          title="No archived Chats"
+          action={
+            <Button size="sm" variant="ghost">
+              New chat
+            </Button>
+          }
+        />
+        <ErrorState
+          size="inline"
+          title="Couldn't load usage"
+          action={
+            <Button size="sm" variant="ghost">
+              Try again
+            </Button>
+          }
+        />
+        <InlineAlert
+          action={<Button size="sm">Add your OpenRouter key</Button>}
+        >
+          You have no Credits left.
+        </InlineAlert>
+        <InlineAlert tone="warning">2 Credits left.</InlineAlert>
+        <InlineAlert tone="info">Temporary chats aren't saved.</InlineAlert>
       </Block>
     </div>
   );

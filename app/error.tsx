@@ -1,8 +1,7 @@
 "use client";
-import { TriangleAlert } from "lucide-react";
 import { useEffect } from "react";
-import { StatePanel } from "@/components/shell/state-panel";
 import { Button } from "@/components/ui/button";
+import { ErrorState } from "@/components/ui/state";
 import { reportError } from "@/lib/client-errors";
 
 export default function RootError({
@@ -12,15 +11,15 @@ export default function RootError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  const errorId = error.digest ?? "unexpected_error";
   useEffect(() => {
-    reportError(error, { errorId: error.digest ?? "unexpected_error" });
-  }, [error]);
+    reportError(error, { errorId });
+  }, [error, errorId]);
   return (
     <main className="flex min-h-dvh items-center justify-center">
-      <StatePanel
-        icon={<TriangleAlert />}
-        title="Something went wrong"
-        description={`Galaxy hit an unexpected error. Error ID: ${error.digest ?? "unexpected_error"}`}
+      <ErrorState
+        description="Galaxy hit an unexpected error."
+        errorId={errorId}
         action={
           <Button variant="outline" onClick={() => reset()}>
             Try again

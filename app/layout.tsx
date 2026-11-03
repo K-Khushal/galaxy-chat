@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { headers } from "next/headers";
 import { ThemeProvider } from "next-themes";
+import { MotionProvider } from "@/components/motion-provider";
 import { SITE_NAME, SITE_TAGLINE, SITE_URL, THEME_COLORS } from "@/lib/site";
 import "./globals.css";
 
@@ -70,7 +71,7 @@ export default async function RootLayout({
           disableTransitionOnChange
           enableSystem
         >
-          {children}
+          <MotionProvider>{children}</MotionProvider>
         </ThemeProvider>
       </body>
     </html>
