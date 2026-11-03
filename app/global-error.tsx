@@ -1,5 +1,7 @@
 "use client"; // Error boundaries must be Client Components
 import { useEffect } from "react";
+import { Button } from "@/components/ui/button";
+import { ErrorState } from "@/components/ui/state";
 import { reportError } from "@/lib/client-errors";
 
 import "./globals.css";
@@ -11,27 +13,24 @@ export default function GlobalError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  const errorId = error.digest ?? "unexpected_error";
   useEffect(() => {
-    reportError(error, { errorId: error.digest ?? "unexpected_error" });
-  }, [error]);
+    reportError(error, { errorId });
+  }, [error, errorId]);
   return (
     // global-error replaces the root layout, so it brings its own html, body
     // and styles.
     <html lang="en">
-      <body className="flex min-h-dvh flex-col items-center justify-center gap-3 px-6 text-center">
-        <h1 className="text-lg font-medium tracking-tight">
-          Something went wrong
-        </h1>
-        <p className="text-muted-foreground">
-          Error ID: {error.digest ?? "unexpected_error"}
-        </p>
-        <button
-          type="button"
-          className="h-9 rounded-lg border border-input bg-card px-3 text-sm font-medium"
-          onClick={() => reset()}
-        >
-          Try again
-        </button>
+      <body className="flex min-h-dvh items-center justify-center bg-background font-sans text-sm text-foreground antialiased">
+        <ErrorState
+          description="Galaxy hit an unexpected error."
+          errorId={errorId}
+          action={
+            <Button variant="outline" onClick={() => reset()}>
+              Try again
+            </Button>
+          }
+        />
       </body>
     </html>
   );

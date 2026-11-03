@@ -1,6 +1,14 @@
 "use client";
 
-import { MoreHorizontal, Settings, Trash2, User } from "lucide-react";
+import {
+  MoreHorizontal,
+  Search,
+  Settings,
+  SquarePen,
+  Trash2,
+  User,
+} from "lucide-react";
+import { useState } from "react";
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -16,6 +24,7 @@ import {
 import { Button } from "@/components/ui/button";
 import {
   Command,
+  CommandDialog,
   CommandEmpty,
   CommandGroup,
   CommandInput,
@@ -41,7 +50,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Kbd, KbdGroup } from "@/components/ui/kbd";
 import {
   Popover,
   PopoverContent,
@@ -66,6 +77,7 @@ import {
 
 /** Overlays render in a portal, so they follow the active theme. */
 export function Overlays() {
+  const [search, setSearch] = useState(false);
   return (
     <section
       aria-label="Overlays"
@@ -83,12 +95,15 @@ export function Overlays() {
             </DialogTrigger>
             <DialogContent>
               <DialogHeader>
-                <DialogTitle>Rename chat</DialogTitle>
+                <DialogTitle>Rename Chat</DialogTitle>
                 <DialogDescription>
-                  Give this chat a name you will recognise.
+                  Give this Chat a name you will recognise.
                 </DialogDescription>
               </DialogHeader>
-              <Input aria-label="Chat name" defaultValue="Trip planning" />
+              <Field>
+                <FieldLabel>Name</FieldLabel>
+                <Input defaultValue="Trip planning" />
+              </Field>
               <DialogFooter>
                 <Button>Save</Button>
               </DialogFooter>
@@ -101,16 +116,15 @@ export function Overlays() {
             </AlertDialogTrigger>
             <AlertDialogContent>
               <AlertDialogHeader>
-                <AlertDialogTitle>Delete this chat?</AlertDialogTitle>
+                <AlertDialogTitle>Delete this Chat?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  This removes the chat and all of its messages. You can't undo
-                  this.
+                  This permanently deletes the Chat and its Messages.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
                 <AlertDialogCancel>Cancel</AlertDialogCancel>
                 <AlertDialogAction variant="destructive">
-                  Delete
+                  Delete Chat
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>
@@ -162,6 +176,31 @@ export function Overlays() {
             <TooltipContent>More actions</TooltipContent>
           </Tooltip>
 
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button variant="outline" size="icon" aria-label="New chat" />
+              }
+            >
+              <SquarePen />
+            </TooltipTrigger>
+            <TooltipContent>New chat</TooltipContent>
+          </Tooltip>
+
+          <Sheet>
+            <SheetTrigger render={<Button variant="outline" />}>
+              Sheet (left)
+            </SheetTrigger>
+            <SheetContent side="left">
+              <SheetHeader>
+                <SheetTitle>Sidebar</SheetTitle>
+                <SheetDescription>
+                  The mobile sidebar slides in with the drawer curve.
+                </SheetDescription>
+              </SheetHeader>
+            </SheetContent>
+          </Sheet>
+
           <Sheet>
             <SheetTrigger render={<Button variant="outline" />}>
               Sheet
@@ -176,15 +215,62 @@ export function Overlays() {
             </SheetContent>
           </Sheet>
 
-          <Button variant="outline" onClick={() => toast("Chat copied")}>
-            Toast
+          <Button
+            variant="outline"
+            onClick={() => toast.success("Custom instructions saved.")}
+          >
+            Success toast
           </Button>
           <Button
             variant="outline"
-            onClick={() => toast.error("Couldn't send message")}
+            onClick={() =>
+              toast("Chat archived.", {
+                action: { label: "Undo", onClick: () => {} },
+              })
+            }
+          >
+            Undo toast
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => toast.warning("2 Credits left.")}
+          >
+            Warning toast
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() =>
+              toast.error("Couldn't delete the Chat.", {
+                action: { label: "Try again", onClick: () => {} },
+              })
+            }
           >
             Error toast
           </Button>
+
+          <Button variant="outline" onClick={() => setSearch(true)}>
+            <Search data-icon="inline-start" />
+            Search (no animation)
+            <KbdGroup className="ml-1">
+              <Kbd>⌘</Kbd>
+              <Kbd>K</Kbd>
+            </KbdGroup>
+          </Button>
+          <CommandDialog
+            open={search}
+            onOpenChange={setSearch}
+            title="Search"
+            description="Search your Chats"
+          >
+            <CommandInput placeholder="Search chats" />
+            <CommandList>
+              <CommandEmpty>No chats found.</CommandEmpty>
+              <CommandGroup heading="Chats">
+                <CommandItem>Trip planning</CommandItem>
+                <CommandItem>Recipe ideas</CommandItem>
+              </CommandGroup>
+            </CommandList>
+          </CommandDialog>
         </div>
 
         <Command className="h-52 rounded-xl border">
