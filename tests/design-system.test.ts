@@ -29,15 +29,11 @@ describe("design tokens", () => {
   });
 
   test("primitives use transitions on named properties, not keyframe or `all`", () => {
-    // The sidebar rail is ticket d's (#100); drop this exemption with it.
-    const exempt = new Set([join("components", "ui", "sidebar.tsx")]);
-    const offenders = sourceFiles(join("components", "ui"))
-      .filter((file) => !exempt.has(file))
-      .filter((file) =>
-        /animate-in|animate-out|transition-all/.test(
-          readFileSync(join(root, file), "utf8"),
-        ),
-      );
+    const offenders = sourceFiles(join("components", "ui")).filter((file) =>
+      /animate-in|animate-out|transition-all/.test(
+        readFileSync(join(root, file), "utf8"),
+      ),
+    );
     expect(offenders).toEqual([]);
   });
 

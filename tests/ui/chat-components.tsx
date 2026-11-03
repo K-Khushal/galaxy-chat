@@ -1009,7 +1009,10 @@ test("the command palette offers System, Light and Dark themes", async () => {
       setTheme: (theme: string) => themes.push(theme),
     }),
   }));
-  mock.module("next/navigation", () => ({ useRouter: () => ({ push() {} }) }));
+  mock.module("next/navigation", () => ({
+    usePathname: () => shellPath,
+    useRouter: () => ({ push: (path: string) => shellPushes.push(path) }),
+  }));
   Object.assign(globalThis, {
     ResizeObserver: class {
       observe() {}
@@ -1021,7 +1024,7 @@ test("the command palette offers System, Light and Dark themes", async () => {
   const { SearchDialog } = await import("../../components/shell/search-dialog");
   await withAnimationFrames(async () => {
     const ui = render(<SearchDialog open onOpenChange={() => {}} />);
-    const input = ui.getByPlaceholderText("Search chats or choose an action");
+    const input = ui.getByPlaceholderText("Search chats");
     fireEvent.change(input, { target: { value: "theme" } });
     for (const label of ["Theme: System", "Theme: Light", "Theme: Dark"])
       expect(ui.getByText(label)).toBeTruthy();
@@ -1093,4 +1096,58 @@ test("Button pending holds the label for screen readers and blocks clicks", asyn
   expect((button as HTMLButtonElement).disabled).toBe(true);
   fireEvent.click(button);
   expect(clicks).toBe(0);
+});
+
+// Shell routes are mocked only for these client component tests.
+let shellPath = "/chat";
+const shellPushes: string[] = [];
+const { TemporaryToggle } = await import(
+  "../../components/shell/temporary-toggle"
+);
+const { SearchDialog } = await import("../../components/shell/search-dialog");
+
+test("Temporary chat toggle follows the path, navigates both ways, and hides on Settings", async () => {
+  await withAnimationFrames(async () => {
+    shellPath = "/chat";
+    const ui = render(<TemporaryToggle />);
+    const toggle = () => ui.getByRole("button", { name: "Temporary chat" });
+    expect(toggle().getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(toggle());
+    expect(shellPushes.at(-1)).toBe("/chat/temporary");
+    shellPath = "/chat/temporary";
+    ui.rerender(<TemporaryToggle />);
+    expect(toggle().getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(toggle());
+    expect(shellPushes.at(-1)).toBe("/chat");
+    shellPath = "/chat/example";
+    ui.rerender(<TemporaryToggle />);
+    expect(toggle().getAttribute("aria-pressed")).toBe("false");
+    shellPath = "/chat/settings";
+    ui.rerender(<TemporaryToggle />);
+    expect(ui.queryByRole("button", { name: "Temporary chat" })).toBeNull();
+  });
+});
+
+test("search hides empty group headings for empty query and unmatched results", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    Response.json({ chats: [] })) as unknown as typeof fetch;
+  // cmdk scrolls its active item into view.
+  HTMLElement.prototype.scrollIntoView = () => {};
+  try {
+    await withAnimationFrames(async () => {
+      const ui = render(<SearchDialog open onOpenChange={() => {}} />);
+      expect(ui.queryByText("Chats", { exact: true })).toBeNull();
+      expect(ui.getByText("Actions", { exact: true })).toBeTruthy();
+      fireEvent.change(ui.getByRole("combobox"), {
+        target: { value: "zzzz-unmatched" },
+      });
+      await waitFor(() => expect(ui.getByText("No chats found")).toBeTruthy());
+      expect(ui.queryByText("Actions", { exact: true })).toBeNull();
+      expect(ui.queryByText("Chats", { exact: true })).toBeNull();
+      cleanup();
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

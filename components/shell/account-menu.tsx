@@ -8,8 +8,10 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Kbd } from "@/components/ui/kbd";
 import { SidebarMenuButton } from "@/components/ui/sidebar";
 
 export type AccountUser = { name: string; email: string; image?: string };
@@ -44,24 +46,30 @@ export function AccountMenu({ user }: { user: AccountUser }) {
         </Avatar>
         <span className="grid min-w-0 flex-1 text-left leading-tight">
           <span className="truncate text-sm font-medium">{user.name}</span>
-          <span className="truncate text-xs text-muted-foreground">
-            {user.email}
-          </span>
         </span>
         <ChevronsUpDown className="ml-auto text-muted-foreground" />
       </DropdownMenuTrigger>
-      <DropdownMenuContent side="top" align="start" className="w-56">
+      <DropdownMenuContent side="top" align="start" className="w-60">
+        <div className="grid gap-1 px-2 py-2">
+          <span className="truncate text-sm font-medium">{user.name}</span>
+          <span className="truncate text-xs text-muted-foreground">
+            {user.email}
+          </span>
+        </div>
+        <DropdownMenuSeparator />
         <DropdownMenuItem render={<Link href="/chat/settings" />}>
           <Settings />
           Settings
+          <Kbd className="ml-auto">⌘,</Kbd>
         </DropdownMenuItem>
+        <DropdownMenuSeparator />
         <DropdownMenuItem
           disabled={pending}
           onClick={() => void signOut()}
           closeOnClick={false}
         >
           <LogOut />
-          {pending ? "Signing out..." : "Sign out"}
+          {pending ? "Signing out…" : "Sign out"}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

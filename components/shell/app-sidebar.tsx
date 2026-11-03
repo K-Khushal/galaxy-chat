@@ -1,24 +1,18 @@
 "use client";
 
-import {
-  PanelLeft,
-  Plus,
-  Search,
-  Settings,
-  Shield,
-  Sparkles,
-} from "lucide-react";
+import { PanelLeft, Search, SquarePen } from "lucide-react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { type ReactNode, useEffect, useState } from "react";
+import { GalaxyMark } from "@/components/icons/brand";
+import { Kbd } from "@/components/ui/kbd";
 import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
@@ -26,6 +20,7 @@ import {
   SidebarRail,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { EmptyState } from "@/components/ui/state";
 
 // The command palette (cmdk) loads the first time it is wanted.
 const loadSearchDialog = () => import("@/components/shell/search-dialog");
@@ -47,12 +42,32 @@ export function AppSidebar({
   chats?: ReactNode;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const [apple, setApple] = useState(true);
   const { toggleSidebar, state } = useSidebar();
   const [searchOpen, setSearchOpen] = useState(false);
   // Stays mounted after the first open so it can animate closed.
   const [searchWanted, setSearchWanted] = useState(false);
   useEffect(() => {
+    setApple(/Mac|iPhone|iPad|iPod/.test(navigator.platform));
     const listener = (event: KeyboardEvent) => {
+      if (event.key === "," && (event.metaKey || event.ctrlKey)) {
+        const target = document.activeElement;
+        if (
+          (target instanceof HTMLInputElement ||
+            target instanceof HTMLTextAreaElement) &&
+          target.selectionStart !== target.selectionEnd
+        )
+          return;
+        if (
+          target instanceof HTMLElement &&
+          target.isContentEditable &&
+          document.getSelection()?.toString()
+        )
+          return;
+        event.preventDefault();
+        router.push("/chat/settings");
+      }
       if (event.key.toLowerCase() === "k" && (event.metaKey || event.ctrlKey)) {
         event.preventDefault();
         setSearchWanted(true);
@@ -61,7 +76,7 @@ export function AppSidebar({
     };
     document.addEventListener("keydown", listener);
     return () => document.removeEventListener("keydown", listener);
-  }, []);
+  }, [router]);
 
   return (
     <>
@@ -69,9 +84,9 @@ export function AppSidebar({
         <SidebarHeader className="flex-row items-center justify-between gap-2 p-2 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:justify-start">
           <Link
             href="/chat"
-            className="flex h-8 min-w-0 items-center gap-2 rounded-lg px-2 pointer-coarse:min-h-11 font-medium tracking-tight outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+            className="flex h-8 min-w-0 items-center gap-2 rounded-lg px-2 pointer-coarse:min-h-11 text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring"
           >
-            <Sparkles className="size-4 shrink-0 text-sidebar-primary" />
+            <GalaxyMark className="size-5 shrink-0 text-primary" />
             <span className="truncate group-data-[collapsible=icon]:sr-only">
               Galaxy
             </span>
@@ -100,22 +115,13 @@ export function AppSidebar({
                     isActive={pathname === "/chat"}
                     render={<Link href="/chat" />}
                   >
-                    <Plus />
+                    <SquarePen />
                     <span>New chat</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
                 <SidebarMenuItem>
                   <SidebarMenuButton
-                    tooltip="New Temporary chat"
-                    isActive={pathname === "/chat/temporary"}
-                    render={<Link href="/chat/temporary" />}
-                  >
-                    <Shield />
-                    <span>New Temporary chat</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-                <SidebarMenuItem>
-                  <SidebarMenuButton
+                    aria-label="Search"
                     tooltip="Search"
                     onPointerEnter={() => void loadSearchDialog()}
                     onFocus={() => void loadSearchDialog()}
@@ -126,6 +132,12 @@ export function AppSidebar({
                   >
                     <Search />
                     <span>Search</span>
+                    <Kbd
+                      aria-hidden="true"
+                      className="ml-auto group-data-[collapsible=icon]:hidden"
+                    >
+                      {apple ? "⌘K" : "Ctrl K"}
+                    </Kbd>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               </SidebarMenu>
@@ -133,31 +145,13 @@ export function AppSidebar({
           </SidebarGroup>
 
           <SidebarGroup className="group-data-[collapsible=icon]:hidden">
-            <SidebarGroupLabel>Chats</SidebarGroupLabel>
             <SidebarGroupContent>
-              {chats ?? (
-                <p className="px-2 py-1.5 text-sm text-muted-foreground">
-                  Your chats will appear here.
-                </p>
-              )}
+              {chats ?? <EmptyState size="inline" title="No chats yet" />}
             </SidebarGroupContent>
           </SidebarGroup>
         </SidebarContent>
 
-        <SidebarFooter className="gap-1 p-2">
-          <SidebarMenu>
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                tooltip="Settings"
-                render={<Link href="/chat/settings" />}
-              >
-                <Settings />
-                <span>Settings</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          </SidebarMenu>
-          {footer}
-        </SidebarFooter>
+        <SidebarFooter className="gap-1 p-2">{footer}</SidebarFooter>
         <SidebarRail />
       </Sidebar>
       {searchWanted && (
