@@ -1,6 +1,6 @@
 "use client";
 import { ChevronDown, Lock } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -24,6 +24,7 @@ export function ModelPicker({
   disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const [search, setSearch] = useState("");
   const query = search.trim().toLowerCase();
   const matches = MODELS.filter((m) =>
@@ -39,6 +40,7 @@ export function ModelPicker({
   return (
     <>
       <Button
+        ref={triggerRef}
         type="button"
         variant="ghost"
         size="sm"
@@ -50,7 +52,7 @@ export function ModelPicker({
         <ChevronDown />
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-md" finalFocus={triggerRef}>
           <DialogTitle>Choose a model</DialogTitle>
           <DialogDescription>
             Use Credits on selected models, or add your OpenRouter key.
