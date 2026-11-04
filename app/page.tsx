@@ -44,7 +44,11 @@ export default async function Home() {
   const session = await getAuth().api.getSession({ headers: requestHeaders });
   if (session) redirect("/chat");
   return (
-    <main className="flex min-h-dvh items-center justify-center px-4 py-12">
+    <main className="relative flex min-h-dvh flex-col items-center justify-center px-4 py-12">
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-0 top-0 h-[60dvh] bg-[radial-gradient(60%_50%_at_50%_0%,color-mix(in_oklch,var(--primary)_12%,transparent),transparent)]"
+      />
       <script
         type="application/ld+json"
         // biome-ignore lint/security/noDangerouslySetInnerHtml: A JSON data block is never executed, so the CSP nonce does not apply; `<` is escaped against injection.

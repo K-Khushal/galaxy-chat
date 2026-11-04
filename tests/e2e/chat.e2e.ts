@@ -524,12 +524,13 @@ test("attachment removal and size/type rejection", async ({ page }) => {
   await expect(page.getByText(/program.exe.*can’t be attached/)).toBeVisible();
 });
 
-test("basic accessibility in Chat and Settings", async ({ page }) => {
-  for (const path of ["/chat", "/chat/settings"]) {
+test("basic accessibility in sign-in, Chat and Settings", async ({ page }) => {
+  for (const path of ["/", "/chat", "/chat/settings"]) {
     await page.goto(path);
     await expect(
       page
-        .getByRole("button", { name: "Choose model" })
+        .getByRole("button", { name: "Continue with GitHub" })
+        .or(page.getByRole("button", { name: "Choose model" }))
         .or(page.getByLabel("About you", { exact: true })),
     ).toBeVisible();
     const result = await new AxeBuilder({ page })
@@ -646,8 +647,11 @@ test("sign-in methods and email-code UI through the offline seam", async ({
   await page.getByLabel("Email", { exact: true }).fill("offline@example.com");
   await page.getByRole("button", { name: "Email me a code" }).click();
   await expect(page.getByLabel("Email", { exact: true })).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "Sign in", exact: true }),
+  ).toBeVisible();
+  // The sixth digit submits the code, so there is no click on "Sign in".
   await page.getByLabel("Six-digit code").fill("123456");
-  await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page).toHaveURL(/\/chat$/);
   expect((await (await page.request.get("/api/credits")).json()).credits).toBe(
     10,
