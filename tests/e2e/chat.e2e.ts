@@ -210,7 +210,8 @@ test("spend Credits, see no_credits, then send with a BYOK key", async ({
   expect((await view(page)).messages.at(-1).payment).toBe("byok");
 });
 
-test("no Chat is created when nothing can pay for it", async ({ page }) => {
+/** Spends every Credit through Temporary Replies, which store nothing. */
+async function spendAllCredits(page: Page) {
   const origin = "http://127.0.0.1:34871";
   for (let i = 0; i < 10; i++) {
     const response = await page.request.post("/api/temporary/messages", {
@@ -229,8 +230,13 @@ test("no Chat is created when nothing can pay for it", async ({ page }) => {
         (await (await page.request.get("/api/credits")).json()).credits,
     )
     .toBe(0);
-  const chats = async () =>
-    (await (await page.request.get("/api/chats")).json()).chats.length;
+}
+const chatCount = async (page: Page) =>
+  (await (await page.request.get("/api/chats")).json()).chats.length;
+
+test("no Chat is created when nothing can pay for it", async ({ page }) => {
+  await spendAllCredits(page);
+  const chats = () => chatCount(page);
   const before = await chats();
   await page.goto("/chat");
   await expect(page.getByText("0 Credits left", { exact: true })).toBeVisible();
@@ -240,6 +246,39 @@ test("no Chat is created when nothing can pay for it", async ({ page }) => {
   ).toBeVisible();
   await expect(page).toHaveURL(/\/chat$/);
   expect(await chats()).toBe(before);
+});
+
+test("with Credits still loading, the server refuses the Chat and the composer says why", async ({
+  page,
+}) => {
+  await spendAllCredits(page);
+  const before = await chatCount(page);
+  // Hold every Credits answer: the client must not wait for it, or guess.
+  const held: (() => void)[] = [];
+  await page.route("**/api/credits", (route) => {
+    held.push(() => void route.continue().catch(() => {}));
+  });
+  await page.goto("/chat");
+  const refused = page.waitForResponse(
+    (r) =>
+      r.url().endsWith("/api/chats") &&
+      r.request().method() === "POST" &&
+      r.status() === 402,
+  );
+  await send(page, "Credits are still loading");
+  expect(await (await refused).json()).toEqual({ error: "no_credits" });
+  await expect(
+    page.getByText(
+      "Your Credits are used up. Add your OpenRouter key to keep chatting.",
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Add your OpenRouter key", exact: true }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(/\/chat$/);
+  await expect(composer(page)).toHaveValue("Credits are still loading");
+  expect(await chatCount(page)).toBe(before);
+  for (const release of held) release();
 });
 
 test("sidebar rename, pin, message search with Command K, and delete", async ({
@@ -287,6 +326,8 @@ test("Temporary chat streams without saving anything", async ({ page }) => {
   await expect(
     page.getByRole("log", { name: "Temporary Messages" }),
   ).toContainText("A thoughtful Reply. Complete.");
+  // The meter follows the Credit this Reply spent, without a reload.
+  await expect(page.getByText("9 Credits left", { exact: true })).toBeVisible();
   await reload(page);
   await expect(
     page.getByRole("log", { name: "Temporary Messages" }),

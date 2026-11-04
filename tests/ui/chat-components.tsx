@@ -13,6 +13,7 @@ for (const key of [
   "getComputedStyle",
   "localStorage",
   "sessionStorage",
+  "Event",
 ])
   Object.defineProperty(globalThis, key, {
     value:
@@ -1194,5 +1195,162 @@ test("search hides empty group headings for empty query and unmatched results", 
     });
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+/** A UI message stream response: the given chunks, then (unless held) the end. */
+function sseReply(chunks: object[], signal?: AbortSignal | null, hold = false) {
+  return new Response(
+    new ReadableStream({
+      start(controller) {
+        for (const chunk of chunks)
+          controller.enqueue(
+            new TextEncoder().encode(`data: ${JSON.stringify(chunk)}\n\n`),
+          );
+        if (!hold) controller.close();
+        signal?.addEventListener(
+          "abort",
+          () => controller.error(new DOMException("aborted", "AbortError")),
+          { once: true },
+        );
+      },
+    }),
+    {
+      headers: {
+        "content-type": "text/event-stream",
+        "x-vercel-ai-ui-message-stream": "v1",
+      },
+    },
+  );
+}
+
+test("the Temporary meter refreshes when a Reply settles, and again after Stop for the refund", async () => {
+  const { TemporaryChat } = await import(
+    "../../components/chat/temporary-chat"
+  );
+  const original = globalThis.fetch;
+  let serverCredits = 10;
+  let sends = 0;
+  globalThis.fetch = Object.assign(
+    async (url: RequestInfo | URL, options?: RequestInit) => {
+      if (String(url) === "/api/credits")
+        return Response.json({ credits: serverCredits, key: null });
+      sends++;
+      serverCredits--; // The server spends before streaming.
+      if (sends === 1)
+        return sseReply([
+          { type: "start", messageId: "reply-1" },
+          { type: "text-start", id: "t" },
+          { type: "text-delta", id: "t", delta: "Hi there" },
+          { type: "text-end", id: "t" },
+          { type: "finish" },
+        ]);
+      // Stopped before the first token: the server refunds once it notices.
+      options?.signal?.addEventListener(
+        "abort",
+        () => setTimeout(() => serverCredits++, 50),
+        { once: true },
+      );
+      return sseReply(
+        [{ type: "start", messageId: "reply-2" }],
+        options?.signal,
+        true,
+      );
+    },
+    { preconnect: original.preconnect },
+  );
+  try {
+    const ui = render(<TemporaryChat />);
+    await ui.findByText("10 Credits left");
+    fireEvent.change(ui.getByRole("textbox"), { target: { value: "Hello" } });
+    await act(async () => {
+      fireEvent.click(ui.getByRole("button", { name: "Send message" }));
+    });
+    await ui.findByText("Hi there");
+    await ui.findByText("9 Credits left");
+
+    fireEvent.change(ui.getByRole("textbox"), { target: { value: "Again" } });
+    await act(async () => {
+      fireEvent.click(ui.getByRole("button", { name: "Send message" }));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    await act(async () => {
+      fireEvent.click(ui.getByRole("button", { name: "Stop Reply" }));
+    });
+    await ui.findByText("8 Credits left");
+    // The refund lands after Stop; the meter looks again and shows it.
+    await waitFor(() => expect(ui.getByText("9 Credits left")).toBeTruthy(), {
+      timeout: 3000,
+    });
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test("the Temporary meter follows the selected model", () =>
+  withAnimationFrames(async () => {
+    const { TemporaryChat } = await import(
+      "../../components/chat/temporary-chat"
+    );
+    const original = globalThis.fetch;
+    globalThis.fetch = Object.assign(
+      async () => Response.json({ credits: 9, key: { last4: "abcd" } }),
+      { preconnect: original.preconnect },
+    );
+    try {
+      const ui = render(<TemporaryChat />);
+      await ui.findByText("9 Credits left");
+      fireEvent.click(ui.getByRole("button", { name: "Choose model" }));
+      const sonnet = await ui.findByText("Claude Sonnet 5.5");
+      await act(async () => {
+        fireEvent.click(sonnet);
+      });
+      // The meter beside Send, not the picker's "Your key" group.
+      const meter = ui
+        .getAllByRole("button")
+        .find((b) => /Credits? left|Your key/.test(b.textContent ?? ""));
+      expect(meter?.textContent).toBe("Your key");
+    } finally {
+      globalThis.fetch = original;
+    }
+  }));
+
+test("a new Chat waits for the server, not the Credits fetch, and shows its 0-Credits refusal", async () => {
+  const { NewChat } = await import("../../components/chat/new-chat");
+  const original = globalThis.fetch;
+  const created: string[] = [];
+  globalThis.fetch = Object.assign(
+    async (url: RequestInfo | URL, options?: RequestInit) => {
+      // Credits never arrive: the client must not guess.
+      if (String(url) === "/api/credits")
+        return new Promise<Response>(() => {});
+      created.push(String(options?.body));
+      return Response.json({ error: "no_credits" }, { status: 402 });
+    },
+    { preconnect: original.preconnect },
+  );
+  localStorage.clear();
+  sessionStorage.clear();
+  const pushes = shellPushes.length;
+  try {
+    const ui = render(<NewChat />);
+    fireEvent.change(ui.getByRole("textbox"), { target: { value: "Hello" } });
+    await act(async () => {
+      fireEvent.click(ui.getByRole("button", { name: "Send message" }));
+    });
+    expect(created).toHaveLength(1);
+    await ui.findByText(
+      "Your Credits are used up. Add your OpenRouter key to keep chatting.",
+    );
+    expect(
+      ui.getByRole("button", { name: "Add your OpenRouter key" }),
+    ).toBeTruthy();
+    // No Chat, no navigation, and the draft is kept.
+    expect(shellPushes.length).toBe(pushes);
+    expect((ui.getByRole("textbox") as HTMLTextAreaElement).value).toBe(
+      "Hello",
+    );
+  } finally {
+    globalThis.fetch = original;
   }
 });
