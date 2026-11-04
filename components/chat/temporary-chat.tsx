@@ -9,6 +9,13 @@ import { ByokDialog } from "./byok-dialog";
 import { Composer } from "./composer";
 import { ModelPicker } from "./model-picker";
 import { useByokKey } from "./use-byok-key";
+import { creditsChanged } from "./use-credits";
+
+/**
+ * A Temporary Stop just closes the request, and the server refunds a credit
+ * only once it notices; this is how long to wait before looking again.
+ */
+const STOP_SETTLE_MS = 1500;
 
 /** Draft, history and streamed Replies live only in this page's memory. */
 export function TemporaryChat() {
@@ -35,7 +42,15 @@ export function TemporaryChat() {
       }),
     [],
   );
-  const chat = useChat({ transport });
+  const chat = useChat({
+    transport,
+    // A finished stream is already settled: the server spends or refunds
+    // before closing it. A Stop or dropped connection settles a moment later.
+    onFinish: ({ isAbort, isDisconnect }) => {
+      creditsChanged();
+      if (isAbort || isDisconnect) setTimeout(creditsChanged, STOP_SETTLE_MS);
+    },
+  });
   const { stop } = chat;
   useEffect(
     () => () => {
@@ -108,6 +123,7 @@ export function TemporaryChat() {
         busy={busy}
         onSend={send}
         onStop={() => void stop()}
+        model={model}
         picker={
           <ModelPicker
             model={model}

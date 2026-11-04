@@ -3,6 +3,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 type CreditsResponse = { credits: number; key: unknown };
 
+/** Tells every useCredits to fetch again, e.g. once a Generation settles. */
+export function creditsChanged() {
+  window.dispatchEvent(new Event("galaxy-account-changed"));
+}
+
 /**
  * What the next Message can be paid with: remaining Credits and whether a BYOK
  * key is saved. Both are null until the first answer arrives. Refreshes when

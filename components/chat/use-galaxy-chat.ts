@@ -6,6 +6,7 @@ import { attachmentIdFromUrl, attachmentUrl } from "@/lib/attachments/rules";
 import type { ChatMessage } from "@/lib/chat/store";
 import { api, type ChatView } from "./api";
 import type { StoredAttachment } from "./attachment-upload";
+import { creditsChanged } from "./use-credits";
 
 type FilePart = {
   type: "file";
@@ -69,7 +70,7 @@ export function useGalaxyChat(initial: ChatView) {
     throttle: 50,
     resume: !!initial.generation,
     onFinish: () => {
-      window.dispatchEvent(new Event("galaxy-account-changed"));
+      creditsChanged();
       void reloadRef.current();
     },
   });
