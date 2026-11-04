@@ -146,9 +146,13 @@ for (const viewport of VIEWPORTS) {
 
     test("dialogs fit the screen", async ({ page }) => {
       await signIn(page);
-      await page.getByRole("button", { name: "Choose model" }).click();
-      await expect(page.getByRole("dialog")).toBeVisible();
-      await expectInsideViewport(page, '[data-slot="dialog-content"]');
+      // A click before hydration does nothing, so retry until the popover opens.
+      await expect(async () => {
+        if (!(await page.getByRole("dialog").isVisible()))
+          await page.getByRole("button", { name: "Choose model" }).click();
+        await expect(page.getByRole("dialog")).toBeVisible({ timeout: 2_000 });
+      }).toPass();
+      await expectInsideViewport(page, '[data-slot="popover-content"]');
       await page.keyboard.press("Escape");
       if (compact) await openDrawer(page);
       await page.getByRole("button", { name: "Search" }).click();

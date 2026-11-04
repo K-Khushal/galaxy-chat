@@ -22,6 +22,15 @@ for (const key of [
     configurable: true,
     writable: true,
   });
+// cmdk (the model picker, search) measures and scrolls its list.
+Object.assign(globalThis, {
+  ResizeObserver: class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  },
+});
+Element.prototype.scrollIntoView = () => {};
 const { render, fireEvent, cleanup, act, waitFor } = await import(
   "@testing-library/react"
 );
@@ -398,7 +407,8 @@ test("Temporary chats keep drafts in memory without persisting or sending them",
   let calls = 0;
   globalThis.fetch = Object.assign(
     async (url: RequestInfo | URL) => {
-      if (String(url) === "/api/byok") return Response.json({ key: null });
+      if (String(url) === "/api/credits")
+        return Response.json({ credits: 10, key: null });
       calls++;
       throw new Error("Unexpected server write");
     },
@@ -432,7 +442,8 @@ test("Temporary sends client history, Stop aborts fetch and remount clears Messa
   let signal: AbortSignal | undefined;
   globalThis.fetch = Object.assign(
     async (_url: RequestInfo | URL, options?: RequestInit) => {
-      if (String(_url) === "/api/byok") return Response.json({ key: null });
+      if (String(_url) === "/api/credits")
+        return Response.json({ credits: 10, key: null });
       bodies.push(JSON.parse(String(options?.body)));
       signal = options?.signal ?? undefined;
       return new Response(
@@ -613,9 +624,9 @@ function fakeUploader() {
   return { upload, calls };
 }
 
-const pick = (ui: ReturnType<typeof render>, files: File[], index = 1) => {
-  const inputs = ui.container.querySelectorAll('input[type="file"]');
-  fireEvent.change(inputs[index] as HTMLInputElement, { target: { files } });
+const pick = (ui: ReturnType<typeof render>, files: File[]) => {
+  const input = ui.container.querySelector('input[type="file"]');
+  fireEvent.change(input as HTMLInputElement, { target: { files } });
 };
 const file = (name: string, type: string, size = 100) =>
   new File([new Uint8Array(size)], name, { type });
@@ -778,7 +789,7 @@ test("a failed upload explains itself and blocks Send until removed", async () =
   expect(send.disabled).toBe(false);
 });
 
-test("a model that cannot read images turns off photos and refuses dropped images", () =>
+test("one picker accepts images and files; a model that cannot read images refuses the image", () =>
   withAnimationFrames(async () => {
     const { upload, calls } = fakeUploader();
     const ui = render(
@@ -790,12 +801,11 @@ test("a model that cannot read images turns off photos and refuses dropped image
         onStop={() => {}}
       />,
     );
-    fireEvent.click(ui.getByRole("button", { name: "Add attachment" }));
-    const photos = await ui.findByRole("menuitem", { name: /Add photos/ });
-    expect(photos.getAttribute("aria-disabled")).toBe("true");
-    expect(photos.textContent).toContain("acme/text-only can’t read images.");
-    const files = await ui.findByRole("menuitem", { name: /Add files/ });
-    expect(files.getAttribute("aria-disabled")).not.toBe("true");
+    const inputs = ui.container.querySelectorAll('input[type="file"]');
+    expect(inputs).toHaveLength(1);
+    const accept = inputs[0]?.getAttribute("accept") ?? "";
+    expect(accept).toContain("image/png");
+    expect(accept).toContain("application/pdf");
     pick(ui, [file("a.png", "image/png"), file("b.txt", "text/plain")]);
     expect(calls.map((c) => c.file.name)).toEqual(["b.txt"]);
     expect(ui.getByRole("alert").textContent).toContain("can’t read images");
@@ -893,6 +903,41 @@ test("a thumbnail opens a larger view", () =>
     );
   }));
 const { ModelPicker } = await import("../../components/chat/model-picker");
+test("the model picker is a popover grouped by payment, with provider marks, a check and locks", () =>
+  withAnimationFrames(async () => {
+    const picked: string[] = [];
+    let keyAdds = 0;
+    const ui = render(
+      <ModelPicker
+        model="openai/gpt-6-luna"
+        onChange={(id) => picked.push(id)}
+        hasKey={false}
+        addKey={() => {
+          keyAdds++;
+        }}
+      />,
+    );
+    const trigger = ui.getByRole("button", { name: "Choose model" });
+    expect(trigger.querySelector('svg[data-provider="OpenAI"]')).toBeTruthy();
+    fireEvent.click(trigger);
+    const popup = await ui.findByRole("dialog");
+    // A popover anchored to its trigger: no title or description.
+    expect(popup.getAttribute("aria-labelledby")).toBeNull();
+    expect(popup.getAttribute("data-slot")).toBe("popover-content");
+    expect(ui.getByText("Credit models")).toBeTruthy();
+    expect(ui.getByText("Your key")).toBeTruthy();
+    const options = ui.getAllByRole("option");
+    const current = options.find((o) => o.getAttribute("data-checked"));
+    expect(current?.textContent).toBe("GPT-6 Luna");
+    expect(current?.querySelector("svg.lucide-check")).toBeTruthy();
+    const locked = options.find((o) => o.querySelector("svg.lucide-lock"));
+    expect(locked).toBeTruthy();
+    expect(ui.queryByText("Add your OpenRouter key")).toBeNull();
+    // A locked model asks for a key instead of switching.
+    fireEvent.click(locked as HTMLElement);
+    expect(keyAdds).toBe(1);
+    expect(picked).toEqual([]);
+  }));
 test("BYOK users can pick a custom OpenRouter model ID; others are asked for a key", () =>
   withAnimationFrames(async () => {
     const picked: string[] = [];
