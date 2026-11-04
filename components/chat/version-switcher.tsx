@@ -1,6 +1,7 @@
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import type { VersionInfo } from "@/lib/chat/tree";
+import { ActionButton } from "./reply-actions";
+
 export function VersionSwitcher({
   versions,
   disabled,
@@ -13,30 +14,26 @@ export function VersionSwitcher({
   if (versions.ids.length < 2) return null;
   return (
     <fieldset
-      className="flex items-center text-xs text-muted-foreground"
+      className="inline-flex items-center text-caption text-muted-foreground tabular-nums"
       aria-label="Message Versions"
     >
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        aria-label="Previous Version"
+      <ActionButton
+        label="Previous Version"
         disabled={disabled || versions.index <= 0}
         onClick={() => onSwitch(versions.ids[versions.index - 1])}
       >
         <ChevronLeft />
-      </Button>
+      </ActionButton>
       <span aria-live="polite">
         {versions.index + 1}/{versions.ids.length}
       </span>
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        aria-label="Next Version"
+      <ActionButton
+        label="Next Version"
         disabled={disabled || versions.index >= versions.ids.length - 1}
         onClick={() => onSwitch(versions.ids[versions.index + 1])}
       >
         <ChevronRight />
-      </Button>
+      </ActionButton>
     </fieldset>
   );
 }

@@ -1,6 +1,10 @@
 "use client";
+import { Collapsible } from "@base-ui/react/collapsible";
+import { Brain, ChevronRight } from "lucide-react";
 import { useEffect, useState } from "react";
 import { ReplyMarkdown } from "@/components/elements/reply-markdown";
+import { cn } from "@/lib/utils";
+
 export function Reasoning({
   text,
   thinking,
@@ -19,17 +23,23 @@ export function Reasoning({
     return () => clearInterval(timer);
   }, [thinking]);
   return (
-    <details className="mb-3 text-sm text-muted-foreground">
-      <summary className="cursor-pointer rounded-sm py-1 focus-visible:ring-2 focus-visible:ring-ring">
-        {thinking
-          ? `Thinking for ${seconds}s`
-          : seconds
-            ? `Thought for ${seconds}s`
-            : "Thought process"}
-      </summary>
-      <div className="mt-2 border-l pl-4">
-        <ReplyMarkdown>{text}</ReplyMarkdown>
-      </div>
-    </details>
+    <Collapsible.Root className="mb-3">
+      <Collapsible.Trigger className="group flex items-center gap-1.5 rounded-md text-caption text-muted-foreground outline-none transition-colors duration-80 hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50">
+        <Brain className="size-3.5" />
+        <span className={cn(thinking && "text-shimmer")}>
+          {thinking
+            ? `Thinking for ${seconds}s`
+            : seconds
+              ? `Thought for ${seconds}s`
+              : "Thought process"}
+        </span>
+        <ChevronRight className="size-3.5 transition-transform duration-160 group-data-panel-open:rotate-90 motion-reduce:transition-none" />
+      </Collapsible.Trigger>
+      <Collapsible.Panel className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-240 ease-out data-starting-style:h-0 data-ending-style:h-0 motion-reduce:transition-none">
+        <div className="mt-2 border-l pl-3 text-sm text-muted-foreground">
+          <ReplyMarkdown>{text}</ReplyMarkdown>
+        </div>
+      </Collapsible.Panel>
+    </Collapsible.Root>
   );
 }
