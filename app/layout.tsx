@@ -43,7 +43,7 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
-  // The on-screen keyboard shrinks the layout, so the composer stays above it.
+  // Chromium-only (WebKit logs it as unknown): keeps `100dvh` above the keyboard without waiting for ViewportHeight.
   interactiveWidget: "resizes-content",
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: THEME_COLORS.light },

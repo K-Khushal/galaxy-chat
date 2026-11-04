@@ -64,6 +64,11 @@ function Button({
         buttonVariants({ variant, size }),
         // A pending button is busy, not unavailable, so it keeps full colour.
         pending && "disabled:opacity-100",
+        // A solid fill that fades only looks washed-out, so these go neutral (§2.8).
+        disabled &&
+          !pending &&
+          (variant === "default" || variant === "destructive") &&
+          "bg-muted text-muted-foreground opacity-100",
         className,
       )}
       disabled={disabled || pending}

@@ -14,7 +14,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { EmptyState } from "@/components/ui/state";
+import { EmptyState, InlineAlert } from "@/components/ui/state";
 import {
   Tooltip,
   TooltipContent,
@@ -42,28 +42,32 @@ export function ArchivedChats({
   const [confirming, setConfirming] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [restoreFailure, setRestoreFailure] = useState("");
+  const [deleteFailure, setDeleteFailure] = useState("");
 
   async function restore(id: string) {
     setRestoring(id);
+    setRestoreFailure("");
     try {
       await api(`/api/chats/${id}`, { archived: false }, "PATCH");
       await onRestored(id);
       toast.success("Chat restored.");
     } catch (error) {
-      toast.error(errorCopy(error as Error));
+      setRestoreFailure(errorCopy(error as Error));
     } finally {
       setRestoring(null);
     }
   }
   async function remove(id: string) {
     setDeleting(true);
+    setDeleteFailure("");
     try {
       await api(`/api/chats/${id}`, {}, "DELETE");
       setConfirming(null);
       await onDeleted(id);
       toast.success("Chat deleted.");
     } catch (error) {
-      toast.error(errorCopy(error as Error));
+      setDeleteFailure(errorCopy(error as Error));
     } finally {
       setDeleting(false);
     }
@@ -84,6 +88,11 @@ export function ArchivedChats({
   return (
     <>
       <SettingsGroup title="Archived chats">
+        {restoreFailure ? (
+          <div className="p-3">
+            <InlineAlert tone="error">{restoreFailure}</InlineAlert>
+          </div>
+        ) : null}
         <SettingsList
           className={chats.length ? "divide-y" : "grid place-items-center px-4"}
         >
@@ -150,7 +159,9 @@ export function ArchivedChats({
       <AlertDialog
         open={confirming !== null}
         onOpenChange={(open) => {
-          if (!open && !deleting) setConfirming(null);
+          if (open || deleting) return;
+          setConfirming(null);
+          setDeleteFailure("");
         }}
       >
         <AlertDialogContent>
@@ -160,6 +171,9 @@ export function ArchivedChats({
               This permanently deletes the Chat and its Messages.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {deleteFailure ? (
+            <InlineAlert tone="error">{deleteFailure}</InlineAlert>
+          ) : null}
           <AlertDialogFooter>
             <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
             <AlertDialogAction

@@ -30,6 +30,9 @@ const { render, fireEvent, cleanup, waitFor, act } = await import(
 const { Personalization } = await import(
   "../../components/settings/personalization"
 );
+const { OpenRouterKey } = await import(
+  "../../components/settings/openrouter-key"
+);
 const { ArchivedChats } = await import(
   "../../components/settings/archived-chats"
 );
@@ -114,4 +117,103 @@ test("confirming Delete Chat deletes the Chat", async () => {
   fireEvent.click(ui.getByRole("button", { name: "Delete Chat" }));
   await waitFor(() => expect(deleted).toEqual(["c1"]));
   expect(calls).toEqual(["DELETE /api/chats/c1"]);
+});
+
+function failWith(error: string, status = 500) {
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({ error }), {
+      status,
+    })) as unknown as typeof fetch;
+}
+
+test("a failed save shows an alert in the card, not a toast, and keeps the draft", async () => {
+  failWith("connection_failed");
+  let saved = false;
+  const ui = render(
+    <Personalization
+      saved={{ aboutYou: "", responseInstructions: "" }}
+      onSaved={() => {
+        saved = true;
+      }}
+    />,
+  );
+  fireEvent.change(ui.getByLabelText("About you"), {
+    target: { value: "Astronomer" },
+  });
+  fireEvent.click(ui.getByRole("button", { name: "Save instructions" }));
+  const alert = await waitFor(() => ui.getByRole("alert"));
+  expect(alert.textContent).toContain("Something went wrong");
+  expect(saved).toBe(false);
+  expect((ui.getByLabelText("About you") as HTMLTextAreaElement).value).toBe(
+    "Astronomer",
+  );
+  // Editing clears the stale failure.
+  fireEvent.change(ui.getByLabelText("About you"), {
+    target: { value: "Astronomer and cook" },
+  });
+  expect(ui.queryByRole("alert")).toBeNull();
+});
+
+test("an over-long field shows its error below the field and sends nothing", async () => {
+  const calls: string[] = [];
+  globalThis.fetch = (async (url: string) => {
+    calls.push(url);
+    return new Response(null, { status: 204 });
+  }) as unknown as typeof fetch;
+  const ui = render(
+    <Personalization
+      saved={{ aboutYou: "", responseInstructions: "" }}
+      onSaved={() => {}}
+    />,
+  );
+  const about = ui.getByLabelText("About you");
+  fireEvent.change(about, { target: { value: "a".repeat(2001) } });
+  // Submit the form directly: the browser's own maxLength check is not the subject.
+  fireEvent.submit(about.closest("form") as HTMLFormElement);
+  await waitFor(() =>
+    expect(ui.getByText("Keep this under 2,000 characters.")).not.toBeNull(),
+  );
+  expect(about.getAttribute("aria-invalid")).toBe("true");
+  expect(ui.queryByRole("alert")).toBeNull();
+  expect(calls).toEqual([]);
+  // Fixing the field clears its error without another submit.
+  fireEvent.change(about, { target: { value: "a".repeat(2000) } });
+  await waitFor(() =>
+    expect(ui.queryByText("Keep this under 2,000 characters.")).toBeNull(),
+  );
+});
+
+test("a rejected key test shows an alert in the OpenRouter key card", async () => {
+  failWith("provider_key_rejected", 400);
+  const ui = render(
+    <OpenRouterKey
+      saved={{ updatedAt: "2026-01-02T00:00:00Z" }}
+      onChanged={async () => {}}
+    />,
+  );
+  fireEvent.click(ui.getByRole("button", { name: "Test key" }));
+  const alert = await waitFor(() => ui.getByRole("alert"));
+  expect(alert.textContent).toContain("OpenRouter did not accept this key");
+  // The title is not repeated as the row title.
+  expect(ui.getAllByText("OpenRouter key")).toHaveLength(1);
+});
+
+test("a failed unarchive shows an alert in the card and keeps the Chat listed", async () => {
+  failWith("connection_failed");
+  const ui = renderArchived([], []);
+  failWith("connection_failed");
+  fireEvent.click(ui.getByRole("button", { name: "Unarchive" }));
+  const alert = await waitFor(() => ui.getByRole("alert"));
+  expect(alert.textContent).toContain("Something went wrong");
+  expect(ui.getByText("Old Chat")).not.toBeNull();
+});
+
+test("a failed delete shows the alert inside the confirmation, which stays open", async () => {
+  const ui = renderArchived([], []);
+  failWith("connection_failed");
+  fireEvent.click(ui.getByRole("button", { name: "Delete" }));
+  await waitFor(() => ui.getByRole("alertdialog"));
+  fireEvent.click(ui.getByRole("button", { name: "Delete Chat" }));
+  const alert = await waitFor(() => ui.getByRole("alert"));
+  expect(ui.getByRole("alertdialog").contains(alert)).toBe(true);
 });
