@@ -1,9 +1,17 @@
 "use client";
-import { Archive, MoreHorizontal, Pencil, Pin, Trash } from "lucide-react";
+import {
+  Archive,
+  MoreHorizontal,
+  Pencil,
+  Pin,
+  PinOff,
+  Trash2,
+} from "lucide-react";
 import { LazyMotion, m } from "motion/react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -18,6 +26,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
@@ -26,10 +35,11 @@ import {
   SidebarMenuButton,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { Skeleton } from "@/components/ui/skeleton";
-import { useReducedMotion } from "@/hooks/use-reduced-motion";
+import { SkeletonText } from "@/components/ui/skeleton";
+import { EmptyState, InlineAlert } from "@/components/ui/state";
 import { chatGroup, sortedChats } from "@/lib/chat/groups";
 import type { ChatSummary } from "@/lib/chat/store";
+import { spring } from "@/lib/motion";
 import { api } from "./api";
 export function RecentChats() {
   const [chats, setChats] = useState<ChatSummary[]>([]);
@@ -44,7 +54,7 @@ export function RecentChats() {
   const pathname = usePathname();
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
-  const reduced = useReducedMotion();
+
   useEffect(() => {
     let active = true;
     const load = () => {
@@ -58,7 +68,7 @@ export function RecentChats() {
           }
         })
         .catch(() => {
-          if (active) setError("Could not load chats. Refresh to try again.");
+          if (active) setError("Couldn't load your Chats.");
         });
     };
     load();
@@ -73,27 +83,39 @@ export function RecentChats() {
     mutating.current = true;
     setPending(chat.id);
     setError("");
-    setChats((rows) =>
-      patch
-        ? rows
+    let before: ChatSummary[] = [];
+    setChats((rows) => {
+      before = rows;
+      return patch
+        ? (rows.some((row) => row.id === chat.id) ? rows : [...rows, chat])
             .map((row) =>
               row.id === chat.id
                 ? { ...row, ...patch, updatedAt: new Date().toISOString() }
                 : row,
             )
             .filter((row) => !row.archived)
-        : rows.filter((row) => row.id !== chat.id),
-    );
+        : rows.filter((row) => row.id !== chat.id);
+    });
     try {
       await api(
         `/api/chats/${chat.id}`,
         patch ?? {},
         patch ? "PATCH" : "DELETE",
       );
+      if (patch?.archived)
+        toast("Chat archived.", {
+          action: {
+            label: "Undo",
+            onClick: () => void mutate(chat, { archived: false }),
+          },
+        });
+      // A list remounted since the archive (the mobile drawer) reloads.
+      if (patch?.archived === false)
+        window.dispatchEvent(new Event("galaxy:chats"));
       if ((!patch || patch.archived) && pathname === `/chat/${chat.id}`)
         router.push("/chat");
     } catch {
-      setChats((rows) => [...rows.filter((row) => row.id !== chat.id), chat]);
+      setChats(before);
       setError("Could not update this Chat. Try again.");
     } finally {
       mutating.current = false;
@@ -104,9 +126,23 @@ export function RecentChats() {
   return (
     <>
       {error && (
-        <p role="alert" className="px-2 text-sm text-destructive">
+        <InlineAlert
+          tone="error"
+          action={
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setError("");
+                window.dispatchEvent(new Event("galaxy:chats"));
+              }}
+            >
+              Try again
+            </Button>
+          }
+        >
           {error}
-        </p>
+        </InlineAlert>
       )}
       <LazyMotion
         features={() => import("./motion-features").then((f) => f.default)}
@@ -118,17 +154,21 @@ export function RecentChats() {
             previous = group;
             return (
               <m.li
-                layout={!reduced}
-                transition={{ duration: reduced ? 0 : 0.18 }}
+                layout
+                transition={spring.moderate}
                 key={chat.id}
                 className="list-none"
               >
                 {heading && (
-                  <h3 className="px-2 pt-4 pb-1 text-xs text-muted-foreground">
+                  <h3 className="px-2 pt-4 pb-1 text-xs font-medium text-muted-foreground">
                     {group}
                   </h3>
                 )}
-                <div className="flex items-center">
+                <div
+                  className="group/row relative flex items-center"
+                  data-active={pathname === `/chat/${chat.id}`}
+                  data-pending={pending === chat.id}
+                >
                   {editing === chat.id ? (
                     <form
                       className="min-w-0 flex-1"
@@ -142,6 +182,7 @@ export function RecentChats() {
                       }}
                     >
                       <Input
+                        className="h-8 text-sm"
                         aria-label="Chat title"
                         autoFocus
                         maxLength={200}
@@ -166,6 +207,7 @@ export function RecentChats() {
                     </form>
                   ) : (
                     <SidebarMenuButton
+                      className="h-8 pr-9 pointer-coarse:pr-12 group-data-[pending=true]/row:opacity-60"
                       isActive={pathname === `/chat/${chat.id}`}
                       render={<Link href={`/chat/${chat.id}`} />}
                       onClick={() => {
@@ -182,7 +224,8 @@ export function RecentChats() {
                       render={
                         <Button
                           variant="ghost"
-                          size="icon"
+                          size="icon-xs"
+                          className="absolute right-0 pointer-fine:size-7 pointer-fine:opacity-0 pointer-fine:group-hover/row:opacity-100 pointer-fine:group-focus-within/row:opacity-100 pointer-fine:group-data-[active=true]/row:opacity-100 pointer-fine:data-popup-open:opacity-100"
                           disabled={!!pending}
                           aria-label={`Actions for ${chat.title ?? "New chat"}`}
                         />
@@ -208,7 +251,7 @@ export function RecentChats() {
                           void mutate(chat, { pinned: !chat.pinned })
                         }
                       >
-                        <Pin />
+                        {chat.pinned ? <PinOff /> : <Pin />}
                         {chat.pinned ? "Unpin" : "Pin"}
                       </DropdownMenuItem>
                       <DropdownMenuItem
@@ -218,11 +261,13 @@ export function RecentChats() {
                         <Archive />
                         Archive
                       </DropdownMenuItem>
+                      <DropdownMenuSeparator />
                       <DropdownMenuItem
+                        variant="destructive"
                         disabled={!!pending}
                         onClick={() => setDeleting(chat)}
                       >
-                        <Trash />
+                        <Trash2 />
                         Delete
                       </DropdownMenuItem>
                     </DropdownMenuContent>
@@ -234,22 +279,23 @@ export function RecentChats() {
         </SidebarMenu>
       </LazyMotion>
       {chats.length === 500 && (
-        <p className="px-2 py-1.5 text-sm text-muted-foreground">
+        <p className="px-2 text-xs text-muted-foreground">
           Showing 500 Chats. Search to find older Chats.
         </p>
       )}
       {!loaded && !error && (
-        <div aria-hidden="true" className="grid gap-1 px-2 pt-2">
-          <Skeleton className="h-8 w-full" />
-          <Skeleton className="h-8 w-4/5" />
-          <Skeleton className="h-8 w-3/5" />
+        <div aria-hidden="true">
+          {["70%", "55%", "62%", "48%", "66%", "52%"].map((width) => (
+            <div key={width} className="flex h-8 items-center px-2 text-sm">
+              <SkeletonText lines={1} widths={[width]} className="w-full" />
+            </div>
+          ))}
         </div>
       )}
       {loaded && !chats.length && !error && (
-        <p className="px-2 py-1.5 text-sm text-muted-foreground">
-          Your chats will appear here.
-        </p>
+        <EmptyState size="inline" title="No chats yet" />
       )}
+
       <AlertDialog
         open={!!deleting}
         onOpenChange={(open) => {

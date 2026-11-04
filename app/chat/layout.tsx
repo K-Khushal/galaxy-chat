@@ -17,10 +17,8 @@ export const metadata: Metadata = { robots: { index: false, follow: false } };
 
 export default async function ChatLayout({
   children,
-  header,
 }: {
   children: ReactNode;
-  header: ReactNode;
 }) {
   const [user, cookieStore] = await Promise.all([requireSignedIn(), cookies()]);
   const defaultOpen = cookieStore.get("sidebar_state")?.value !== "false";
@@ -41,7 +39,7 @@ export default async function ChatLayout({
         />
         <SidebarInset className="h-[var(--app-height,100dvh)] min-w-0 pr-[env(safe-area-inset-right)]">
           <ViewportHeight />
-          <ChatHeader>{header}</ChatHeader>
+          <ChatHeader />
           <div className="flex min-h-0 flex-1 flex-col">{children}</div>
         </SidebarInset>
       </SidebarProvider>
