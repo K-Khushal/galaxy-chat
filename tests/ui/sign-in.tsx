@@ -65,17 +65,19 @@ afterEach(() => {
   Reflect.deleteProperty(window, "turnstile");
 });
 
-function fakeTurnstile(tokenDelayMs: number) {
+// Without a delay the token never arrives on its own; the test delivers it.
+function fakeTurnstile(tokenDelayMs?: number) {
   const options: Array<Record<string, unknown>> = [];
   Object.defineProperty(window, "turnstile", {
     configurable: true,
     value: {
       render(_: HTMLElement, o: Record<string, unknown>) {
         options.push(o);
-        setTimeout(
-          () => (o.callback as (token: string) => void)("late-token"),
-          tokenDelayMs,
-        );
+        if (tokenDelayMs !== undefined)
+          setTimeout(
+            () => (o.callback as (token: string) => void)("late-token"),
+            tokenDelayMs,
+          );
         return "widget";
       },
       reset() {},
@@ -85,7 +87,7 @@ function fakeTurnstile(tokenDelayMs: number) {
 }
 
 test("a token that arrives after the click shows pending, then sends once", async () => {
-  const options = fakeTurnstile(60);
+  const options = fakeTurnstile();
   const ui = render(<SignInPanel siteKey="key" />);
   const email = ui.getByLabelText("Email") as HTMLInputElement;
   fireEvent.focus(email);
@@ -106,6 +108,9 @@ test("a token that arrives after the click shows pending, then sends once", asyn
       .getByRole("button", { name: "Continue with GitHub" })
       .hasAttribute("disabled"),
   ).toBe(true);
+  await act(async () =>
+    (options[0]?.callback as (token: string) => void)("late-token"),
+  );
   await waitFor(() =>
     expect(sent).toEqual([{ email: "ada@example.com", token: "late-token" }]),
   );
