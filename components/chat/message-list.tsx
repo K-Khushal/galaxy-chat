@@ -3,22 +3,40 @@ import { ArrowDown } from "lucide-react";
 import type { ReactNode } from "react";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
+import { cn } from "@/lib/utils";
+import { MESSAGE_FRAME } from "./chat-skeleton";
 
 function Jump() {
   const { isAtBottom, scrollToBottom } = useStickToBottomContext();
+  // Stays mounted so it can fade out too; inert keeps it out of reach while hidden.
   return (
-    !isAtBottom && (
-      <Button
-        className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full shadow-sm"
-        variant="outline"
-        size="sm"
-        onClick={() => scrollToBottom()}
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Jump to latest"
+            inert={isAtBottom}
+            className={cn(
+              "absolute bottom-3 left-1/2 size-8 -translate-x-1/2 rounded-full bg-popover shadow-md ring-1 ring-border hover:bg-popover",
+              "transition-[opacity,scale] duration-160 ease-out",
+              isAtBottom && "opacity-0 motion-safe:scale-[0.9]",
+            )}
+            onClick={() => scrollToBottom()}
+          />
+        }
       >
         <ArrowDown />
-        Jump to latest
-      </Button>
-    )
+      </TooltipTrigger>
+      <TooltipContent>Jump to latest</TooltipContent>
+    </Tooltip>
   );
 }
 export function MessageList({ children }: { children: ReactNode }) {
@@ -29,7 +47,7 @@ export function MessageList({ children }: { children: ReactNode }) {
       resize={reduced ? "instant" : "smooth"}
       initial="instant"
     >
-      <StickToBottom.Content className="mx-auto w-full max-w-3xl px-4 pb-6">
+      <StickToBottom.Content className={MESSAGE_FRAME}>
         {children}
       </StickToBottom.Content>
       <Jump />

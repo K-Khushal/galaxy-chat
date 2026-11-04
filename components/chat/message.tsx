@@ -1,18 +1,29 @@
 "use client";
-import { Pencil } from "lucide-react";
+import { Pencil, Square } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { ReplyMarkdown } from "@/components/elements/reply-markdown";
 import { Button } from "@/components/ui/button";
+import { InlineAlert } from "@/components/ui/state";
 import type { ChatMessage } from "@/lib/chat/store";
+import { cn } from "@/lib/utils";
 import { textOf } from "./api";
 import { attachmentParts, MessageAttachments } from "./message-attachments";
 import { Reasoning } from "./reasoning";
-import { ReplyActions } from "./reply-actions";
+import { ActionButton, ReplyActions } from "./reply-actions";
 import { VersionSwitcher } from "./version-switcher";
+
+const FAILED_COPY = {
+  byok: "Something went wrong before Galaxy could reply. No Credits were used; check OpenRouter for any provider charges.",
+  credits:
+    "Something went wrong before Galaxy could reply. You weren’t charged.",
+};
+
 export function Message({
   message,
   busy,
   streaming,
+  latest = false,
+  readOnly = false,
   onEdit,
   onRegenerate,
   onContinue,
@@ -21,6 +32,10 @@ export function Message({
   message: ChatMessage;
   busy: boolean;
   streaming: boolean;
+  /** The last Message of the Chat: its action bar stays visible on a fine pointer. */
+  latest?: boolean;
+  /** A Temporary chat: Copy and Reply info only. */
+  readOnly?: boolean;
   onEdit: (text: string) => boolean | Promise<boolean>;
   onRegenerate: () => void;
   onContinue: () => void;
@@ -43,18 +58,24 @@ export function Message({
     }
   }, [editing]);
   const user = message.role === "user";
+  const body = textOf(message);
   // A Message of only files has no bubble to show.
-  const filesOnly =
-    user && !textOf(message) && attachmentParts(message.parts).length > 0;
+  const filesOnly = user && !body && attachmentParts(message.parts).length > 0;
   const files = user ? <MessageAttachments parts={message.parts} /> : null;
   const reasoning = message.parts
     .filter((p) => p.type === "reasoning")
     .map((p) => p.text)
     .join("\n");
+  // Nothing to read yet: show that the Reply is on its way.
+  const pending = streaming && !user && !body && !reasoning;
+  const showBar = !(readOnly && user);
   return (
     <article
       aria-label={user ? "Your Message" : "Reply"}
-      className={`group min-w-0 animate-in py-4 duration-200 fade-in-0 slide-in-from-bottom-1 motion-reduce:animate-none ${user ? "flex flex-col items-end" : ""}`}
+      className={cn(
+        "group min-w-0 py-3 transition-[opacity,translate] duration-240 ease-out starting:opacity-0 motion-safe:starting:translate-y-1",
+        user && "flex flex-col items-end",
+      )}
     >
       {files}
       {editing ? (
@@ -83,13 +104,13 @@ export function Message({
             onKeyDown={(e) => {
               if (e.key === "Escape") closeEdit();
             }}
-            className="min-h-28 rounded-xl border bg-card p-3 text-message outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="min-h-28 w-full rounded-[1.25rem] border border-input bg-card p-3 text-message outline-none transition-[border-color,box-shadow] duration-160 ease-out focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
           />
           <div className="flex justify-end gap-2">
-            <Button type="button" variant="ghost" onClick={closeEdit}>
+            <Button type="button" size="sm" variant="ghost" onClick={closeEdit}>
               Cancel
             </Button>
-            <Button type="submit" disabled={!text.trim() || busy}>
+            <Button type="submit" size="sm" disabled={!text.trim() || busy}>
               Save and send
             </Button>
           </div>
@@ -98,7 +119,7 @@ export function Message({
         <div
           className={
             user
-              ? "max-w-[85%] whitespace-pre-wrap break-words rounded-3xl bg-user-bubble px-4 py-2.5 text-message text-user-bubble-foreground"
+              ? "max-w-[85%] rounded-[1.25rem] bg-user-bubble px-4 py-2.5 text-message text-user-bubble-foreground whitespace-pre-wrap break-words"
               : "w-full text-message"
           }
         >
@@ -114,72 +135,111 @@ export function Message({
             />
           )}
           {user ? (
-            textOf(message)
+            body
+          ) : pending ? (
+            <span className="text-shimmer text-sm">Thinking</span>
           ) : (
-            <ReplyMarkdown isAnimating={streaming}>
-              {textOf(message)}
-            </ReplyMarkdown>
+            <ReplyMarkdown isAnimating={streaming}>{body}</ReplyMarkdown>
           )}
-          {streaming && (
+          {streaming && body && (
             <span
-              className="inline-block size-1.5 rounded-full bg-muted-foreground motion-safe:animate-pulse"
+              className="ml-1 inline-block size-2 rounded-full bg-muted-foreground align-middle motion-safe:animate-pulse"
               aria-hidden="true"
             />
           )}
         </div>
       )}
-      {!streaming && message.status !== "complete" && !user && (
-        <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
-          <span>
-            {message.status === "failed"
-              ? message.payment === "byok"
-                ? "Something went wrong before Galaxy could reply. No Credits were used; check OpenRouter for any provider charges."
-                : "Something went wrong before Galaxy could reply. You weren’t charged."
-              : message.status === "stopped"
-                ? "Stopped"
-                : "Interrupted"}
-          </span>
-          {message.status === "interrupted" && (
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={busy}
-              onClick={onContinue}
-            >
-              Continue
-            </Button>
+      {!streaming && !user && message.status === "failed" && (
+        <InlineAlert
+          className="mt-2"
+          action={
+            readOnly ? undefined : (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busy}
+                onClick={onRegenerate}
+              >
+                Regenerate
+              </Button>
+            )
+          }
+        >
+          {message.payment === "byok" ? FAILED_COPY.byok : FAILED_COPY.credits}
+        </InlineAlert>
+      )}
+      {!streaming && !user && message.status === "interrupted" && (
+        <InlineAlert
+          tone="warning"
+          className="mt-2"
+          action={
+            readOnly ? undefined : (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busy}
+                onClick={onContinue}
+              >
+                Continue
+              </Button>
+            )
+          }
+        >
+          Interrupted
+        </InlineAlert>
+      )}
+      {!streaming && !user && message.status === "stopped" && (
+        <p className="mt-2 flex items-center gap-1.5 text-caption text-muted-foreground">
+          <Square className="size-3 fill-current" aria-hidden="true" />
+          Stopped
+        </p>
+      )}
+      {showBar && (
+        <div
+          className={cn(
+            "mt-1 flex h-8 items-center gap-0.5 transition-opacity duration-80",
+            user && "justify-end",
+            // Touch has no hover, so every bar shows there; with a fine pointer
+            // only the last Reply's does until its row is hovered or focused.
+            !(latest && !user) &&
+              "pointer-fine:opacity-0 pointer-fine:group-focus-within:opacity-100 pointer-fine:group-hover:opacity-100",
+          )}
+        >
+          {streaming ? null : (
+            <>
+              {user ? (
+                <ActionButton
+                  ref={buttonRef}
+                  label="Edit Message"
+                  className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+                  aria-disabled={busy}
+                  onClick={() => {
+                    if (busy) return;
+                    setText(body);
+                    setEditing(true);
+                  }}
+                >
+                  <Pencil />
+                </ActionButton>
+              ) : (
+                <ReplyActions
+                  message={message}
+                  disabled={busy}
+                  readOnly={readOnly}
+                  onRegenerate={onRegenerate}
+                />
+              )}
+              {!readOnly && (
+                <VersionSwitcher
+                  versions={message.versions}
+                  disabled={busy}
+                  onSwitch={onSwitch}
+                />
+              )}
+            </>
           )}
         </div>
       )}
-      <div className="mt-1 flex min-h-8 items-center gap-0.5 opacity-100 transition-opacity duration-150 pointer-fine:opacity-0 pointer-fine:group-hover:opacity-100 pointer-fine:group-focus-within:opacity-100">
-        {user ? (
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            ref={buttonRef}
-            aria-label="Edit Message"
-            aria-disabled={busy}
-            onClick={() => {
-              if (busy) return;
-              setText(textOf(message));
-              setEditing(true);
-            }}
-          >
-            <Pencil />
-          </Button>
-        ) : (
-          <ReplyActions
-            message={message}
-            disabled={busy}
-            onRegenerate={onRegenerate}
-          />
-        )}
-        <VersionSwitcher
-          versions={message.versions}
-          disabled={busy}
-          onSwitch={onSwitch}
-        />
-      </div>
     </article>
   );
 }

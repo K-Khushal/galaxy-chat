@@ -1,4 +1,4 @@
-import { afterEach, expect, mock, test } from "bun:test";
+import { afterEach, expect, jest, mock, test } from "bun:test";
 import { Window } from "happy-dom";
 
 const browser = new Window({ url: "http://localhost" });
@@ -136,6 +136,103 @@ test("Reply copies plain text and regenerates; busy disables regenerate", async 
       .disabled,
   ).toBe(true);
 });
+test("Copy confirms for 2s, then reverts to Copy Reply", async () => {
+  jest.useFakeTimers();
+  try {
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: async () => {} },
+      configurable: true,
+    });
+    const ui = render(
+      <ReplyActions
+        message={message}
+        disabled={false}
+        onRegenerate={() => {}}
+      />,
+    );
+    await act(async () => {
+      fireEvent.click(ui.getByRole("button", { name: "Copy Reply" }));
+    });
+    expect(ui.getByRole("button", { name: "Copied Reply" })).toBeTruthy();
+    await act(async () => {
+      jest.advanceTimersByTime(1900);
+    });
+    expect(ui.queryByRole("button", { name: "Copy Reply" })).toBeNull();
+    await act(async () => {
+      jest.advanceTimersByTime(200);
+    });
+    expect(ui.getByRole("button", { name: "Copy Reply" })).toBeTruthy();
+  } finally {
+    jest.useRealTimers();
+  }
+});
+function reply(props: Partial<Parameters<typeof Message>[0]> = {}) {
+  return (
+    <Message
+      message={message}
+      busy={false}
+      streaming={false}
+      onEdit={() => true}
+      onRegenerate={() => {}}
+      onContinue={() => {}}
+      onSwitch={() => {}}
+      {...props}
+    />
+  );
+}
+test("a streaming Reply renders no action bar and shows Thinking before its first token", () => {
+  const ui = render(
+    reply({
+      streaming: true,
+      busy: true,
+      message: {
+        ...message,
+        parts: [],
+        versions: { ids: ["reply"], index: 0 },
+      },
+    }),
+  );
+  expect(ui.getByText("Thinking")).toBeTruthy();
+  expect(ui.queryByRole("button")).toBeNull();
+  ui.rerender(reply({ streaming: false }));
+  expect(ui.getByRole("button", { name: "Copy Reply" })).toBeTruthy();
+});
+test("a failed Reply offers Regenerate, an Interrupted one Continue, a Stopped one only a note", () => {
+  let regenerated = 0;
+  let continued = 0;
+  const failed = render(
+    reply({
+      message: { ...message, status: "failed", parts: [] },
+      onRegenerate: () => regenerated++,
+    }),
+  );
+  expect(failed.getByRole("alert").textContent).toContain(
+    "You weren’t charged",
+  );
+  fireEvent.click(failed.getByRole("button", { name: "Regenerate" }));
+  expect(regenerated).toBe(1);
+  failed.unmount();
+  const interrupted = render(
+    reply({
+      message: { ...message, status: "interrupted" },
+      onContinue: () => continued++,
+    }),
+  );
+  expect(interrupted.getByText("Interrupted")).toBeTruthy();
+  fireEvent.click(interrupted.getByRole("button", { name: "Continue" }));
+  expect(continued).toBe(1);
+  interrupted.unmount();
+  const stopped = render(reply({ message: { ...message, status: "stopped" } }));
+  expect(stopped.getByText("Stopped")).toBeTruthy();
+  expect(stopped.queryByRole("button", { name: "Continue" })).toBeNull();
+});
+test("a read-only Reply keeps Copy and Reply info but no Regenerate or Versions", () => {
+  const ui = render(reply({ readOnly: true }));
+  expect(ui.getByRole("button", { name: "Copy Reply" })).toBeTruthy();
+  expect(ui.getByRole("button", { name: "Reply info" })).toBeTruthy();
+  expect(ui.queryByRole("button", { name: "Regenerate Reply" })).toBeNull();
+  expect(ui.queryByRole("group", { name: "Message Versions" })).toBeNull();
+});
 test("Version switcher respects boundaries and selects sibling ID", () => {
   let selected = "";
   const ui = render(
@@ -154,67 +251,71 @@ test("Version switcher respects boundaries and selects sibling ID", () => {
   fireEvent.click(ui.getByRole("button", { name: "Next Version" }));
   expect(selected).toBe("other");
 });
-test("editing a User Message submits new text and Cancel keeps the original", () => {
-  let edited = "";
-  const ui = render(
-    <Message
-      message={{ ...message, role: "user" }}
-      busy={false}
-      streaming={false}
-      onEdit={(text) => {
-        edited = text;
-        return true;
-      }}
-      onRegenerate={() => {}}
-      onContinue={() => {}}
-      onSwitch={() => {}}
-    />,
-  );
-  fireEvent.click(ui.getByRole("button", { name: "Edit Message" }));
-  fireEvent.change(ui.getByRole("textbox"), { target: { value: "Edited" } });
-  expect(
-    (ui.getByRole("button", { name: "Save and send" }) as HTMLButtonElement)
-      .type,
-  ).toBe("submit");
-  fireEvent.submit(
-    ui
-      .getByRole("button", { name: "Save and send" })
-      .closest("form") as HTMLFormElement,
-  );
-  expect(edited).toBe("Edited");
-  fireEvent.click(ui.getByRole("button", { name: "Edit Message" }));
-  fireEvent.click(ui.getByRole("button", { name: "Cancel" }));
-  expect(ui.queryByRole("textbox")).toBeNull();
-});
+test("editing a User Message submits new text and Cancel keeps the original", () =>
+  withAnimationFrames(async () => {
+    let edited = "";
+    const ui = render(
+      <Message
+        message={{ ...message, role: "user" }}
+        busy={false}
+        streaming={false}
+        onEdit={(text) => {
+          edited = text;
+          return true;
+        }}
+        onRegenerate={() => {}}
+        onContinue={() => {}}
+        onSwitch={() => {}}
+      />,
+    );
+    fireEvent.click(ui.getByRole("button", { name: "Edit Message" }));
+    fireEvent.change(ui.getByRole("textbox"), { target: { value: "Edited" } });
+    expect(
+      (ui.getByRole("button", { name: "Save and send" }) as HTMLButtonElement)
+        .type,
+    ).toBe("submit");
+    fireEvent.submit(
+      ui
+        .getByRole("button", { name: "Save and send" })
+        .closest("form") as HTMLFormElement,
+    );
+    expect(edited).toBe("Edited");
+    fireEvent.click(ui.getByRole("button", { name: "Edit Message" }));
+    fireEvent.click(ui.getByRole("button", { name: "Cancel" }));
+    expect(ui.queryByRole("textbox")).toBeNull();
+  }));
 
-test("keyboard edit Escape restores focus; Cancel and Save restore it too", () => {
-  const ui = render(
-    <Message
-      message={{ ...message, role: "user" }}
-      busy={false}
-      streaming={false}
-      onEdit={() => true}
-      onRegenerate={() => {}}
-      onContinue={() => {}}
-      onSwitch={() => {}}
-    />,
-  );
-  const edit = ui.getByRole("button", { name: "Edit Message" });
-  edit.focus();
-  // Native button keyboard activation dispatches click.
-  fireEvent.click(edit, { detail: 0 });
-  const input = ui.getByRole("textbox");
-  expect(document.activeElement).toBe(input);
-  fireEvent.change(input, { target: { value: "Keep this edit" } });
-  fireEvent.keyDown(input, { key: "Escape" });
-  expect(document.activeElement).toBe(edit);
-  fireEvent.click(edit);
-  fireEvent.click(ui.getByRole("button", { name: "Cancel" }));
-  expect(document.activeElement).toBe(edit);
-  fireEvent.click(edit);
-  fireEvent.submit(ui.getByRole("textbox").closest("form") as HTMLFormElement);
-  expect(document.activeElement).toBe(edit);
-});
+test("keyboard edit Escape restores focus; Cancel and Save restore it too", () =>
+  withAnimationFrames(async () => {
+    const ui = render(
+      <Message
+        message={{ ...message, role: "user" }}
+        busy={false}
+        streaming={false}
+        onEdit={() => true}
+        onRegenerate={() => {}}
+        onContinue={() => {}}
+        onSwitch={() => {}}
+      />,
+    );
+    const edit = ui.getByRole("button", { name: "Edit Message" });
+    edit.focus();
+    // Native button keyboard activation dispatches click.
+    fireEvent.click(edit, { detail: 0 });
+    const input = ui.getByRole("textbox");
+    expect(document.activeElement).toBe(input);
+    fireEvent.change(input, { target: { value: "Keep this edit" } });
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(document.activeElement).toBe(edit);
+    fireEvent.click(edit);
+    fireEvent.click(ui.getByRole("button", { name: "Cancel" }));
+    expect(document.activeElement).toBe(edit);
+    fireEvent.click(edit);
+    fireEvent.submit(
+      ui.getByRole("textbox").closest("form") as HTMLFormElement,
+    );
+    expect(document.activeElement).toBe(edit);
+  }));
 for (const outcome of [
   "no_credits",
   "needs_byok_key",

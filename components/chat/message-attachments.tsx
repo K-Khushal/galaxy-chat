@@ -52,7 +52,7 @@ export function MessageAttachments({ parts }: { parts: readonly FilePart[] }) {
                 type="button"
                 aria-label={`Open ${file.name}`}
                 onClick={() => setOpen(file)}
-                className="block overflow-hidden rounded-xl border outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="block rounded-xl outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
               >
                 {/* biome-ignore lint/performance/noImgElement: served through a signed redirect */}
                 <img
@@ -60,7 +60,7 @@ export function MessageAttachments({ parts }: { parts: readonly FilePart[] }) {
                   alt={file.name}
                   loading="lazy"
                   decoding="async"
-                  className="size-24 object-cover"
+                  className="size-28 rounded-xl object-cover outline outline-1 -outline-offset-1 outline-image-outline"
                 />
               </button>
             ) : (
@@ -68,7 +68,7 @@ export function MessageAttachments({ parts }: { parts: readonly FilePart[] }) {
                 href={file.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex max-w-60 items-center gap-2 rounded-xl border bg-muted/40 px-3 py-2 text-sm outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
+                className="flex h-10 max-w-60 items-center gap-2 rounded-xl border bg-card px-3 text-sm outline-none transition-colors duration-80 hover:bg-accent focus-visible:ring-3 focus-visible:ring-ring/50"
               >
                 <FileText className="size-4 shrink-0 text-muted-foreground" />
                 <span className="truncate">{file.name}</span>
@@ -79,8 +79,8 @@ export function MessageAttachments({ parts }: { parts: readonly FilePart[] }) {
       </ul>
       {open && (
         <Dialog open onOpenChange={(next) => !next && setOpen(null)}>
-          <DialogContent className="sm:max-w-3xl">
-            <DialogTitle className="truncate pr-8">{open.name}</DialogTitle>
+          <DialogContent className="p-2 sm:max-w-3xl">
+            <DialogTitle className="sr-only">{open.name}</DialogTitle>
             <DialogDescription className="sr-only">
               Larger view of the attached image.
             </DialogDescription>
@@ -88,7 +88,7 @@ export function MessageAttachments({ parts }: { parts: readonly FilePart[] }) {
             <img
               src={open.url}
               alt={open.name}
-              className="max-h-[75dvh] w-full rounded-lg object-contain"
+              className="max-h-[80dvh] w-full rounded-xl object-contain"
             />
           </DialogContent>
         </Dialog>

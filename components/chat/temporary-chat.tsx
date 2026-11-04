@@ -1,12 +1,18 @@
 "use client";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { RotateCcw } from "lucide-react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { InlineAlert } from "@/components/ui/state";
 import { DEFAULT_MODEL_ID } from "@/lib/models";
-import { errorCopy, needsKey } from "./api";
+import { cn } from "@/lib/utils";
+import { chatMessage, errorCopy, needsKey } from "./api";
 import { ByokDialog } from "./byok-dialog";
+import { COMPOSER_AREA } from "./chat-skeleton";
 import { Composer } from "./composer";
+import { Message } from "./message";
+import { MessageList } from "./message-list";
 import { ModelPicker } from "./model-picker";
 import { useByokKey } from "./use-byok-key";
 import { creditsChanged } from "./use-credits";
@@ -16,6 +22,48 @@ import { creditsChanged } from "./use-credits";
  * only once it notices; this is how long to wait before looking again.
  */
 const STOP_SETTLE_MS = 1500;
+
+type UIMessage = ReturnType<typeof useChat>["messages"][number];
+const noop = () => {};
+const refuse = () => false;
+
+/**
+ * One Temporary Message. Streaming replaces only the last message object, so
+ * the other rows keep their props and skip rendering for each token.
+ */
+const TemporaryRow = memo(function TemporaryRow({
+  message,
+  parentId,
+  model,
+  busy,
+  streaming,
+  latest,
+}: {
+  message: UIMessage;
+  parentId: string | null;
+  model: string;
+  busy: boolean;
+  streaming: boolean;
+  latest: boolean;
+}) {
+  const row = useMemo(
+    () => chatMessage(message, undefined, parentId, model),
+    [message, parentId, model],
+  );
+  return (
+    <Message
+      message={row}
+      busy={busy}
+      streaming={streaming}
+      latest={latest}
+      readOnly
+      onEdit={refuse}
+      onRegenerate={noop}
+      onContinue={noop}
+      onSwitch={noop}
+    />
+  );
+});
 
 /** Draft, history and streamed Replies live only in this page's memory. */
 export function TemporaryChat() {
@@ -68,8 +116,20 @@ export function TemporaryChat() {
     };
   }, [stop]);
   const busy = chat.status === "submitted" || chat.status === "streaming";
+  // Each Message keeps the model it was sent with, not the picker's current one.
+  const sentModel = useRef(model);
+  const messageModels = useRef(new Map<string, string>());
+  function modelOf(id: string) {
+    let used = messageModels.current.get(id);
+    if (!used) {
+      used = sentModel.current;
+      messageModels.current.set(id, used);
+    }
+    return used;
+  }
   async function send(text: string) {
     if (busy) return false;
+    sentModel.current = model;
     await chat.sendMessage(
       {
         text,
@@ -82,67 +142,100 @@ export function TemporaryChat() {
     );
     return true;
   }
+  const empty = chat.messages.length === 0;
   return (
-    <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col gap-4 p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
-      <h1 className="sr-only">Temporary chat</h1>
-      <p className="text-center text-sm text-muted-foreground">
-        Temporary chat · Never saved · Uses Credits or your BYOK key
-      </p>
-      <div
-        className="min-h-0 flex-1 overflow-y-auto"
-        role="log"
-        aria-label="Temporary Messages"
-      >
-        {chat.messages.map((message) => (
-          <div
-            key={message.id}
-            className="mb-4 whitespace-pre-wrap break-words"
-          >
-            <p className="text-sm text-muted-foreground">
-              {message.role === "user" ? "You" : "Galaxy"}
-            </p>
-            {message.parts
-              .filter((part) => part.type === "text")
-              .map((part) => part.text)
-              .join("")}
-          </div>
-        ))}
-      </div>
-      {chat.error && <p role="alert">{errorCopy(chat.error)}</p>}
-      <Button
-        variant="outline"
-        disabled={busy}
-        onClick={() => {
-          chat.setMessages([]);
-          chat.clearError();
-          setRevision((value) => value + 1);
-        }}
-      >
-        New Temporary chat
-      </Button>
-      {chat.error && needsKey(chat.error) && (
-        <Button variant="link" onClick={() => setKeyOpen(true)}>
-          Add your OpenRouter key
-        </Button>
+    // One tree for both states, so the composer keeps focus when the first
+    // Message turns the New-Chat-style prompt into a Chat.
+    <div
+      className={cn(
+        "flex min-h-0 flex-1 flex-col",
+        empty && "items-center justify-center px-4",
       )}
-      <Composer
-        key={revision}
-        chatId="temporary"
-        persistDraft={false}
-        busy={busy}
-        onSend={send}
-        onStop={() => void stop()}
-        model={model}
-        picker={
-          <ModelPicker
-            model={model}
-            onChange={setModel}
-            disabled={busy}
-            hasKey={hasKey}
-            addKey={() => setKeyOpen(true)}
-          />
-        }
-      />
+    >
+      {empty ? (
+        <div className="w-full max-w-3xl">
+          <h1 className="text-center text-display font-semibold">
+            Temporary chat
+          </h1>
+          <p className="mt-1.5 mb-6 text-center text-sm text-muted-foreground">
+            Not saved to history.
+          </p>
+          <div role="log" aria-label="Temporary Messages" />
+        </div>
+      ) : (
+        <MessageList>
+          <h1 className="sr-only">Temporary chat</h1>
+          <div role="log" aria-label="Temporary Messages">
+            {chat.messages.map((message, index) => (
+              <TemporaryRow
+                key={message.id}
+                message={message}
+                parentId={chat.messages[index - 1]?.id ?? null}
+                model={modelOf(message.id)}
+                busy={busy}
+                streaming={
+                  busy &&
+                  index === chat.messages.length - 1 &&
+                  message.role === "assistant"
+                }
+                latest={index === chat.messages.length - 1}
+              />
+            ))}
+          </div>
+        </MessageList>
+      )}
+      <div className={cn(empty ? "w-full max-w-3xl pb-[8vh]" : COMPOSER_AREA)}>
+        {!empty && (
+          <div className="mb-2 flex justify-end">
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={busy}
+              onClick={() => {
+                chat.setMessages([]);
+                messageModels.current.clear();
+                chat.clearError();
+                setRevision((value) => value + 1);
+              }}
+            >
+              <RotateCcw />
+              New Temporary chat
+            </Button>
+          </div>
+        )}
+        {chat.error && (
+          <InlineAlert
+            className="mb-3"
+            action={
+              needsKey(chat.error) ? (
+                <Button size="sm" onClick={() => setKeyOpen(true)}>
+                  Add your OpenRouter key
+                </Button>
+              ) : undefined
+            }
+          >
+            {errorCopy(chat.error)}
+          </InlineAlert>
+        )}
+        <Composer
+          key={revision}
+          chatId="temporary"
+          persistDraft={false}
+          busy={busy}
+          onSend={send}
+          onStop={() => void stop()}
+          model={model}
+          picker={
+            <ModelPicker
+              model={model}
+              onChange={setModel}
+              disabled={busy}
+              hasKey={hasKey}
+              addKey={() => setKeyOpen(true)}
+            />
+          }
+        />
+      </div>
       <ByokDialog
         open={keyOpen}
         onOpenChange={setKeyOpen}

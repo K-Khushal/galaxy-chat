@@ -3,6 +3,7 @@ import type { UIMessage } from "ai";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { preloadResponse } from "@/components/elements/preload-response";
 import { Button } from "@/components/ui/button";
+import { ErrorState, InlineAlert } from "@/components/ui/state";
 import type { ChatMessage } from "@/lib/chat/store";
 import {
   api,
@@ -14,10 +15,12 @@ import {
 } from "./api";
 import type { StoredAttachment } from "./attachment-upload";
 import { ByokDialog } from "./byok-dialog";
+import { ChatSkeleton, COMPOSER_AREA } from "./chat-skeleton";
 import { Composer } from "./composer";
 import { Message } from "./message";
 import { MessageList } from "./message-list";
 import { ModelPicker } from "./model-picker";
+import { chatSpend } from "./usage-meter";
 import { useByokKey } from "./use-byok-key";
 import { useGalaxyChat } from "./use-galaxy-chat";
 
@@ -32,6 +35,7 @@ type RowProps = {
   model: string;
   busy: boolean;
   streaming: boolean;
+  latest: boolean;
   actions: Actions;
 };
 
@@ -46,6 +50,7 @@ const MessageRow = memo(function MessageRow({
   model,
   busy,
   streaming,
+  latest,
   actions,
 }: RowProps) {
   const row = useMemo(
@@ -57,6 +62,7 @@ const MessageRow = memo(function MessageRow({
       message={row}
       busy={busy}
       streaming={streaming}
+      latest={latest}
       onEdit={(text) => actions.edit(row, text)}
       onRegenerate={() => void actions.regenerate(row)}
       onContinue={() => void actions.continueReply(row)}
@@ -144,7 +150,7 @@ export function Chat({ initial }: { initial: ChatView }) {
         {chat.messages.length ? (
           <h1 className="sr-only">{initial.chat.title ?? "Chat"}</h1>
         ) : (
-          <h1 className="pt-[20vh] pb-6 text-center text-3xl font-medium tracking-tight">
+          <h1 className="pt-[20vh] pb-6 text-center text-display font-semibold">
             What can I help with?
           </h1>
         )}
@@ -161,6 +167,7 @@ export function Chat({ initial }: { initial: ChatView }) {
               index === chat.messages.length - 1 &&
               message.role === "assistant"
             }
+            latest={index === chat.messages.length - 1}
             actions={actions}
           />
         ))}
@@ -168,19 +175,20 @@ export function Chat({ initial }: { initial: ChatView }) {
       <output className="sr-only" aria-live="polite">
         {announcement}
       </output>
-      <div className="mx-auto w-full max-w-3xl px-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+      <div className={COMPOSER_AREA}>
         {chat.error && (
-          <div
-            role="alert"
-            className="mb-3 flex flex-wrap items-center gap-2 text-sm"
+          <InlineAlert
+            className="mb-3"
+            action={
+              needsKey(chat.error) ? (
+                <Button size="sm" onClick={() => setKeyOpen(true)}>
+                  Add your OpenRouter key
+                </Button>
+              ) : undefined
+            }
           >
-            <p>{errorCopy(chat.error)}</p>
-            {needsKey(chat.error) && (
-              <Button variant="link" onClick={() => setKeyOpen(true)}>
-                Add your OpenRouter key
-              </Button>
-            )}
-          </div>
+            {errorCopy(chat.error)}
+          </InlineAlert>
         )}
         <Composer
           chatId={initial.chat.id}
@@ -190,6 +198,7 @@ export function Chat({ initial }: { initial: ChatView }) {
           autoSend={transfer !== undefined}
           initialAttachments={transferFiles}
           initialDraft={transfer}
+          spend={chatSpend(chat.view.messages)}
           onStop={() => void chat.stop()}
           picker={
             <ModelPicker
@@ -228,20 +237,12 @@ export function ChatLoader({ id }: { id: string }) {
   }, [id]);
   if (error)
     return (
-      <p role="alert" className="p-6">
-        {errorCopy(error)}
-      </p>
+      <ErrorState
+        size="inline"
+        className="p-6"
+        title="Couldn’t load this Chat"
+        description={errorCopy(error)}
+      />
     );
-  return view ? (
-    <Chat key={id} initial={view} />
-  ) : (
-    <output
-      aria-label="Loading Chat"
-      className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 p-4"
-    >
-      <div className="ml-auto h-14 w-2/3 rounded-3xl bg-muted motion-safe:animate-pulse" />
-      <div className="h-28 w-full rounded-xl bg-muted motion-safe:animate-pulse" />
-      <div className="mt-auto h-28 rounded-3xl border bg-card" />
-    </output>
-  );
+  return view ? <Chat key={id} initial={view} /> : <ChatSkeleton />;
 }
