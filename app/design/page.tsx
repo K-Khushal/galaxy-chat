@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { Overlays } from "@/components/design/overlays";
 import { Showcase } from "@/components/design/showcase";
-import { ThemeSwitcher } from "@/components/shell/theme-switcher";
+import { ThemeControl } from "@/components/settings/theme-control";
 
 export const metadata = { title: "Design system" };
 
@@ -37,7 +37,7 @@ export default function DesignPage() {
             page to check focus rings.
           </p>
         </div>
-        <ThemeSwitcher />
+        <ThemeControl />
       </header>
       <div className="grid gap-6 xl:grid-cols-2">
         <ThemePanel theme="light" label="Light" />

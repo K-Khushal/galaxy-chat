@@ -362,6 +362,9 @@ test("save Custom instructions and delete account", async ({ page }) => {
   await expect(page.getByLabel("How should Galaxy respond")).toHaveValue(
     "Be concise.",
   );
+  await page
+    .getByRole("button", { name: "Delete account", exact: true })
+    .click();
   await page.getByLabel(/Type DELETE/).fill("DELETE");
   await page
     .getByRole("button", { name: "Delete account permanently", exact: true })
@@ -501,8 +504,7 @@ test("Settings BYOK lifecycle, export and persistent themes", async ({
     page.getByText("No OpenRouter key saved.", { exact: true }),
   ).toBeVisible();
   for (const theme of ["Light", "Dark", "System"]) {
-    await page.getByRole("button", { name: "Change theme" }).click();
-    await page.getByRole("menuitemradio", { name: theme, exact: true }).click();
+    await page.getByRole("radio", { name: theme, exact: true }).click();
     await reload(page);
     await expect
       .poll(() => page.evaluate(() => localStorage.getItem("theme")))
@@ -511,6 +513,9 @@ test("Settings BYOK lifecycle, export and persistent themes", async ({
   const download = page.waitForEvent("download");
   await page.getByRole("link", { name: "Export account as JSON" }).click();
   expect((await download).suggestedFilename()).toMatch(/json$/);
+  await expect(
+    page.getByText("Account export started.", { exact: true }),
+  ).toBeVisible();
 });
 
 test("model picker keyboard search and focus restoration", async ({ page }) => {
