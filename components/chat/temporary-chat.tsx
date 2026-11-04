@@ -2,7 +2,7 @@
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { RotateCcw } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { InlineAlert } from "@/components/ui/state";
 import { DEFAULT_MODEL_ID } from "@/lib/models";
@@ -22,6 +22,48 @@ import { creditsChanged } from "./use-credits";
  * only once it notices; this is how long to wait before looking again.
  */
 const STOP_SETTLE_MS = 1500;
+
+type UIMessage = ReturnType<typeof useChat>["messages"][number];
+const noop = () => {};
+const refuse = () => false;
+
+/**
+ * One Temporary Message. Streaming replaces only the last message object, so
+ * the other rows keep their props and skip rendering for each token.
+ */
+const TemporaryRow = memo(function TemporaryRow({
+  message,
+  parentId,
+  model,
+  busy,
+  streaming,
+  latest,
+}: {
+  message: UIMessage;
+  parentId: string | null;
+  model: string;
+  busy: boolean;
+  streaming: boolean;
+  latest: boolean;
+}) {
+  const row = useMemo(
+    () => chatMessage(message, undefined, parentId, model),
+    [message, parentId, model],
+  );
+  return (
+    <Message
+      message={row}
+      busy={busy}
+      streaming={streaming}
+      latest={latest}
+      readOnly
+      onEdit={refuse}
+      onRegenerate={noop}
+      onContinue={noop}
+      onSwitch={noop}
+    />
+  );
+});
 
 /** Draft, history and streamed Replies live only in this page's memory. */
 export function TemporaryChat() {
@@ -74,8 +116,20 @@ export function TemporaryChat() {
     };
   }, [stop]);
   const busy = chat.status === "submitted" || chat.status === "streaming";
+  // Each Message keeps the model it was sent with, not the picker's current one.
+  const sentModel = useRef(model);
+  const messageModels = useRef(new Map<string, string>());
+  function modelOf(id: string) {
+    let used = messageModels.current.get(id);
+    if (!used) {
+      used = sentModel.current;
+      messageModels.current.set(id, used);
+    }
+    return used;
+  }
   async function send(text: string) {
     if (busy) return false;
+    sentModel.current = model;
     await chat.sendMessage(
       {
         text,
@@ -113,14 +167,11 @@ export function TemporaryChat() {
           <h1 className="sr-only">Temporary chat</h1>
           <div role="log" aria-label="Temporary Messages">
             {chat.messages.map((message, index) => (
-              <Message
+              <TemporaryRow
                 key={message.id}
-                message={chatMessage(
-                  message,
-                  undefined,
-                  chat.messages[index - 1]?.id ?? null,
-                  model,
-                )}
+                message={message}
+                parentId={chat.messages[index - 1]?.id ?? null}
+                model={modelOf(message.id)}
                 busy={busy}
                 streaming={
                   busy &&
@@ -128,11 +179,6 @@ export function TemporaryChat() {
                   message.role === "assistant"
                 }
                 latest={index === chat.messages.length - 1}
-                readOnly
-                onEdit={() => false}
-                onRegenerate={() => {}}
-                onContinue={() => {}}
-                onSwitch={() => {}}
               />
             ))}
           </div>
@@ -147,6 +193,7 @@ export function TemporaryChat() {
               disabled={busy}
               onClick={() => {
                 chat.setMessages([]);
+                messageModels.current.clear();
                 chat.clearError();
                 setRevision((value) => value + 1);
               }}
