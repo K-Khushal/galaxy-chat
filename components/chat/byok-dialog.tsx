@@ -65,7 +65,8 @@ export function ByokDialog({
           }}
         >
           <Field invalid={!!error}>
-            <FieldLabel>OpenRouter key</FieldLabel>
+            {/* The dialog title already says it; the label is the field's accessible name. */}
+            <FieldLabel className="sr-only">OpenRouter key</FieldLabel>
             <Input
               type="password"
               autoComplete="off"

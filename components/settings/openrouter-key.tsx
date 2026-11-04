@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { api, errorCopy } from "@/components/chat/api";
 import { ByokDialog } from "@/components/chat/byok-dialog";
 import { Button } from "@/components/ui/button";
+import { InlineAlert } from "@/components/ui/state";
 import { SETTINGS_COPY } from "./copy";
 import { LocalDate } from "./local-date";
 import { SettingsGroup, SettingsRow } from "./settings-group";
@@ -20,6 +21,7 @@ export function OpenRouterKey({
 }) {
   const [dialog, setDialog] = useState(false);
   const [pending, setPending] = useState<"test" | "remove" | null>(null);
+  const [failure, setFailure] = useState("");
 
   async function run(
     action: "test" | "remove",
@@ -27,11 +29,12 @@ export function OpenRouterKey({
     success: string,
   ) {
     setPending(action);
+    setFailure("");
     try {
       await work();
       toast.success(success);
     } catch (error) {
-      toast.error(errorCopy(error as Error));
+      setFailure(errorCopy(error as Error));
     } finally {
       setPending(null);
     }
@@ -42,8 +45,7 @@ export function OpenRouterKey({
       <SettingsGroup title={SETTINGS_COPY.openRouterKey}>
         <SettingsRow
           stack
-          title={SETTINGS_COPY.openRouterKey}
-          description={
+          title={
             saved ? (
               <>
                 Added <LocalDate value={saved.updatedAt} format={ADDED} />
@@ -109,11 +111,19 @@ export function OpenRouterKey({
             </Button>
           )}
         </SettingsRow>
+        {failure ? (
+          <div className="p-3">
+            <InlineAlert tone="error">{failure}</InlineAlert>
+          </div>
+        ) : null}
       </SettingsGroup>
       <ByokDialog
         open={dialog}
         onOpenChange={setDialog}
-        onSaved={() => void onChanged()}
+        onSaved={() => {
+          setFailure("");
+          void onChanged();
+        }}
       />
     </>
   );

@@ -218,6 +218,15 @@ export function Showcase() {
           ))}
         </div>
       </Block>
+      <Block title="Button: disabled (every variant; solid fills go neutral)">
+        <div className="flex flex-wrap items-center gap-2">
+          {variants.map((variant) => (
+            <Button key={variant} variant={variant} disabled>
+              {variant}
+            </Button>
+          ))}
+        </div>
+      </Block>
       <Block title="Button: sizes (xs 24, sm 32, default 36, lg 40; 44px on touch)">
         <div className="flex flex-wrap items-center gap-2">
           <Button size="xs">xs</Button>

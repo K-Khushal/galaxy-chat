@@ -1240,6 +1240,22 @@ test("Button pending holds the label for screen readers and blocks clicks", asyn
   fireEvent.click(button);
   expect(clicks).toBe(0);
 });
+test("a disabled primary Button is neutral, a pending one keeps its colour", async () => {
+  const { Button } = await import("../../components/ui/button");
+  const ui = render(
+    <>
+      <Button disabled>Idle</Button>
+      <Button pending>Busy</Button>
+    </>,
+  );
+  const idle = ui.getByRole("button", { name: "Idle" }).className;
+  expect(idle).toContain("bg-muted");
+  expect(idle).toContain("text-muted-foreground");
+  expect(idle).not.toContain("bg-primary");
+  const busy = ui.getByRole("button", { name: "Busy" }).className;
+  expect(busy).toContain("bg-primary");
+  expect(busy).not.toContain("bg-muted");
+});
 
 // Shell routes are mocked only for these client component tests.
 let shellPath = "/chat";

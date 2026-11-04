@@ -63,11 +63,7 @@ export function SettingsSkeleton() {
         </div>
       </SettingsGroup>
       <SettingsGroup title={SETTINGS_COPY.openRouterKey}>
-        <SettingsRow
-          stack
-          title={SETTINGS_COPY.openRouterKey}
-          description={textBar}
-        >
+        <SettingsRow stack title={textBar}>
           <Skeleton className="h-8 w-24 rounded-lg pointer-coarse:min-h-11" />
         </SettingsRow>
       </SettingsGroup>
