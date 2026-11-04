@@ -1,7 +1,7 @@
 "use client";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { DEFAULT_MODEL_ID } from "@/lib/models";
 import { errorCopy, needsKey } from "./api";
@@ -42,22 +42,31 @@ export function TemporaryChat() {
       }),
     [],
   );
+  // Cleared on unmount; a later page fetches Credits fresh anyway.
+  const settleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mounted = useRef(true);
   const chat = useChat({
     transport,
     // A finished stream is already settled: the server spends or refunds
     // before closing it. A Stop or dropped connection settles a moment later.
     onFinish: ({ isAbort, isDisconnect }) => {
+      if (!mounted.current) return;
       creditsChanged();
-      if (isAbort || isDisconnect) setTimeout(creditsChanged, STOP_SETTLE_MS);
+      if (isAbort || isDisconnect) {
+        if (settleTimer.current) clearTimeout(settleTimer.current);
+        settleTimer.current = setTimeout(creditsChanged, STOP_SETTLE_MS);
+      }
     },
   });
   const { stop } = chat;
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      if (settleTimer.current) clearTimeout(settleTimer.current);
       void stop();
-    },
-    [stop],
-  );
+    };
+  }, [stop]);
   const busy = chat.status === "submitted" || chat.status === "streaming";
   async function send(text: string) {
     if (busy) return false;
