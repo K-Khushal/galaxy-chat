@@ -83,8 +83,10 @@ export function RecentChats() {
     mutating.current = true;
     setPending(chat.id);
     setError("");
-    setChats((rows) =>
-      patch
+    let before: ChatSummary[] = [];
+    setChats((rows) => {
+      before = rows;
+      return patch
         ? (rows.some((row) => row.id === chat.id) ? rows : [...rows, chat])
             .map((row) =>
               row.id === chat.id
@@ -92,8 +94,8 @@ export function RecentChats() {
                 : row,
             )
             .filter((row) => !row.archived)
-        : rows.filter((row) => row.id !== chat.id),
-    );
+        : rows.filter((row) => row.id !== chat.id);
+    });
     try {
       await api(
         `/api/chats/${chat.id}`,
@@ -107,10 +109,13 @@ export function RecentChats() {
             onClick: () => void mutate(chat, { archived: false }),
           },
         });
+      // A list remounted since the archive (the mobile drawer) reloads.
+      if (patch?.archived === false)
+        window.dispatchEvent(new Event("galaxy:chats"));
       if ((!patch || patch.archived) && pathname === `/chat/${chat.id}`)
         router.push("/chat");
     } catch {
-      setChats((rows) => [...rows.filter((row) => row.id !== chat.id), chat]);
+      setChats(before);
       setError("Could not update this Chat. Try again.");
     } finally {
       mutating.current = false;
@@ -202,7 +207,7 @@ export function RecentChats() {
                     </form>
                   ) : (
                     <SidebarMenuButton
-                      className="h-8 pr-9 group-data-[pending=true]/row:opacity-60"
+                      className="h-8 pr-9 pointer-coarse:pr-12 group-data-[pending=true]/row:opacity-60"
                       isActive={pathname === `/chat/${chat.id}`}
                       render={<Link href={`/chat/${chat.id}`} />}
                       onClick={() => {
@@ -220,7 +225,7 @@ export function RecentChats() {
                         <Button
                           variant="ghost"
                           size="icon-xs"
-                          className="absolute right-0 pointer-fine:size-7 pointer-fine:opacity-0 pointer-fine:group-hover/row:opacity-100 pointer-fine:group-focus-within/row:opacity-100 pointer-fine:group-data-[active=true]/row:opacity-100 pointer-fine:data-popup-open:opacity-100 enabled:active:scale-100"
+                          className="absolute right-0 pointer-fine:size-7 pointer-fine:opacity-0 pointer-fine:group-hover/row:opacity-100 pointer-fine:group-focus-within/row:opacity-100 pointer-fine:group-data-[active=true]/row:opacity-100 pointer-fine:data-popup-open:opacity-100"
                           disabled={!!pending}
                           aria-label={`Actions for ${chat.title ?? "New chat"}`}
                         />

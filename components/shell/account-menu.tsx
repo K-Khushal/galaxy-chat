@@ -3,6 +3,7 @@
 import { ChevronsUpDown, LogOut, Settings } from "lucide-react";
 import Link from "next/link";
 import { useSignOut } from "@/components/auth/use-sign-out";
+import { useAppleKeyboard } from "@/components/shell/use-apple-keyboard";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -29,6 +30,7 @@ function initials(name: string) {
 
 export function AccountMenu({ user }: { user: AccountUser }) {
   const { pending, signOut } = useSignOut();
+  const apple = useAppleKeyboard();
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -57,10 +59,15 @@ export function AccountMenu({ user }: { user: AccountUser }) {
           </span>
         </div>
         <DropdownMenuSeparator />
-        <DropdownMenuItem render={<Link href="/chat/settings" />}>
+        <DropdownMenuItem
+          render={<Link href="/chat/settings" />}
+          aria-keyshortcuts="Meta+Comma Control+Comma"
+        >
           <Settings />
           Settings
-          <Kbd className="ml-auto">⌘,</Kbd>
+          <Kbd className="ml-auto" aria-hidden>
+            {apple ? "⌘," : "Ctrl ,"}
+          </Kbd>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem

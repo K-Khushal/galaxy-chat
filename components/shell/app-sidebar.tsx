@@ -6,6 +6,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { type ReactNode, useEffect, useState } from "react";
 import { GalaxyMark } from "@/components/icons/brand";
+import { useAppleKeyboard } from "@/components/shell/use-apple-keyboard";
 import { Kbd } from "@/components/ui/kbd";
 import {
   Sidebar,
@@ -43,15 +44,19 @@ export function AppSidebar({
 }) {
   const pathname = usePathname();
   const router = useRouter();
-  const [apple, setApple] = useState(true);
+  const apple = useAppleKeyboard();
   const { toggleSidebar, state } = useSidebar();
   const [searchOpen, setSearchOpen] = useState(false);
   // Stays mounted after the first open so it can animate closed.
   const [searchWanted, setSearchWanted] = useState(false);
   useEffect(() => {
-    setApple(/Mac|iPhone|iPad|iPod/.test(navigator.platform));
     const listener = (event: KeyboardEvent) => {
-      if (event.key === "," && (event.metaKey || event.ctrlKey)) {
+      if (
+        event.key === "," &&
+        (event.metaKey || event.ctrlKey) &&
+        !event.shiftKey &&
+        !event.altKey
+      ) {
         const target = document.activeElement;
         if (
           (target instanceof HTMLInputElement ||
@@ -66,6 +71,7 @@ export function AppSidebar({
         )
           return;
         event.preventDefault();
+        setSearchOpen(false);
         router.push("/chat/settings");
       }
       if (event.key.toLowerCase() === "k" && (event.metaKey || event.ctrlKey)) {

@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, mock, test } from "bun:test";
 import { Window } from "happy-dom";
 
 const browser = new Window({ url: "http://localhost" });
@@ -1009,10 +1009,6 @@ test("the command palette offers System, Light and Dark themes", async () => {
       setTheme: (theme: string) => themes.push(theme),
     }),
   }));
-  mock.module("next/navigation", () => ({
-    usePathname: () => shellPath,
-    useRouter: () => ({ push: (path: string) => shellPushes.push(path) }),
-  }));
   Object.assign(globalThis, {
     ResizeObserver: class {
       observe() {}
@@ -1101,6 +1097,10 @@ test("Button pending holds the label for screen readers and blocks clicks", asyn
 // Shell routes are mocked only for these client component tests.
 let shellPath = "/chat";
 const shellPushes: string[] = [];
+mock.module("next/navigation", () => ({
+  usePathname: () => shellPath,
+  useRouter: () => ({ push: (path: string) => shellPushes.push(path) }),
+}));
 const { TemporaryToggle } = await import(
   "../../components/shell/temporary-toggle"
 );

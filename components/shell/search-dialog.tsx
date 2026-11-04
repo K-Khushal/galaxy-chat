@@ -12,6 +12,7 @@ import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
 import { useEffect, useState } from "react";
 import { api } from "@/components/chat/api";
+import { useAppleKeyboard } from "@/components/shell/use-apple-keyboard";
 import { Button } from "@/components/ui/button";
 import {
   CommandDialog,
@@ -32,6 +33,7 @@ export function SearchDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const router = useRouter();
+  const apple = useAppleKeyboard();
   const { setTheme } = useTheme();
   const [query, setQuery] = useState("");
   const [chats, setChats] = useState<{ id: string; title: string | null }[]>(
@@ -90,7 +92,7 @@ export function SearchDialog({
       label: "Open Settings",
       icon: Settings,
       action: () => navigate("/chat/settings"),
-      hint: "⌘,",
+      hint: apple ? "⌘," : "Ctrl ,",
     },
     ...(["system", "light", "dark"] as const).map((theme) => ({
       label: `Theme: ${theme[0]?.toUpperCase()}${theme.slice(1)}`,
@@ -163,7 +165,11 @@ export function SearchDialog({
               <CommandItem key={label} value={label} onSelect={action}>
                 <Icon />
                 {label}
-                {hint && <Kbd className="ml-auto">{hint}</Kbd>}
+                {hint && (
+                  <Kbd className="ml-auto" aria-hidden>
+                    {hint}
+                  </Kbd>
+                )}
               </CommandItem>
             ))}
           </CommandGroup>
