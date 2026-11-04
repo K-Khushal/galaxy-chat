@@ -68,7 +68,7 @@ function Button({
         disabled &&
           !pending &&
           (variant === "default" || variant === "destructive") &&
-          "bg-muted text-muted-foreground opacity-100",
+          "bg-muted text-muted-foreground disabled:opacity-100",
         className,
       )}
       disabled={disabled || pending}

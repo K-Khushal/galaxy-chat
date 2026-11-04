@@ -120,7 +120,10 @@ export function OpenRouterKey({
       <ByokDialog
         open={dialog}
         onOpenChange={setDialog}
-        onSaved={() => void onChanged()}
+        onSaved={() => {
+          setFailure("");
+          void onChanged();
+        }}
       />
     </>
   );
