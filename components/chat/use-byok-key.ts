@@ -1,12 +1,10 @@
 "use client";
-import { useEffect, useState } from "react";
-import { api } from "./api";
+import { useState } from "react";
+import { useCredits } from "./use-credits";
+
+/** Whether a BYOK key is saved; `setHasKey` reflects a save before the refetch lands. */
 export function useByokKey() {
-  const [hasKey, setHasKey] = useState(false);
-  useEffect(() => {
-    api<{ key: unknown }>("/api/byok")
-      .then((data) => setHasKey(!!data.key))
-      .catch(() => {});
-  }, []);
-  return { hasKey, setHasKey };
+  const { hasKey: fetched } = useCredits();
+  const [saved, setSaved] = useState<boolean>();
+  return { hasKey: saved ?? fetched ?? false, setHasKey: setSaved };
 }

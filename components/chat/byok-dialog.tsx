@@ -7,6 +7,7 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Field, FieldError, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { api, errorCopy } from "./api";
 export function ByokDialog({
@@ -33,11 +34,18 @@ export function ByokDialog({
       <DialogContent>
         <DialogTitle>Add your OpenRouter key</DialogTitle>
         <DialogDescription>
-          OpenRouter bills your account for Replies made with your key. Your key
-          is encrypted when saved.
+          Replies made with your key are billed by OpenRouter.{" "}
+          <a
+            href="https://openrouter.ai/keys"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-primary underline-offset-4 hover:underline"
+          >
+            Get a key
+          </a>
         </DialogDescription>
         <form
-          className="grid gap-3"
+          className="grid gap-4"
           onSubmit={async (e) => {
             e.preventDefault();
             setBusy(true);
@@ -45,6 +53,8 @@ export function ByokDialog({
             try {
               await api("/api/byok", { key }, "PUT");
               setKey("");
+              // The usage meter and the model picker follow the key.
+              window.dispatchEvent(new Event("galaxy-account-changed"));
               onSaved();
               onOpenChange(false);
             } catch (error) {
@@ -54,18 +64,22 @@ export function ByokDialog({
             }
           }}
         >
-          <label htmlFor="byok-key">OpenRouter key</label>
-          <Input
-            id="byok-key"
-            type="password"
-            autoComplete="off"
-            value={key}
-            onChange={(e) => setKey(e.target.value)}
-            required
-          />
-          {error && <p role="alert">{error}</p>}
-          <Button type="submit" disabled={busy || !key.trim()}>
-            {busy ? "Checking key…" : "Save key"}
+          <Field invalid={!!error}>
+            <FieldLabel>OpenRouter key</FieldLabel>
+            <Input
+              type="password"
+              autoComplete="off"
+              value={key}
+              onChange={(e) => {
+                setKey(e.target.value);
+                setError("");
+              }}
+              required
+            />
+            <FieldError>{error}</FieldError>
+          </Field>
+          <Button type="submit" pending={busy} disabled={!key.trim()}>
+            Save key
           </Button>
         </form>
       </DialogContent>

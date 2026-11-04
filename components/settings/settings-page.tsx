@@ -2,7 +2,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, errorCopy } from "@/components/chat/api";
 import { ByokDialog } from "@/components/chat/byok-dialog";
-import { creditsLeft } from "@/components/shell/credits-indicator";
 import { ThemeSwitcher } from "@/components/shell/theme-switcher";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,6 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { authClient } from "@/lib/auth/client";
 import { ARCHIVED_PAGE } from "@/lib/chat/archived";
+import { creditsLeft } from "@/lib/credits/copy";
 
 export type Data = {
   settings: { aboutYou: string; responseInstructions: string };
