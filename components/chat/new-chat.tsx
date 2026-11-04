@@ -4,13 +4,13 @@ import { type ReactNode, useEffect, useState } from "react";
 import { preloadResponse } from "@/components/elements/preload-response";
 import { Button } from "@/components/ui/button";
 import { InlineAlert } from "@/components/ui/state";
-import { DEFAULT_MODEL_ID, findModel } from "@/lib/models";
+import { DEFAULT_MODEL_ID } from "@/lib/models";
 import { api, errorCopy, needsKey } from "./api";
 import { ByokDialog } from "./byok-dialog";
 import { Composer } from "./composer";
 import { ModelPicker } from "./model-picker";
 import { useByokKey } from "./use-byok-key";
-import { useCredits } from "./use-credits";
+import { creditsChanged } from "./use-credits";
 
 /** The empty-Chat page, shared with its loading skeleton so nothing jumps. */
 export function NewChatLayout({
@@ -42,7 +42,6 @@ export function NewChat() {
   }, []);
   const [model, setModel] = useState(DEFAULT_MODEL_ID);
   const { hasKey, setHasKey } = useByokKey();
-  const account = useCredits();
   const [keyOpen, setKeyOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Error>();
@@ -79,15 +78,6 @@ export function NewChat() {
         busy={busy}
         onStop={() => {}}
         onSend={async (text, files) => {
-          // Nothing can pay for this Message, so don't leave an empty Chat behind.
-          if (
-            account.credits === 0 &&
-            account.hasKey === false &&
-            findModel(model)?.creditModel
-          ) {
-            setError(new Error("no_credits"));
-            return false;
-          }
           setBusy(true);
           setError(undefined);
           try {
@@ -105,8 +95,11 @@ export function NewChat() {
             router.push(`/chat/${chat.id}`);
             return false; // Retain the new-Chat draft until its first send is accepted.
           } catch (error) {
+            // The server refuses to create a Chat nothing can pay for (no
+            // empty Chat is left behind), so the meter is stale: refresh it.
             setError(error as Error);
             setBusy(false);
+            if (needsKey(error as Error)) creditsChanged();
             return false;
           }
         }}
