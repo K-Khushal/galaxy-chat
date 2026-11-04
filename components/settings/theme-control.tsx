@@ -4,6 +4,7 @@ import { useTheme } from "next-themes";
 import { useSyncExternalStore } from "react";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Skeleton } from "@/components/ui/skeleton";
+import { SettingsGroup, SettingsRow } from "./settings-group";
 
 const options = [
   { value: "system", label: "System", icon: <Monitor /> },
@@ -32,5 +33,16 @@ export function ThemeControl() {
       onValueChange={setTheme}
       options={options}
     />
+  );
+}
+
+/** Needs no data, so the loading skeleton renders it for real. */
+export function General() {
+  return (
+    <SettingsGroup title="General">
+      <SettingsRow title="Theme">
+        <ThemeControl />
+      </SettingsRow>
+    </SettingsGroup>
   );
 }

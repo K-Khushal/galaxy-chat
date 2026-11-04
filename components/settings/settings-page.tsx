@@ -8,9 +8,9 @@ import { Account } from "./account";
 import { type ArchivedChat, ArchivedChats } from "./archived-chats";
 import { OpenRouterKey } from "./openrouter-key";
 import { type Instructions, Personalization } from "./personalization";
-import { SettingsFrame, SettingsGroup, SettingsRow } from "./settings-group";
+import { SettingsFrame } from "./settings-group";
 import { SettingsSkeleton } from "./settings-skeleton";
-import { ThemeControl } from "./theme-control";
+import { General } from "./theme-control";
 import { Usage, type UsageReply } from "./usage";
 
 export type { ArchivedChat };
@@ -98,11 +98,7 @@ export function SettingsPage({
     );
   return (
     <SettingsFrame>
-      <SettingsGroup title="General">
-        <SettingsRow title="Theme">
-          <ThemeControl />
-        </SettingsRow>
-      </SettingsGroup>
+      <General />
       <Personalization
         saved={data.settings}
         onSaved={(settings) =>

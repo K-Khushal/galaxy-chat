@@ -513,6 +513,9 @@ test("Settings BYOK lifecycle, export and persistent themes", async ({
   const download = page.waitForEvent("download");
   await page.getByRole("link", { name: "Export account as JSON" }).click();
   expect((await download).suggestedFilename()).toMatch(/json$/);
+  await expect(
+    page.getByText("Account export started.", { exact: true }),
+  ).toBeVisible();
 });
 
 test("model picker keyboard search and focus restoration", async ({ page }) => {

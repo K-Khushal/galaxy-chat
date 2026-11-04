@@ -38,21 +38,45 @@ export function SettingsGroup({
   );
 }
 
+/**
+ * Variable-length lists scroll in a region of fixed height, so a short, long or
+ * empty list takes the same space and the groups below never move.
+ */
+export function SettingsList({
+  className,
+  ...props
+}: React.ComponentProps<"section">) {
+  return (
+    // A `section` with an `aria-label` is a landmark region.
+    <section
+      className={cn("h-56 overflow-y-auto overscroll-contain", className)}
+      {...props}
+    />
+  );
+}
+
 export function SettingsRow({
   title,
   description,
   children,
+  stack = false,
   className,
 }: {
   title: ReactNode;
   description?: ReactNode;
   children?: ReactNode;
+  /**
+   * Below `sm`, always put the controls under the text. For rows whose
+   * controls change width with data, so the row has one height either way.
+   */
+  stack?: boolean;
   className?: string;
 }) {
   return (
     <div
       className={cn(
         "flex min-h-14 flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3",
+        stack && "max-sm:flex-col max-sm:items-start",
         className,
       )}
     >
@@ -65,7 +89,11 @@ export function SettingsRow({
         ) : null}
       </div>
       {children ? (
-        <div className="ml-auto flex flex-wrap gap-2">{children}</div>
+        <div
+          className={cn("ml-auto flex flex-wrap gap-2", stack && "max-sm:ml-0")}
+        >
+          {children}
+        </div>
       ) : null}
     </div>
   );

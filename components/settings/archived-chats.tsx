@@ -20,7 +20,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { SettingsGroup } from "./settings-group";
+import { SettingsGroup, SettingsList } from "./settings-group";
 
 export type ArchivedChat = { id: string; title: string | null };
 
@@ -84,66 +84,68 @@ export function ArchivedChats({
   return (
     <>
       <SettingsGroup title="Archived chats">
-        {chats.length ? (
-          chats.map((chat) => (
-            <div
-              key={chat.id}
-              className="flex min-h-14 items-center gap-2 px-4 py-3"
-            >
-              <span className="min-w-0 flex-1 truncate text-sm">
-                {chat.title ?? "Untitled chat"}
-              </span>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label="Unarchive"
-                      pending={restoring === chat.id}
-                      disabled={restoring !== null}
-                      onClick={() => void restore(chat.id)}
-                    />
-                  }
-                >
-                  <ArchiveRestore />
-                </TooltipTrigger>
-                <TooltipContent>Unarchive</TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label="Delete"
-                      className="text-destructive"
-                      disabled={restoring !== null}
-                      onClick={() => setConfirming(chat.id)}
-                    />
-                  }
-                >
-                  <Trash2 />
-                </TooltipTrigger>
-                <TooltipContent>Delete</TooltipContent>
-              </Tooltip>
-            </div>
-          ))
-        ) : (
-          <div className="px-4 py-3">
+        <SettingsList
+          className={chats.length ? "divide-y" : "grid place-items-center px-4"}
+        >
+          {chats.length ? (
+            chats.map((chat) => (
+              <div
+                key={chat.id}
+                className="flex min-h-14 items-center gap-2 px-4 py-3"
+              >
+                <span className="min-w-0 flex-1 truncate text-sm">
+                  {chat.title ?? "Untitled chat"}
+                </span>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label="Unarchive"
+                        pending={restoring === chat.id}
+                        disabled={restoring !== null}
+                        onClick={() => void restore(chat.id)}
+                      />
+                    }
+                  >
+                    <ArchiveRestore />
+                  </TooltipTrigger>
+                  <TooltipContent>Unarchive</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label="Delete"
+                        className="text-destructive"
+                        disabled={restoring !== null}
+                        onClick={() => setConfirming(chat.id)}
+                      />
+                    }
+                  >
+                    <Trash2 />
+                  </TooltipTrigger>
+                  <TooltipContent>Delete</TooltipContent>
+                </Tooltip>
+              </div>
+            ))
+          ) : (
             <EmptyState size="inline" title="No archived chats" />
-          </div>
-        )}
-        {hasMore ? (
-          <Button
-            variant="ghost"
-            className="h-11 w-full rounded-none"
-            pending={loadingMore}
-            onClick={() => void loadMore()}
-          >
-            Load more
-          </Button>
-        ) : null}
+          )}
+          {hasMore ? (
+            <Button
+              variant="ghost"
+              className="h-11 w-full rounded-none"
+              pending={loadingMore}
+              onClick={() => void loadMore()}
+            >
+              Load more
+            </Button>
+          ) : null}
+        </SettingsList>
       </SettingsGroup>
       <AlertDialog
         open={confirming !== null}

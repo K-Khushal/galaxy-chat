@@ -5,6 +5,7 @@ import { api, errorCopy } from "@/components/chat/api";
 import { Button } from "@/components/ui/button";
 import { Field, FieldCounter, FieldLabel } from "@/components/ui/field";
 import { Textarea } from "@/components/ui/textarea";
+import { SETTINGS_COPY } from "./copy";
 import { SettingsGroup } from "./settings-group";
 
 export type Instructions = { aboutYou: string; responseInstructions: string };
@@ -41,7 +42,7 @@ export function Personalization({
         }}
       >
         <Field disabled={saving}>
-          <FieldLabel>About you</FieldLabel>
+          <FieldLabel>{SETTINGS_COPY.aboutYou}</FieldLabel>
           <Textarea
             className="min-h-24"
             maxLength={MAX}
@@ -51,7 +52,7 @@ export function Personalization({
           <FieldCounter value={draft.aboutYou.length} max={MAX} />
         </Field>
         <Field disabled={saving}>
-          <FieldLabel>How should Galaxy respond</FieldLabel>
+          <FieldLabel>{SETTINGS_COPY.respond}</FieldLabel>
           <Textarea
             className="min-h-24"
             maxLength={MAX}
@@ -64,7 +65,7 @@ export function Personalization({
         </Field>
         <div className="flex justify-end">
           <Button type="submit" disabled={!dirty} pending={saving}>
-            Save instructions
+            {SETTINGS_COPY.save}
           </Button>
         </div>
       </form>

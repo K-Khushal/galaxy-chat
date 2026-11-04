@@ -2,8 +2,9 @@
 import { EmptyState } from "@/components/ui/state";
 import { creditsLeft, formatCost } from "@/lib/credits/copy";
 import { MODELS } from "@/lib/models";
+import { SETTINGS_COPY } from "./copy";
 import { LocalDate } from "./local-date";
-import { SettingsGroup, SettingsRow } from "./settings-group";
+import { SettingsGroup, SettingsList, SettingsRow } from "./settings-group";
 
 export type UsageReply = {
   id: string;
@@ -32,11 +33,15 @@ export function Usage({
 }) {
   return (
     <SettingsGroup title="Usage">
-      <SettingsRow title="Credits">
+      <SettingsRow title={SETTINGS_COPY.credits}>
         <span className="text-sm tabular-nums">{creditsLeft(credits)}</span>
       </SettingsRow>
       {replies.length ? (
-        <div className="max-h-96 overflow-y-auto overscroll-contain">
+        <SettingsList
+          // Keyboard users scroll it, and it has nothing else to focus.
+          tabIndex={0}
+          aria-label="Recent Replies"
+        >
           <table className="w-full text-left text-sm">
             <caption className="sr-only">Recent Replies</caption>
             <thead className="text-xs font-medium text-muted-foreground">
@@ -92,11 +97,11 @@ export function Usage({
               })}
             </tbody>
           </table>
-        </div>
+        </SettingsList>
       ) : (
-        <div className="px-4 py-3">
+        <SettingsList className="grid place-items-center px-4">
           <EmptyState size="inline" title="No Replies yet" />
-        </div>
+        </SettingsList>
       )}
     </SettingsGroup>
   );

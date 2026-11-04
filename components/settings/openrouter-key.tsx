@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { api, errorCopy } from "@/components/chat/api";
 import { ByokDialog } from "@/components/chat/byok-dialog";
 import { Button } from "@/components/ui/button";
+import { SETTINGS_COPY } from "./copy";
 import { LocalDate } from "./local-date";
 import { SettingsGroup, SettingsRow } from "./settings-group";
 
@@ -38,9 +39,10 @@ export function OpenRouterKey({
 
   return (
     <>
-      <SettingsGroup title="OpenRouter key">
+      <SettingsGroup title={SETTINGS_COPY.openRouterKey}>
         <SettingsRow
-          title="OpenRouter key"
+          stack
+          title={SETTINGS_COPY.openRouterKey}
           description={
             saved ? (
               <>

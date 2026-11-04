@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { toast } from "sonner";
 import { api, errorCopy } from "@/components/chat/api";
 import {
   AlertDialog,
@@ -48,7 +49,11 @@ export function Account() {
             variant="outline"
             size="sm"
             render={
-              <a href="/api/account/export" download>
+              <a
+                href="/api/account/export"
+                download
+                onClick={() => toast.success("Account export started.")}
+              >
                 Export account as JSON
               </a>
             }
