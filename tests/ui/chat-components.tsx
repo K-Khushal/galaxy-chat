@@ -13,6 +13,7 @@ for (const key of [
   "getComputedStyle",
   "localStorage",
   "sessionStorage",
+  "Event",
 ])
   Object.defineProperty(globalThis, key, {
     value:
@@ -22,6 +23,15 @@ for (const key of [
     configurable: true,
     writable: true,
   });
+// cmdk (the model picker, search) measures and scrolls its list.
+Object.assign(globalThis, {
+  ResizeObserver: class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  },
+});
+Element.prototype.scrollIntoView = () => {};
 const { render, fireEvent, cleanup, act, waitFor } = await import(
   "@testing-library/react"
 );
@@ -398,7 +408,8 @@ test("Temporary chats keep drafts in memory without persisting or sending them",
   let calls = 0;
   globalThis.fetch = Object.assign(
     async (url: RequestInfo | URL) => {
-      if (String(url) === "/api/byok") return Response.json({ key: null });
+      if (String(url) === "/api/credits")
+        return Response.json({ credits: 10, key: null });
       calls++;
       throw new Error("Unexpected server write");
     },
@@ -432,7 +443,8 @@ test("Temporary sends client history, Stop aborts fetch and remount clears Messa
   let signal: AbortSignal | undefined;
   globalThis.fetch = Object.assign(
     async (_url: RequestInfo | URL, options?: RequestInit) => {
-      if (String(_url) === "/api/byok") return Response.json({ key: null });
+      if (String(_url) === "/api/credits")
+        return Response.json({ credits: 10, key: null });
       bodies.push(JSON.parse(String(options?.body)));
       signal = options?.signal ?? undefined;
       return new Response(
@@ -613,9 +625,9 @@ function fakeUploader() {
   return { upload, calls };
 }
 
-const pick = (ui: ReturnType<typeof render>, files: File[], index = 1) => {
-  const inputs = ui.container.querySelectorAll('input[type="file"]');
-  fireEvent.change(inputs[index] as HTMLInputElement, { target: { files } });
+const pick = (ui: ReturnType<typeof render>, files: File[]) => {
+  const input = ui.container.querySelector('input[type="file"]');
+  fireEvent.change(input as HTMLInputElement, { target: { files } });
 };
 const file = (name: string, type: string, size = 100) =>
   new File([new Uint8Array(size)], name, { type });
@@ -778,7 +790,7 @@ test("a failed upload explains itself and blocks Send until removed", async () =
   expect(send.disabled).toBe(false);
 });
 
-test("a model that cannot read images turns off photos and refuses dropped images", () =>
+test("one picker accepts images and files; a model that cannot read images refuses the image", () =>
   withAnimationFrames(async () => {
     const { upload, calls } = fakeUploader();
     const ui = render(
@@ -790,12 +802,11 @@ test("a model that cannot read images turns off photos and refuses dropped image
         onStop={() => {}}
       />,
     );
-    fireEvent.click(ui.getByRole("button", { name: "Add attachment" }));
-    const photos = await ui.findByRole("menuitem", { name: /Add photos/ });
-    expect(photos.getAttribute("aria-disabled")).toBe("true");
-    expect(photos.textContent).toContain("acme/text-only can’t read images.");
-    const files = await ui.findByRole("menuitem", { name: /Add files/ });
-    expect(files.getAttribute("aria-disabled")).not.toBe("true");
+    const inputs = ui.container.querySelectorAll('input[type="file"]');
+    expect(inputs).toHaveLength(1);
+    const accept = inputs[0]?.getAttribute("accept") ?? "";
+    expect(accept).toContain("image/png");
+    expect(accept).toContain("application/pdf");
     pick(ui, [file("a.png", "image/png"), file("b.txt", "text/plain")]);
     expect(calls.map((c) => c.file.name)).toEqual(["b.txt"]);
     expect(ui.getByRole("alert").textContent).toContain("can’t read images");
@@ -893,6 +904,41 @@ test("a thumbnail opens a larger view", () =>
     );
   }));
 const { ModelPicker } = await import("../../components/chat/model-picker");
+test("the model picker is a popover grouped by payment, with provider marks, a check and locks", () =>
+  withAnimationFrames(async () => {
+    const picked: string[] = [];
+    let keyAdds = 0;
+    const ui = render(
+      <ModelPicker
+        model="openai/gpt-6-luna"
+        onChange={(id) => picked.push(id)}
+        hasKey={false}
+        addKey={() => {
+          keyAdds++;
+        }}
+      />,
+    );
+    const trigger = ui.getByRole("button", { name: "Choose model" });
+    expect(trigger.querySelector('svg[data-provider="OpenAI"]')).toBeTruthy();
+    fireEvent.click(trigger);
+    const popup = await ui.findByRole("dialog");
+    // A popover anchored to its trigger: no title or description.
+    expect(popup.getAttribute("aria-labelledby")).toBeNull();
+    expect(popup.getAttribute("data-slot")).toBe("popover-content");
+    expect(ui.getByText("Credit models")).toBeTruthy();
+    expect(ui.getByText("Your key")).toBeTruthy();
+    const options = ui.getAllByRole("option");
+    const current = options.find((o) => o.getAttribute("data-checked"));
+    expect(current?.textContent).toBe("GPT-6 Luna");
+    expect(current?.querySelector("svg.lucide-check")).toBeTruthy();
+    const locked = options.find((o) => o.querySelector("svg.lucide-lock"));
+    expect(locked).toBeTruthy();
+    expect(ui.queryByText("Add your OpenRouter key")).toBeNull();
+    // A locked model asks for a key instead of switching.
+    fireEvent.click(locked as HTMLElement);
+    expect(keyAdds).toBe(1);
+    expect(picked).toEqual([]);
+  }));
 test("BYOK users can pick a custom OpenRouter model ID; others are asked for a key", () =>
   withAnimationFrames(async () => {
     const picked: string[] = [];
@@ -1149,5 +1195,162 @@ test("search hides empty group headings for empty query and unmatched results", 
     });
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+/** A UI message stream response: the given chunks, then (unless held) the end. */
+function sseReply(chunks: object[], signal?: AbortSignal | null, hold = false) {
+  return new Response(
+    new ReadableStream({
+      start(controller) {
+        for (const chunk of chunks)
+          controller.enqueue(
+            new TextEncoder().encode(`data: ${JSON.stringify(chunk)}\n\n`),
+          );
+        if (!hold) controller.close();
+        signal?.addEventListener(
+          "abort",
+          () => controller.error(new DOMException("aborted", "AbortError")),
+          { once: true },
+        );
+      },
+    }),
+    {
+      headers: {
+        "content-type": "text/event-stream",
+        "x-vercel-ai-ui-message-stream": "v1",
+      },
+    },
+  );
+}
+
+test("the Temporary meter refreshes when a Reply settles, and again after Stop for the refund", async () => {
+  const { TemporaryChat } = await import(
+    "../../components/chat/temporary-chat"
+  );
+  const original = globalThis.fetch;
+  let serverCredits = 10;
+  let sends = 0;
+  globalThis.fetch = Object.assign(
+    async (url: RequestInfo | URL, options?: RequestInit) => {
+      if (String(url) === "/api/credits")
+        return Response.json({ credits: serverCredits, key: null });
+      sends++;
+      serverCredits--; // The server spends before streaming.
+      if (sends === 1)
+        return sseReply([
+          { type: "start", messageId: "reply-1" },
+          { type: "text-start", id: "t" },
+          { type: "text-delta", id: "t", delta: "Hi there" },
+          { type: "text-end", id: "t" },
+          { type: "finish" },
+        ]);
+      // Stopped before the first token: the server refunds once it notices.
+      options?.signal?.addEventListener(
+        "abort",
+        () => setTimeout(() => serverCredits++, 50),
+        { once: true },
+      );
+      return sseReply(
+        [{ type: "start", messageId: "reply-2" }],
+        options?.signal,
+        true,
+      );
+    },
+    { preconnect: original.preconnect },
+  );
+  try {
+    const ui = render(<TemporaryChat />);
+    await ui.findByText("10 Credits left");
+    fireEvent.change(ui.getByRole("textbox"), { target: { value: "Hello" } });
+    await act(async () => {
+      fireEvent.click(ui.getByRole("button", { name: "Send message" }));
+    });
+    await ui.findByText("Hi there");
+    await ui.findByText("9 Credits left");
+
+    fireEvent.change(ui.getByRole("textbox"), { target: { value: "Again" } });
+    await act(async () => {
+      fireEvent.click(ui.getByRole("button", { name: "Send message" }));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    await act(async () => {
+      fireEvent.click(ui.getByRole("button", { name: "Stop Reply" }));
+    });
+    await ui.findByText("8 Credits left");
+    // The refund lands after Stop; the meter looks again and shows it.
+    await waitFor(() => expect(ui.getByText("9 Credits left")).toBeTruthy(), {
+      timeout: 3000,
+    });
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test("the Temporary meter follows the selected model", () =>
+  withAnimationFrames(async () => {
+    const { TemporaryChat } = await import(
+      "../../components/chat/temporary-chat"
+    );
+    const original = globalThis.fetch;
+    globalThis.fetch = Object.assign(
+      async () => Response.json({ credits: 9, key: { last4: "abcd" } }),
+      { preconnect: original.preconnect },
+    );
+    try {
+      const ui = render(<TemporaryChat />);
+      await ui.findByText("9 Credits left");
+      fireEvent.click(ui.getByRole("button", { name: "Choose model" }));
+      const sonnet = await ui.findByText("Claude Sonnet 5.5");
+      await act(async () => {
+        fireEvent.click(sonnet);
+      });
+      // The meter beside Send, not the picker's "Your key" group.
+      const meter = ui
+        .getAllByRole("button")
+        .find((b) => /Credits? left|Your key/.test(b.textContent ?? ""));
+      expect(meter?.textContent).toBe("Your key");
+    } finally {
+      globalThis.fetch = original;
+    }
+  }));
+
+test("a new Chat waits for the server, not the Credits fetch, and shows its 0-Credits refusal", async () => {
+  const { NewChat } = await import("../../components/chat/new-chat");
+  const original = globalThis.fetch;
+  const created: string[] = [];
+  globalThis.fetch = Object.assign(
+    async (url: RequestInfo | URL, options?: RequestInit) => {
+      // Credits never arrive: the client must not guess.
+      if (String(url) === "/api/credits")
+        return new Promise<Response>(() => {});
+      created.push(String(options?.body));
+      return Response.json({ error: "no_credits" }, { status: 402 });
+    },
+    { preconnect: original.preconnect },
+  );
+  localStorage.clear();
+  sessionStorage.clear();
+  const pushes = shellPushes.length;
+  try {
+    const ui = render(<NewChat />);
+    fireEvent.change(ui.getByRole("textbox"), { target: { value: "Hello" } });
+    await act(async () => {
+      fireEvent.click(ui.getByRole("button", { name: "Send message" }));
+    });
+    expect(created).toHaveLength(1);
+    await ui.findByText(
+      "Your Credits are used up. Add your OpenRouter key to keep chatting.",
+    );
+    expect(
+      ui.getByRole("button", { name: "Add your OpenRouter key" }),
+    ).toBeTruthy();
+    // No Chat, no navigation, and the draft is kept.
+    expect(shellPushes.length).toBe(pushes);
+    expect((ui.getByRole("textbox") as HTMLTextAreaElement).value).toBe(
+      "Hello",
+    );
+  } finally {
+    globalThis.fetch = original;
   }
 });

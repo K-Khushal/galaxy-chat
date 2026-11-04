@@ -28,9 +28,12 @@ async function view(page: Page) {
 }
 
 async function reload(page: Page) {
-  const ready = page.waitForResponse((response) =>
-    response.url().endsWith("/api/credits"),
-  );
+  // The usage meter in the composer fetches Credits; Settings has no composer.
+  const ready = page.url().includes("/chat/settings")
+    ? undefined
+    : page.waitForResponse((response) =>
+        response.url().endsWith("/api/credits"),
+      );
   await page.reload();
   await ready;
 }
@@ -92,23 +95,10 @@ test.beforeEach(async ({ page }) => {
   expect(signIn.status()).toBe(303);
   await page.goto("/chat");
   await expect(page).toHaveURL(/\/chat$/);
-  const credits = page.getByText("10 Credits left", { exact: true });
-  const mobile = (page.viewportSize()?.width ?? 1280) < 768;
-  if (mobile) {
-    // The Credits indicator lives in the sidebar drawer, which only mounts
-    // (and fetches Credits) once opened; retry until hydration lets it open.
-    await expect(async () => {
-      if (!(await page.getByRole("dialog").isVisible()))
-        await page
-          .getByRole("button", { name: "Toggle Sidebar" })
-          .first()
-          .click();
-      await expect(credits).toBeVisible({ timeout: 2_000 });
-    }).toPass();
-    await page.keyboard.press("Escape");
-  } else {
-    await expect(credits).toBeVisible();
-  }
+  // Beside Send, so it shows at every width without opening the sidebar.
+  await expect(
+    page.getByText("10 Credits left", { exact: true }),
+  ).toBeVisible();
 });
 
 test("sign in grants 10 Credits and lands on /chat", async ({ page }) => {
@@ -220,6 +210,77 @@ test("spend Credits, see no_credits, then send with a BYOK key", async ({
   expect((await view(page)).messages.at(-1).payment).toBe("byok");
 });
 
+/** Spends every Credit through Temporary Replies, which store nothing. */
+async function spendAllCredits(page: Page) {
+  const origin = "http://127.0.0.1:34871";
+  for (let i = 0; i < 10; i++) {
+    const response = await page.request.post("/api/temporary/messages", {
+      headers: { origin },
+      data: {
+        model: "openai/gpt-6-luna",
+        messages: [{ role: "user", content: `Spend ${i}` }],
+      },
+    });
+    expect(response.ok()).toBe(true);
+    await response.body(); // The Credit is spent when the Reply is recorded.
+  }
+  await expect
+    .poll(
+      async () =>
+        (await (await page.request.get("/api/credits")).json()).credits,
+    )
+    .toBe(0);
+}
+const chatCount = async (page: Page) =>
+  (await (await page.request.get("/api/chats")).json()).chats.length;
+
+test("no Chat is created when nothing can pay for it", async ({ page }) => {
+  await spendAllCredits(page);
+  const chats = () => chatCount(page);
+  const before = await chats();
+  await page.goto("/chat");
+  await expect(page.getByText("0 Credits left", { exact: true })).toBeVisible();
+  await send(page, "Nothing can pay for this");
+  await expect(
+    page.getByRole("button", { name: "Add your OpenRouter key", exact: true }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(/\/chat$/);
+  expect(await chats()).toBe(before);
+});
+
+test("with Credits still loading, the server refuses the Chat and the composer says why", async ({
+  page,
+}) => {
+  await spendAllCredits(page);
+  const before = await chatCount(page);
+  // Hold every Credits answer: the client must not wait for it, or guess.
+  const held: (() => void)[] = [];
+  await page.route("**/api/credits", (route) => {
+    held.push(() => void route.continue().catch(() => {}));
+  });
+  await page.goto("/chat");
+  const refused = page.waitForResponse(
+    (r) =>
+      r.url().endsWith("/api/chats") &&
+      r.request().method() === "POST" &&
+      r.status() === 402,
+  );
+  await send(page, "Credits are still loading");
+  expect(await (await refused).json()).toEqual({ error: "no_credits" });
+  await expect(
+    page.getByText(
+      "Your Credits are used up. Add your OpenRouter key to keep chatting.",
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Add your OpenRouter key", exact: true }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(/\/chat$/);
+  await expect(composer(page)).toHaveValue("Credits are still loading");
+  expect(await chatCount(page)).toBe(before);
+  for (const release of held) release();
+});
+
 test("sidebar rename, pin, message search with Command K, and delete", async ({
   page,
 }) => {
@@ -265,6 +326,8 @@ test("Temporary chat streams without saving anything", async ({ page }) => {
   await expect(
     page.getByRole("log", { name: "Temporary Messages" }),
   ).toContainText("A thoughtful Reply. Complete.");
+  // The meter follows the Credit this Reply spent, without a reload.
+  await expect(page.getByText("9 Credits left", { exact: true })).toBeVisible();
   await reload(page);
   await expect(
     page.getByRole("log", { name: "Temporary Messages" }),
@@ -455,7 +518,7 @@ test("model picker keyboard search and focus restoration", async ({ page }) => {
   await trigger.focus();
   await page.keyboard.press("Enter");
   await page
-    .getByRole("textbox", { name: "Search models" })
+    .getByRole("combobox", { name: "Search models" })
     .fill("no-such-model");
   await expect(
     page.getByText("No models found.", { exact: true }),
@@ -466,8 +529,6 @@ test("model picker keyboard search and focus restoration", async ({ page }) => {
   await page.keyboard.type("Keyboard Message");
   await page.keyboard.press("Enter");
   await complete(page);
-  if ((page.viewportSize()?.width ?? 1280) < 768)
-    await page.getByRole("button", { name: "Toggle Sidebar" }).first().click();
   await expect(page.getByText("9 Credits left", { exact: true })).toBeVisible();
 });
 

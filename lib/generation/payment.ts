@@ -52,6 +52,29 @@ export async function spendForReply(
   }
 }
 
+type PayCtx = Pick<AppContext, "db" | "platformKey" | "byokEnv">;
+
+function payer(ctx: PayCtx) {
+  return {
+    db: ctx.db,
+    platformKey: ctx.platformKey,
+    loadByokKey: (id: string) => loadByokKey(ctx.db, ctx.byokEnv, id),
+  };
+}
+
+/**
+ * Throws the same 402 a Generation would when nothing can pay for a Reply on
+ * `model`. Spends nothing; used to refuse work (such as a new Chat) that only
+ * makes sense if the first Reply can be paid for.
+ */
+export async function assertCanPay(
+  ctx: PayCtx,
+  userId: string,
+  model: ResolvedModel,
+): Promise<void> {
+  await choosePayment(payer(ctx), userId, model);
+}
+
 /**
  * Chooses who pays, then runs `record`, which must call spendForReply and
  * persist whatever the caller needs (saved Chats record the Reply in the same
@@ -60,18 +83,13 @@ export async function spendForReply(
  * neither (no_credits).
  */
 export async function payForReply<T>(
-  ctx: Pick<AppContext, "db" | "platformKey" | "byokEnv">,
+  ctx: PayCtx,
   userId: string,
   model: ResolvedModel,
   record: (payment: Payment) => Promise<T>,
 ): Promise<{ payment: Payment; recorded: T }> {
-  const payer = {
-    db: ctx.db,
-    platformKey: ctx.platformKey,
-    loadByokKey: (id: string) => loadByokKey(ctx.db, ctx.byokEnv, id),
-  };
   for (let attempt = 0; ; attempt++) {
-    const payment = await choosePayment(payer, userId, model);
+    const payment = await choosePayment(payer(ctx), userId, model);
     try {
       return { payment, recorded: await record(payment) };
     } catch (error) {

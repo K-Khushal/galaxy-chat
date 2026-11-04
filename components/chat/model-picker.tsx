@@ -1,15 +1,71 @@
 "use client";
-import { ChevronDown, Lock } from "lucide-react";
+import { Box, Check, ChevronDown, Lock } from "lucide-react";
 import { useRef, useState } from "react";
+import { ProviderIcon } from "@/components/icons/provider-icon";
 import { Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { isCustomModelId, MODELS } from "@/lib/models";
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+  CommandShortcut,
+} from "@/components/ui/command";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { type CatalogModel, isCustomModelId, MODELS } from "@/lib/models";
+import { cn } from "@/lib/utils";
+
+const ITEM = "h-9 gap-2.5 rounded-lg px-2";
+// Replaces the item's built-in check, so the mark at the end is ours.
+const END_MARK = "tracking-normal";
+
+function ModelRow({
+  model,
+  selected,
+  locked,
+  onSelect,
+}: {
+  model: CatalogModel;
+  selected: boolean;
+  locked: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <CommandItem
+      value={model.id}
+      data-checked={selected ? "true" : undefined}
+      className={ITEM}
+      onSelect={onSelect}
+    >
+      <ProviderIcon
+        provider={model.provider}
+        className="text-muted-foreground"
+      />
+      <span className="min-w-0 flex-1 truncate">{model.label}</span>
+      {selected && (
+        <CommandShortcut
+          className={cn(
+            END_MARK,
+            "text-primary group-data-selected/command-item:text-primary",
+          )}
+        >
+          <Check aria-hidden="true" className="size-4" />
+        </CommandShortcut>
+      )}
+      {locked && !selected && (
+        <CommandShortcut className={cn(END_MARK, "text-muted-foreground")}>
+          <Lock aria-hidden="true" className="size-3.5" />
+        </CommandShortcut>
+      )}
+    </CommandItem>
+  );
+}
+
 export function ModelPicker({
   model,
   onChange,
@@ -37,107 +93,119 @@ export function ModelPicker({
     !MODELS.some((m) => m.id === search.trim())
       ? search.trim()
       : null;
+  const current = MODELS.find((m) => m.id === model);
+  const close = () => {
+    setOpen(false);
+    setSearch("");
+  };
+  const row = (m: CatalogModel) => (
+    <ModelRow
+      key={m.id}
+      model={m}
+      selected={model === m.id}
+      locked={!hasKey && !m.creditModel}
+      onSelect={() => {
+        close();
+        if (!hasKey && !m.creditModel) addKey();
+        else onChange(m.id);
+      }}
+    />
+  );
+  const credit = matches.filter((m) => m.creditModel);
+  const other = matches.filter((m) => !m.creditModel);
   return (
-    <>
-      <Button
-        ref={triggerRef}
-        type="button"
-        variant="ghost"
-        size="sm"
-        disabled={disabled}
-        onClick={() => setOpen(true)}
-        aria-label="Choose model"
+    <Popover
+      open={open}
+      onOpenChange={(value) => {
+        setOpen(value);
+        if (!value) setSearch("");
+      }}
+    >
+      <PopoverTrigger
+        render={
+          <Button
+            ref={triggerRef}
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={disabled}
+            aria-label="Choose model"
+            className="h-8 min-w-0 shrink gap-1.5 rounded-full px-2.5"
+          />
+        }
       >
-        {MODELS.find((m) => m.id === model)?.label ?? model}
-        <ChevronDown />
-      </Button>
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-md" finalFocus={triggerRef}>
-          <DialogTitle>Choose a model</DialogTitle>
-          <DialogDescription>
-            Use Credits on selected models, or add your OpenRouter key.
-          </DialogDescription>
-          <Input
+        <ProviderIcon
+          provider={current?.provider ?? ""}
+          className="text-muted-foreground"
+        />
+        <span className="max-w-40 truncate">{current?.label ?? model}</span>
+        <ChevronDown
+          aria-hidden="true"
+          className="size-3.5 text-muted-foreground"
+        />
+      </PopoverTrigger>
+      <PopoverContent
+        side="top"
+        align="start"
+        sideOffset={8}
+        // WebKit mobile doesn't restore focus implicitly after the exit transition.
+        finalFocus={triggerRef}
+        className="w-80 max-w-[calc(100vw-2rem)] gap-0 overflow-hidden p-0"
+      >
+        <Command shouldFilter={false} className="p-0">
+          <CommandInput
             aria-label="Search models"
             placeholder={
-              hasKey ? "Search models or enter a model ID" : "Search models"
+              hasKey ? "Search or paste a model ID" : "Search models"
             }
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onValueChange={setSearch}
           />
-          <div className="max-h-[55dvh] overflow-y-auto">
-            {[...new Set(matches.map((m) => m.provider))].map((provider) => (
-              <section key={provider} className="mb-3">
-                <h3 className="px-2 py-1 text-xs text-muted-foreground">
-                  {provider}
-                </h3>
-                {matches
-                  .filter((m) => m.provider === provider)
-                  .map((m) => {
-                    const locked = !hasKey && !m.creditModel;
-                    return (
-                      <button
-                        type="button"
-                        key={m.id}
-                        aria-pressed={model === m.id}
-                        className="flex w-full flex-col gap-1 rounded-lg px-2 py-2 text-left outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
-                        onClick={() => {
-                          setOpen(false);
-                          if (locked) addKey();
-                          else onChange(m.id);
-                        }}
-                      >
-                        <span className="flex w-full items-center justify-between">
-                          {m.label}
-                          {locked && <Lock className="size-3" />}
-                        </span>
-                        <span className="text-xs text-muted-foreground">
-                          {[
-                            m.capabilities.vision && "Vision",
-                            m.capabilities.pdf && "PDF",
-                            m.capabilities.reasoning && "Reasoning",
-                            `${Math.round(m.capabilities.context / 1000)}k context`,
-                          ]
-                            .filter(Boolean)
-                            .join(" · ")}
-                        </span>
-                        {locked && (
-                          <span className="text-xs text-muted-foreground">
-                            Add your OpenRouter key
-                          </span>
-                        )}
-                      </button>
-                    );
-                  })}
-              </section>
-            ))}
+          <CommandList className="max-h-[min(24rem,50dvh,calc(var(--available-height,100dvh)-3.5rem))] overscroll-contain p-1">
+            <CommandEmpty>No models found.</CommandEmpty>
+            {credit.length > 0 && (
+              <CommandGroup heading="Credit models">
+                {credit.map(row)}
+              </CommandGroup>
+            )}
+            {other.length > 0 && (
+              <CommandGroup heading="Your key">{other.map(row)}</CommandGroup>
+            )}
             {customId && (
-              <button
-                type="button"
-                className="flex w-full flex-col gap-1 rounded-lg px-2 py-2 text-left outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
-                onClick={() => {
-                  setOpen(false);
-                  if (hasKey) onChange(customId);
-                  else addKey();
-                }}
-              >
-                <span className="flex w-full items-center justify-between break-all">
-                  {hasKey ? `Use ${customId}` : `Custom model ${customId}`}
-                  {!hasKey && <Lock className="size-3 shrink-0" />}
-                </span>
-                <span className="text-xs text-muted-foreground">
-                  {hasKey
-                    ? "Billed to your OpenRouter key"
-                    : "Add your OpenRouter key to use a custom model ID"}
-                </span>
-              </button>
+              <CommandGroup>
+                <CommandItem
+                  value={`custom:${customId}`}
+                  className={cn(ITEM, !hasKey && "h-auto min-h-9 py-1.5")}
+                  onSelect={() => {
+                    close();
+                    if (hasKey) onChange(customId);
+                    else addKey();
+                  }}
+                >
+                  <Box aria-hidden="true" className="text-muted-foreground" />
+                  <span className="grid min-w-0 flex-1">
+                    <span className="break-all">
+                      {hasKey ? `Use ${customId}` : `Custom model ${customId}`}
+                    </span>
+                    {!hasKey && (
+                      <span className="text-xs text-muted-foreground">
+                        Add your OpenRouter key to use a custom model ID
+                      </span>
+                    )}
+                  </span>
+                  {!hasKey && (
+                    <CommandShortcut
+                      className={cn(END_MARK, "text-muted-foreground")}
+                    >
+                      <Lock aria-hidden="true" className="size-3.5" />
+                    </CommandShortcut>
+                  )}
+                </CommandItem>
+              </CommandGroup>
             )}
-            {!matches.length && !customId && (
-              <p className="p-2 text-muted-foreground">No models found.</p>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
-    </>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
   );
 }

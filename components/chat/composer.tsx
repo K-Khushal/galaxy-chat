@@ -1,11 +1,5 @@
 "use client";
-import {
-  ArrowUp,
-  FileText,
-  Image as ImageIcon,
-  Plus,
-  Square,
-} from "lucide-react";
+import { ArrowUp, Paperclip, Square } from "lucide-react";
 import {
   type ClipboardEvent,
   type DragEvent,
@@ -18,23 +12,34 @@ import {
 } from "react";
 import { Button } from "@/components/ui/button";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   ACCEPT_FILES,
   ACCEPT_IMAGES,
   modelSupport,
   supportsKind,
   unreadableCopy,
-  visionOffCopy,
 } from "@/lib/attachments/rules";
 import { DEFAULT_MODEL_ID, findModel } from "@/lib/models";
+import { cn } from "@/lib/utils";
 import { AttachmentTray } from "./attachment-tray";
 import type { StoredAttachment, Uploader } from "./attachment-upload";
+import {
+  COMPOSER_FRAME,
+  COMPOSER_TEXTAREA,
+  COMPOSER_TOOLBAR,
+  SEND_BUTTON,
+} from "./composer-skeleton";
+import { type ChatSpend, UsageMeter } from "./usage-meter";
 import { useAttachments } from "./use-attachments";
+
+const SWAP =
+  "[grid-area:1/1] transition-[opacity,scale,filter] duration-160 ease-out";
+const SWAP_HIDDEN = "opacity-0 motion-safe:scale-[0.25] motion-safe:blur-[4px]";
+
 export function Composer({
   chatId,
   busy = false,
@@ -47,6 +52,7 @@ export function Composer({
   persistDraft = true,
   model = DEFAULT_MODEL_ID,
   upload,
+  spend,
 }: {
   chatId: string;
   persistDraft?: boolean;
@@ -61,6 +67,8 @@ export function Composer({
   /** The model the Message goes to: decides which files can be attached. */
   model?: string;
   upload?: Uploader;
+  /** What this Chat has spent so far, for the usage beside Send. */
+  spend?: ChatSpend;
 }) {
   const catalog = findModel(model);
   const support = modelSupport(
@@ -72,7 +80,6 @@ export function Composer({
     upload,
     initial: initialAttachments,
   });
-  const imageInput = useRef<HTMLInputElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   const [draft, setDraft] = useState("");
@@ -136,8 +143,7 @@ export function Composer({
   }, [loaded, autoSend, send]);
   const hasFiles = (event: DragEvent) =>
     event.dataTransfer?.types?.includes("Files") ?? false;
-  function pick(input: HTMLInputElement | null) {
-    if (!input) return;
+  function pick(input: HTMLInputElement) {
     files.add([...(input.files ?? [])]);
     // So choosing the same file again still fires a change.
     input.value = "";
@@ -150,11 +156,14 @@ export function Composer({
     event.preventDefault();
     files.add(pasted);
   }
+  // At most one line: a file that can't be sent, then an upload problem, then the drop hint.
+  const failedItem = files.items.find((item) => item.status === "error");
+  const problem = files.notice || failedItem?.error || "";
   return (
     <form
       aria-label="Message Galaxy"
       data-dragging={dragging || undefined}
-      className="flex w-full flex-col gap-1 rounded-3xl border border-input bg-card p-2 shadow-xs focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/20 data-dragging:border-ring data-dragging:ring-3 data-dragging:ring-ring/20"
+      className={COMPOSER_FRAME}
       onSubmit={(e) => {
         e.preventDefault();
         send();
@@ -180,22 +189,22 @@ export function Composer({
       }}
     >
       <AttachmentTray items={files.items} onRemove={files.remove} />
-      {(files.notice || dragging) && (
-        <p
-          role={dragging ? undefined : "alert"}
-          className={`px-3 pt-1 text-xs ${dragging ? "text-muted-foreground" : "text-destructive"}`}
-        >
-          {dragging ? "Drop files to attach them." : files.notice}
-        </p>
-      )}
-      {unreadable && (
+      {unreadable ? (
         <output
           id={`${id}-unreadable`}
-          className="px-3 pt-1 text-xs text-destructive"
+          className="px-2 text-caption text-destructive"
         >
           {unreadableCopy(support, unreadable.name)}
         </output>
-      )}
+      ) : problem ? (
+        <p role="alert" className="px-2 text-caption text-destructive">
+          {problem}
+        </p>
+      ) : dragging ? (
+        <p className="px-2 text-caption text-muted-foreground">
+          Drop files to attach them.
+        </p>
+      ) : null}
       <label htmlFor={id} className="sr-only">
         Message
       </label>
@@ -212,64 +221,33 @@ export function Composer({
             send();
           }
         }}
-        className="field-sizing-content max-h-48 min-h-10 w-full pointer-coarse:min-h-11 resize-none bg-transparent px-3 py-2 text-message outline-none placeholder:text-muted-foreground"
+        className={COMPOSER_TEXTAREA}
       />
-      <div className="flex items-center gap-1">
-        <DropdownMenu>
-          <DropdownMenuTrigger
+      <div className={COMPOSER_TOOLBAR}>
+        <Tooltip>
+          <TooltipTrigger
             render={
               <Button
                 type="button"
                 variant="ghost"
-                size="icon"
+                size="icon-sm"
                 aria-label="Add attachment"
-                className="rounded-full"
+                className="rounded-full text-muted-foreground"
+                onClick={() => fileInput.current?.click()}
               />
             }
           >
-            <Plus />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" side="top" className="w-72">
-            <DropdownMenuItem
-              disabled={!support.vision}
-              onClick={() => imageInput.current?.click()}
-            >
-              <ImageIcon />
-              <span className="grid">
-                <span>Add photos</span>
-                <span className="text-xs text-muted-foreground">
-                  {support.vision
-                    ? "PNG, JPEG, WebP or GIF"
-                    : `${visionOffCopy(support)} Choose another model to attach photos.`}
-                </span>
-              </span>
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => fileInput.current?.click()}>
-              <FileText />
-              <span className="grid">
-                <span>Add files</span>
-                <span className="text-xs text-muted-foreground">
-                  PDFs, text and code, up to 10 MB each
-                </span>
-              </span>
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-        <input
-          ref={imageInput}
-          type="file"
-          multiple
-          accept={ACCEPT_IMAGES}
-          tabIndex={-1}
-          aria-hidden="true"
-          className="hidden"
-          onChange={(e) => pick(e.currentTarget)}
-        />
+            <Paperclip />
+          </TooltipTrigger>
+          <TooltipContent>
+            {support.vision ? "Add photos and files" : "Add files"}
+          </TooltipContent>
+        </Tooltip>
         <input
           ref={fileInput}
           type="file"
           multiple
-          accept={ACCEPT_FILES}
+          accept={[ACCEPT_IMAGES, ACCEPT_FILES].join(",")}
           tabIndex={-1}
           aria-hidden="true"
           className="hidden"
@@ -277,16 +255,30 @@ export function Composer({
         />
         {picker}
         <div className="flex-1" />
+        <UsageMeter model={model} spend={spend} />
         <Button
           type={busy ? "button" : "submit"}
           onClick={busy ? onStop : undefined}
-          size="icon"
+          size="icon-sm"
           aria-label={busy ? "Stop Reply" : "Send message"}
           disabled={!busy && !canSend}
           aria-describedby={unreadable ? `${id}-unreadable` : undefined}
-          className="rounded-full"
+          className={cn(
+            SEND_BUTTON,
+            busy && "bg-foreground text-background hover:bg-foreground/90",
+          )}
         >
-          {busy ? <Square className="size-3 fill-current" /> : <ArrowUp />}
+          {/* Both glyphs share one cell so the button never resizes. */}
+          <span className="grid place-items-center">
+            <ArrowUp
+              aria-hidden="true"
+              className={cn(SWAP, busy && SWAP_HIDDEN)}
+            />
+            <Square
+              aria-hidden="true"
+              className={cn(SWAP, "size-3 fill-current", !busy && SWAP_HIDDEN)}
+            />
+          </span>
         </Button>
       </div>
     </form>

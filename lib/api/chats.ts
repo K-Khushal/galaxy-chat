@@ -21,6 +21,7 @@ import {
 } from "@/lib/chat/store";
 import { AppError } from "@/lib/errors";
 import { getActiveGeneration } from "@/lib/generation/locks";
+import { assertCanPay } from "@/lib/generation/payment";
 import { recoverRepliesQuietly } from "@/lib/generation/recover";
 import { resumeGeneration, stopGeneration } from "@/lib/generation/resume";
 import { startGeneration } from "@/lib/generation/start";
@@ -87,7 +88,11 @@ export function listChatsRoute(ctx: AppContext, request: Request) {
   });
 }
 
-/** POST /api/chats { model? } */
+/**
+ * POST /api/chats { model? }. Refuses with the Generation's own 402
+ * (no_credits or needs_byok_key) when nothing can pay for the first Reply,
+ * so no empty Chat is left behind.
+ */
 export function createChatRoute(ctx: AppContext, request: Request) {
   return handle(async () => {
     const userId = await ctx.authenticate(request);
@@ -95,11 +100,11 @@ export function createChatRoute(ctx: AppContext, request: Request) {
       request,
       z.strictObject({ model: modelId.optional() }),
     );
-    const row = await createChat(
-      ctx.db,
-      userId,
-      body.model ?? DEFAULT_MODEL_ID,
-    );
+    const model = body.model ?? DEFAULT_MODEL_ID;
+    const resolved = resolveModel(model);
+    if (!resolved) throw new AppError("unknown_model", 400);
+    await assertCanPay(ctx, userId, resolved);
+    const row = await createChat(ctx.db, userId, model);
     return json({ chat: chatSummary(row) }, 201);
   });
 }

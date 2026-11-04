@@ -228,14 +228,53 @@ test("payment: Credits first on Credit models, then the BYOK key", async () => {
   expect(messages[1]?.payment).toBe("byok");
 });
 
-test("payment: other models need a BYOK key and never spend Credits", async () => {
-  const chatId = await newChat("alice", {
-    model: "anthropic/claude-sonnet-5.5",
+test("creating a Chat is refused with the Generation's 402 when nothing can pay", async () => {
+  await h.addUser("dave", 0);
+  const create = (body: Record<string, unknown>) =>
+    call(h, createChatRoute, { user: "dave", body });
+  const listed = async () =>
+    (
+      (await (await call(h, listChatsRoute, { user: "dave" })).json()) as {
+        chats: unknown[];
+      }
+    ).chats;
+
+  const noCredits = await create({});
+  expect(noCredits.status).toBe(402);
+  expect(await noCredits.json()).toEqual({ error: "no_credits" });
+  const needsKey = await create({ model: "anthropic/claude-sonnet-5.5" });
+  expect(needsKey.status).toBe(402);
+  expect(await needsKey.json()).toEqual({ error: "needs_byok_key" });
+  // Credits pay only for Credit models.
+  const aliceNeedsKey = await call(h, createChatRoute, {
+    user: "alice",
+    body: { model: "anthropic/claude-sonnet-5.5" },
   });
+  expect(aliceNeedsKey.status).toBe(402);
+  expect(await aliceNeedsKey.json()).toEqual({ error: "needs_byok_key" });
+  expect(await listed()).toEqual([]);
+
+  // A BYOK key pays for any model; checking spends nothing.
+  await call(h, saveByokRoute, {
+    user: "dave",
+    method: "PUT",
+    body: { key: USER_KEY },
+  });
+  expect((await create({})).status).toBe(201);
+  expect((await create({ model: "anthropic/claude-sonnet-5.5" })).status).toBe(
+    201,
+  );
+  expect(await listed()).toHaveLength(2);
+  expect(await getCredits(h.db, "dave")).toBe(0);
+});
+
+test("payment: other models need a BYOK key and never spend Credits", async () => {
+  const sonnet = { model: "anthropic/claude-sonnet-5.5" };
+  const chatId = await newChat("alice");
   const needsKey = await call(h, sendMessageRoute, {
     user: "alice",
     id: chatId,
-    body: submit("Hi", null),
+    body: submit("Hi", null, sonnet),
   });
   expect(needsKey.status).toBe(402);
   expect(await needsKey.json()).toEqual({ error: "needs_byok_key" });
@@ -245,7 +284,7 @@ test("payment: other models need a BYOK key and never spend Credits", async () =
     method: "PUT",
     body: { key: USER_KEY },
   });
-  await start(chatId, submit("Hi", null));
+  await start(chatId, submit("Hi", null, sonnet));
   expect(h.state.calls.at(-2)).toMatchObject({
     modelId: "anthropic/claude-sonnet-5.5",
     apiKey: USER_KEY,

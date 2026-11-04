@@ -1,13 +1,12 @@
-import { Skeleton } from "@/components/ui/skeleton";
+import { ComposerSkeleton } from "@/components/chat/composer-skeleton";
+import { NewChatLayout } from "@/components/chat/new-chat";
 
+// Only the New Chat page: /chat/[id] and /chat/settings have their own.
 export default function Loading() {
   return (
-    <output
-      aria-label="Loading"
-      className="flex flex-1 flex-col items-center justify-center gap-6 px-4 pb-[8vh]"
-    >
-      <Skeleton className="h-9 w-72 max-w-full" />
-      <Skeleton className="h-[5.5rem] w-full max-w-3xl rounded-3xl" />
-    </output>
+    <NewChatLayout>
+      <output className="sr-only">Loading</output>
+      <ComposerSkeleton />
+    </NewChatLayout>
   );
 }
